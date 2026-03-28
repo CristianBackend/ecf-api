@@ -66,6 +66,18 @@ export class CreateCompanyDto {
   @IsString()
   activityCode?: string;
 
+  @ApiPropertyOptional({ description: 'Código de sucursal (max 20 caracteres)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  branchCode?: string;
+
+  @ApiPropertyOptional({ description: 'Descripción de actividad económica (max 100 caracteres)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  economicActivity?: string;
+
   @ApiPropertyOptional({
     description: 'Ambiente DGII',
     enum: DgiiEnvironment,

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ValidationService } from '../validation/validation.service';
 
 /**
  * ARECF / ACECF XML Builder
@@ -44,6 +45,18 @@ export interface AcecfInput {
   rejectionReason?: string;  // Required if rejected
 }
 
+const fmt = ValidationService.formatAmount;
+
+/** Escape XML special characters */
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&#34;')
+    .replace(/'/g, '&#39;');
+}
+
 @Injectable()
 export class ResponseXmlBuilder {
   private readonly logger = new Logger(ResponseXmlBuilder.name);
@@ -65,11 +78,11 @@ export class ResponseXmlBuilder {
       '<ARECF xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">',
       '  <DetalleAcusedeRecibo>',
       '    <Version>1.0</Version>',
-      `    <RNCEmisor>${input.emitterRnc}</RNCEmisor>`,
-      `    <RNCComprador>${input.receiverRnc}</RNCComprador>`,
-      `    <eNCF>${input.encf}</eNCF>`,
+      `    <RNCEmisor>${escapeXml(input.emitterRnc)}</RNCEmisor>`,
+      `    <RNCComprador>${escapeXml(input.receiverRnc)}</RNCComprador>`,
+      `    <eNCF>${escapeXml(input.encf)}</eNCF>`,
       `    <Estado>0</Estado>`,
-      `    <FechaHoraAcuseRecibo>${this.formatDateTime(now)}</FechaHoraAcuseRecibo>`,
+      `    <FechaHoraAcuseRecibo>${formatDateTimeGmt4(now)}</FechaHoraAcuseRecibo>`,
       '  </DetalleAcusedeRecibo>',
       '</ARECF>',
     ].join('\n');
@@ -102,18 +115,13 @@ export class ResponseXmlBuilder {
       '<ARECF xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">',
       '  <DetalleAcusedeRecibo>',
       '    <Version>1.0</Version>',
-      `    <RNCEmisor>${input.emitterRnc}</RNCEmisor>`,
-      `    <RNCComprador>${input.receiverRnc}</RNCComprador>`,
-      `    <eNCF>${input.encf}</eNCF>`,
+      `    <RNCEmisor>${escapeXml(input.emitterRnc)}</RNCEmisor>`,
+      `    <RNCComprador>${escapeXml(input.receiverRnc)}</RNCComprador>`,
+      `    <eNCF>${escapeXml(input.encf)}</eNCF>`,
       `    <Estado>1</Estado>`,
       `    <CodigoMotivoNoRecibido>${input.errorCode}</CodigoMotivoNoRecibido>`,
+      `    <FechaHoraAcuseRecibo>${formatDateTimeGmt4(now)}</FechaHoraAcuseRecibo>`,
     ];
-
-    if (input.errorDetail) {
-      lines.push(`    <FechaHoraAcuseRecibo>${this.formatDateTime(now)}</FechaHoraAcuseRecibo>`);
-    } else {
-      lines.push(`    <FechaHoraAcuseRecibo>${this.formatDateTime(now)}</FechaHoraAcuseRecibo>`);
-    }
 
     lines.push(
       '  </DetalleAcusedeRecibo>',
@@ -143,21 +151,22 @@ export class ResponseXmlBuilder {
       '<ACECF xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">',
       '  <DetalleAprobacionComercial>',
       '    <Version>1.0</Version>',
-      `    <RNCEmisor>${input.emitterRnc}</RNCEmisor>`,
-      `    <RNCComprador>${input.receiverRnc}</RNCComprador>`,
-      `    <eNCF>${input.encf}</eNCF>`,
+      `    <RNCEmisor>${escapeXml(input.emitterRnc)}</RNCEmisor>`,
+      `    <RNCComprador>${escapeXml(input.receiverRnc)}</RNCComprador>`,
+      `    <eNCF>${escapeXml(input.encf)}</eNCF>`,
       `    <Estado>${estado}</Estado>`,
     ];
 
     // Only include DetalleMotivoRechazo when rejected — DGII rejects empty tags
     if (!input.approved) {
-      lines.push(`    <DetalleMotivoRechazo>${input.rejectionReason || 'Rechazado por el comprador'}</DetalleMotivoRechazo>`);
+      lines.push(`    <DetalleMotivoRechazo>${escapeXml(input.rejectionReason || 'Rechazado por el comprador')}</DetalleMotivoRechazo>`);
     }
 
+    // I9 fix: Use round2 before formatting to ensure DGII-compliant rounding
     lines.push(
-      `    <MontoTotal>${input.totalAmount.toFixed(2)}</MontoTotal>`,
-      `    <MontoITBIS>${input.totalItbis.toFixed(2)}</MontoITBIS>`,
-      `    <FechaHoraAprobacionComercial>${this.formatDateTime(now)}</FechaHoraAprobacionComercial>`,
+      `    <MontoTotal>${fmt(input.totalAmount)}</MontoTotal>`,
+      `    <MontoITBIS>${fmt(input.totalItbis)}</MontoITBIS>`,
+      `    <FechaHoraAprobacionComercial>${formatDateTimeGmt4(now)}</FechaHoraAprobacionComercial>`,
       '  </DetalleAprobacionComercial>',
       '</ACECF>',
     );
@@ -167,18 +176,24 @@ export class ResponseXmlBuilder {
     this.logger.debug(`ACECF built for ${input.encf}: ${input.approved ? 'APPROVED' : 'REJECTED'}`);
     return xml;
   }
+}
 
-  /**
-   * Format datetime as dd-MM-yyyy HH:mm:ss per DGII official example.
-   * Example: 17-12-2020 11:19:06
-   */
-  private formatDateTime(date: Date): string {
-    const dd = String(date.getDate()).padStart(2, '0');
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const yyyy = date.getFullYear();
-    const hh = String(date.getHours()).padStart(2, '0');
-    const mi = String(date.getMinutes()).padStart(2, '0');
-    const ss = String(date.getSeconds()).padStart(2, '0');
-    return `${dd}-${mm}-${yyyy} ${hh}:${mi}:${ss}`;
-  }
+/**
+ * Format datetime as dd-MM-yyyy HH:mm:ss in GMT-4 (America/Santo_Domingo).
+ * Per DGII: all dates/times must be in Dominican Republic timezone.
+ */
+function formatDateTimeGmt4(date: Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Santo_Domingo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+
+  const get = (type: string) => parts.find(p => p.type === type)?.value || '00';
+  return `${get('day')}-${get('month')}-${get('year')} ${get('hour')}:${get('minute')}:${get('second')}`;
 }

@@ -5,7 +5,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DgiiService } from '../dgii/dgii.service';
 import { SigningService } from '../signing/signing.service';
 import { CertificatesService } from '../certificates/certificates.service';
-import { InvoiceStatus } from '@prisma/client';
+import { QueueService } from './queue.service';
+import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 import { QUEUES } from './queue.constants';
 
 export interface StatusPollJobData {
@@ -40,6 +41,7 @@ export class StatusPollProcessor extends WorkerHost {
     private readonly dgiiService: DgiiService,
     private readonly signingService: SigningService,
     private readonly certificatesService: CertificatesService,
+    private readonly queueService: QueueService,
   ) {
     super();
   }
@@ -68,7 +70,35 @@ export class StatusPollProcessor extends WorkerHost {
     }
 
     if (!invoice.trackId) {
-      this.logger.warn(`Invoice ${invoiceId} has no trackId`);
+      // I7: Reconciliation by eNCF — try to recover trackId from DGII
+      this.logger.warn(`Invoice ${invoiceId} has no trackId, attempting eNCF reconciliation`);
+      try {
+        const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(
+          tenantId, companyId,
+        );
+        const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase);
+        const token = await this.dgiiService.getToken(
+          tenantId, companyId, privateKey, certificate, invoice.company.dgiiEnv,
+        );
+        const trackResult = await this.dgiiService.queryTrackIds(
+          invoice.company.rnc, invoice.encf!, token, invoice.company.dgiiEnv,
+        );
+        const recoveredTrackId = this.extractTrackIdFromResponse(trackResult.message);
+        if (recoveredTrackId) {
+          await this.prisma.invoice.update({
+            where: { id: invoiceId },
+            data: { trackId: recoveredTrackId },
+          });
+          this.logger.log(`Recovered trackId ${recoveredTrackId} for ${invoice.encf} via eNCF reconciliation`);
+          // Continue polling with recovered trackId — let BullMQ re-run
+          await job.moveToDelayed(Date.now() + 5000, job.token);
+          await job.updateData({ ...job.data, attempt: attempt });
+          throw new DelayedError();
+        }
+      } catch (error: any) {
+        if (error instanceof DelayedError) throw error;
+        this.logger.warn(`eNCF reconciliation failed for ${invoice.encf}: ${error.message}`);
+      }
       return { status: 'NO_TRACK_ID' };
     }
 
@@ -131,6 +161,19 @@ export class StatusPollProcessor extends WorkerHost {
         throw new DelayedError();
       }
 
+      // Fire webhook for final statuses
+      const webhookPayload = {
+        invoiceId, encf: invoice.encf, trackId: invoice.trackId,
+        message: result.message, attempts: attempt,
+      };
+      if (newStatus === InvoiceStatus.ACCEPTED) {
+        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_ACCEPTED, webhookPayload);
+      } else if (newStatus === InvoiceStatus.REJECTED) {
+        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_REJECTED, webhookPayload);
+      } else if (newStatus === InvoiceStatus.CONDITIONAL) {
+        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_CONDITIONAL, webhookPayload);
+      }
+
       return {
         status: newStatus,
         final: true,
@@ -174,6 +217,18 @@ export class StatusPollProcessor extends WorkerHost {
       3_600_000,  // 1h
     ];
     return delays[Math.min(attempt - 1, delays.length - 1)];
+  }
+
+  private extractTrackIdFromResponse(responseText: string): string | null {
+    try {
+      const json = JSON.parse(responseText);
+      // DGII returns array of trackIds or single object
+      const trackId = Array.isArray(json) ? json[0]?.trackId || json[0]?.TrackId : json?.trackId || json?.TrackId;
+      return trackId || null;
+    } catch {
+      const match = responseText.match(/<trackId>([\s\S]*?)<\/trackId>/i);
+      return match ? match[1].trim() : null;
+    }
   }
 
   private mapDgiiStatus(dgiiStatus: number): InvoiceStatus {

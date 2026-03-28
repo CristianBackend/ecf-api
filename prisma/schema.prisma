@@ -72,6 +72,7 @@ enum WebhookEvent {
   INVOICE_ACCEPTED
   INVOICE_REJECTED
   INVOICE_CONDITIONAL
+  INVOICE_ERROR
   INVOICE_VOIDED
   DOCUMENT_RECEIVED
   COMMERCIAL_APPROVAL_RECEIVED
@@ -128,6 +129,8 @@ model Company {
   municipality  String?         @db.VarChar(100)
   province      String?         @db.VarChar(100)
   activityCode  String?         @map("activity_code") @db.VarChar(10)
+  branchCode    String?         @map("branch_code") @db.VarChar(20)
+  economicActivity String?      @map("economic_activity") @db.VarChar(100)
   dgiiEnv       DgiiEnvironment @default(DEV) @map("dgii_environment")
   isActive      Boolean         @default(true) @map("is_active")
   createdAt     DateTime        @default(now()) @map("created_at")

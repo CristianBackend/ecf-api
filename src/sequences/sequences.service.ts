@@ -137,20 +137,21 @@ export class SequencesService {
 
   /**
    * Get next eNCF number atomically.
-   * Uses a database transaction to prevent race conditions.
+   * Uses SELECT FOR UPDATE to prevent race conditions under concurrent load.
    * Returns the full eNCF string (e.g., "E310000000001")
    */
   async getNextEncf(tenantId: string, companyId: string, ecfType: EcfType): Promise<string> {
     return this.prisma.$transaction(async (tx) => {
-      // Lock the row for update
-      const sequence = await tx.sequence.findFirst({
-        where: {
-          tenantId,
-          companyId,
-          ecfType,
-          isActive: true,
-        },
-      });
+      // S7 fix: Use raw SELECT FOR UPDATE to lock the row, preventing concurrent
+      // reads from getting the same currentNumber
+      const sequences: any[] = await tx.$queryRawUnsafe(
+        `SELECT * FROM "Sequence" WHERE "tenantId" = $1 AND "companyId" = $2 AND "ecfType" = $3 AND "isActive" = true LIMIT 1 FOR UPDATE`,
+        tenantId,
+        companyId,
+        ecfType,
+      );
+
+      const sequence = sequences[0] || null;
 
       if (!sequence) {
         throw new NotFoundException(
@@ -183,7 +184,7 @@ export class SequencesService {
         );
       }
 
-      // Update current number
+      // Update current number (row is locked, safe from concurrent access)
       await tx.sequence.update({
         where: { id: sequence.id },
         data: { currentNumber: nextNumber },
@@ -303,8 +304,10 @@ export class SequencesService {
       tenantId, companyId, privateKey, certificate, company.dgiiEnv,
     );
 
-    // Submit ANECF to DGII
-    const result = await this.dgiiService.submitAnecf(signedXml, token, company.dgiiEnv);
+    // S6 fix: DGII requires filename = {RNCEmisor}{eNCF}.xml
+    // For ANECF, use {RNCEmisor}ANECF.xml as there's no single eNCF
+    const anecfFileName = `${company.rnc}ANECF.xml`;
+    const result = await this.dgiiService.submitAnecf(signedXml, token, company.dgiiEnv, anecfFileName);
 
     // Store annulment records
     const annulments = [];

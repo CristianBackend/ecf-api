@@ -105,12 +105,13 @@ export class XsdValidationService implements OnModuleInit {
   async validateXml(xml: string, typeCode: number): Promise<XsdValidationResult> {
     const start = Date.now();
 
-    // Pre-flight checks
+    // Pre-flight checks — do NOT silently pass when validation tool is unavailable
     if (!this.xmllintPath) {
+      this.logger.warn('XSD validation unavailable: xmllint not installed');
       return {
-        valid: true,
-        errors: [],
-        warnings: ['XSD validation skipped: xmllint not available'],
+        valid: false,
+        errors: ['XSD validation unavailable: xmllint not installed. Install libxml2-utils (apt) or libxml2 (brew).'],
+        warnings: [],
         schema: 'none',
         durationMs: Date.now() - start,
       };

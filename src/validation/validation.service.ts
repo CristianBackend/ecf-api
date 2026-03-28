@@ -55,6 +55,7 @@ export class ValidationService {
     this.validateItems(input, typeCode);
     this.validatePayment(input);
     this.validateReference(input, typeCode);
+    this.validateFechaEmision(input);
 
     if (sequenceExpiration) {
       this.validateSequenceExpiration(sequenceExpiration);
@@ -80,6 +81,22 @@ export class ValidationService {
 
     if (!input.buyer) {
       throw new BadRequestException('Información del comprador es obligatoria');
+    }
+  }
+
+  /**
+   * Validate fechaEmision format when user-provided.
+   * Per XSD FechaValidationType: DD-MM-YYYY pattern.
+   */
+  private validateFechaEmision(input: InvoiceInput): void {
+    if (!input.fechaEmision) return;
+
+    const dgiiDatePattern = /^(3[01]|[12][0-9]|0?[1-9])-(1[0-2]|0?[1-9])-((19|20)\d{2})$/;
+    if (!dgiiDatePattern.test(input.fechaEmision)) {
+      throw new BadRequestException(
+        `fechaEmision inválida: "${input.fechaEmision}". ` +
+        `Formato requerido: DD-MM-YYYY (ej: 25-01-2024)`,
+      );
     }
   }
 
@@ -122,9 +139,10 @@ export class ValidationService {
       throw new BadRequestException('Debe incluir al menos un item');
     }
 
-    // Different limits for FC < 250K
+    // Different limits: E33/E34 maxOccurs=10000 per XSD, FC < 250K also 10000
     const isFcUnder250k = typeCode === 32 && this.estimateTotal(input.items) < FC_FULL_SUBMISSION_THRESHOLD;
-    const maxItems = isFcUnder250k ? MAX_ITEMS_FC_UNDER_250K : MAX_ITEMS_PER_ECF;
+    const hasHigherLimit = isFcUnder250k || typeCode === 33 || typeCode === 34;
+    const maxItems = hasHigherLimit ? MAX_ITEMS_FC_UNDER_250K : MAX_ITEMS_PER_ECF;
 
     if (input.items.length > maxItems) {
       throw new BadRequestException(
@@ -205,7 +223,7 @@ export class ValidationService {
 
   private estimateTotal(items: InvoiceItemInput[]): number {
     return items.reduce((sum, item) => {
-      return sum + (item.quantity * item.unitPrice - (item.discount || 0));
+      return sum + (item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0));
     }, 0);
   }
 
@@ -248,11 +266,11 @@ export class ValidationService {
       );
     }
 
-    // Validate modification code
-    const validCodes = [1, 2, 3, 4];
+    // Validate modification code per XSD CodigoModificacionType: values 1-5
+    const validCodes = [1, 2, 3, 4, 5];
     if (!validCodes.includes(ref.modificationCode)) {
       throw new BadRequestException(
-        `CódigoModificación inválido (${ref.modificationCode}). Valores: 1=Anula, 2=Corrige texto, 3=Corrige montos, 4=Reemplazo contingencia`,
+        `CódigoModificación inválido (${ref.modificationCode}). Valores: 1=Anula, 2=Corrige texto, 3=Corrige montos, 4=Reemplazo contingencia, 5=Referencia FC`,
       );
     }
 
@@ -374,7 +392,7 @@ export class ValidationService {
     // Per-line validation
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      const expectedMonto = r2(item.quantity * item.unitPrice - (item.discount || 0));
+      const expectedMonto = r2(item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0));
       // We don't have the actual XML MontoItem here, but we can check our own calculation
       // This is mainly for when receiving/validating external e-CFs
     }
@@ -385,7 +403,7 @@ export class ValidationService {
     // Check that sum of line items matches totals
     let sumLineSubtotals = 0;
     for (const item of items) {
-      sumLineSubtotals += r2(item.quantity * item.unitPrice - (item.discount || 0));
+      sumLineSubtotals += r2(item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0));
     }
     sumLineSubtotals = r2(sumLineSubtotals);
 

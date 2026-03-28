@@ -4,6 +4,7 @@ import { InvoiceStatus } from '@prisma/client';
 import { SigningService } from '../signing/signing.service';
 import { DgiiService } from '../dgii/dgii.service';
 import { CertificatesService } from '../certificates/certificates.service';
+import { QueueService } from '../queue/queue.service';
 import { DGII_STATUS, FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-types';
 
 /**
@@ -22,6 +23,7 @@ export class ContingencyService {
     private readonly signingService: SigningService,
     private readonly dgiiService: DgiiService,
     private readonly certificatesService: CertificatesService,
+    private readonly queueService: QueueService,
   ) {}
 
   /**
@@ -138,9 +140,12 @@ export class ContingencyService {
    * Process contingency queue — resubmit pending invoices to DGII.
    * Called by cron job or manually via POST /contingency/process.
    */
-  async processQueue(): Promise<{ processed: number; failed: number; remaining: number }> {
+  async processQueue(tenantId?: string): Promise<{ processed: number; failed: number; remaining: number }> {
+    const where: any = { status: InvoiceStatus.CONTINGENCY };
+    if (tenantId) where.tenantId = tenantId;
+
     const pending = await this.prisma.invoice.findMany({
-      where: { status: InvoiceStatus.CONTINGENCY },
+      where,
       include: { company: true },
       orderBy: { createdAt: 'asc' },
       take: 10,
@@ -156,7 +161,7 @@ export class ContingencyService {
       const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(
         testInvoice.tenantId, testInvoice.companyId,
       );
-      const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase);
+      const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase, testInvoice.company.rnc);
       await this.dgiiService.getToken(
         testInvoice.tenantId, testInvoice.companyId,
         privateKey, certificate, testInvoice.company.dgiiEnv,
@@ -194,7 +199,7 @@ export class ContingencyService {
         const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(
           invoice.tenantId, invoice.companyId,
         );
-        const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase);
+        const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase, invoice.company.rnc);
 
         // 2. Sign the stored unsigned XML
         if (!invoice.xmlUnsigned) {
@@ -247,6 +252,17 @@ export class ContingencyService {
           },
         });
 
+        // Schedule status polling if DGII returned EN_PROCESO
+        if (newStatus === InvoiceStatus.PROCESSING) {
+          await this.queueService.enqueueStatusPoll({
+            invoiceId: invoice.id,
+            tenantId: invoice.tenantId,
+            companyId: invoice.companyId,
+            attempt: 1,
+          });
+          this.logger.log(`Scheduled status polling for ${invoice.encf} (EN_PROCESO)`);
+        }
+
         this.logger.log(`Contingency resubmit OK: ${invoice.encf} → ${newStatus}`);
         processed++;
       } catch (error: any) {
@@ -264,8 +280,10 @@ export class ContingencyService {
       }
     }
 
+    const remainingWhere: any = { status: InvoiceStatus.CONTINGENCY };
+    if (tenantId) remainingWhere.tenantId = tenantId;
     const remaining = await this.prisma.invoice.count({
-      where: { status: InvoiceStatus.CONTINGENCY },
+      where: remainingWhere,
     });
 
     this.logger.log(`Contingency batch: ${processed} OK, ${failed} failed, ${remaining} remaining`);

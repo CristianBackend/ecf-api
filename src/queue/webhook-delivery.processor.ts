@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhookEvent } from '@prisma/client';
+import { QUEUES } from './queue.constants';
 import * as crypto from 'crypto';
 
 export interface WebhookDeliveryJobData {
@@ -23,7 +24,7 @@ export interface WebhookDeliveryJobData {
  * - Logs delivery attempts in webhook_deliveries table
  * - Deactivates webhook after 10 consecutive failed deliveries
  */
-@Processor('webhook-delivery')
+@Processor(QUEUES.WEBHOOK_DELIVERY)
 export class WebhookDeliveryProcessor extends WorkerHost {
   private readonly logger = new Logger(WebhookDeliveryProcessor.name);
 

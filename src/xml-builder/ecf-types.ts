@@ -62,17 +62,19 @@ export const ITBIS_RATES = {
   EXEMPT: 0,     // Exento
 } as const;
 
-/** Payment types per DGII specification */
-export const PAYMENT_TYPES = {
-  CASH: 1,
-  CHECK: 2,
-  CREDIT_CARD: 3,
-  CREDIT: 4,
-  BONDS: 5,
-  SWAP: 6,
-  NOTE: 7,
-  MIXED: 8,
-  OTHER: 9,
+/**
+ * FormaPago (payment method) per DGII XSD FormaPagoType.
+ * Values 01-08. NOT to be confused with TipoPago (1=Contado, 2=Crédito, 3=Gratuito).
+ */
+export const FORMA_PAGO = {
+  EFECTIVO: 1,
+  CHEQUE_TRANSFERENCIA: 2,
+  TARJETA: 3,
+  CREDITO: 4,
+  BONOS: 5,
+  PERMUTA: 6,
+  NOTA_CREDITO: 7,
+  MIXTO: 8,
 } as const;
 
 /** Income type indicator (Tipo de Ingreso) */
@@ -95,6 +97,7 @@ export const MODIFICATION_CODES = {
   CORRECT_TEXT: 2,   // Corrige texto del comprobante fiscal modificado
   CORRECT_AMOUNT: 3, // Corrige montos del NCF modificado
   REPLACE_CONTINGENCY: 4, // Reemplazo NCF emitido en contingencia
+  REFERENCE_FC: 5,   // Referencia Factura Consumo Electrónica
 } as const;
 
 export const MODIFICATION_CODE_NAMES: Record<number, string> = {
@@ -102,6 +105,7 @@ export const MODIFICATION_CODE_NAMES: Record<number, string> = {
   2: 'Corrige texto del comprobante fiscal modificado',
   3: 'Corrige montos del NCF modificado',
   4: 'Reemplazo NCF emitido en contingencia',
+  5: 'Referencia Factura Consumo Electrónica',
 };
 
 // ============================================================

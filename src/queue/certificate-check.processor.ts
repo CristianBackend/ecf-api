@@ -2,6 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import { QUEUES } from './queue.constants';
 
 export interface CertificateCheckJobData {
   /** If provided, only check this tenant. Otherwise check all. */
@@ -19,7 +20,7 @@ export interface CertificateCheckJobData {
  * - 7 days: CRITICAL
  * - 0 days: EXPIRED (auto-deactivate)
  */
-@Processor('certificate-check')
+@Processor(QUEUES.CERTIFICATE_CHECK)
 export class CertificateCheckProcessor extends WorkerHost {
   private readonly logger = new Logger(CertificateCheckProcessor.name);
 

@@ -24,8 +24,8 @@ const mockEmitter: EmitterData = {
   businessName: 'Test Company SRL',
   tradeName: 'TestCo',
   address: 'Calle Principal #1, Santiago',
-  municipality: '250001',
-  province: '25',
+  municipality: '250101',  // Santiago (D.M.) per ProvinciaMunicipioType
+  province: '250000',      // Provincia Santiago per ProvinciaMunicipioType
 };
 
 const basicItem = (overrides?: Partial<InvoiceItemInput>): InvoiceItemInput => ({
@@ -43,7 +43,7 @@ const exemptItem = (overrides?: Partial<InvoiceItemInput>): InvoiceItemInput => 
   quantity: 2,
   unitPrice: 500,
   itbisRate: 0,
-  indicadorFacturacion: 'E',
+  indicadorFacturacion: 4,
   code: 'EXM-001',
   unit: 'UND',
   ...overrides,
@@ -66,9 +66,10 @@ const basicBuyer: BuyerInput = {
   name: 'Comprador Test SRL',
   type: 1,
   email: 'comprador@test.com',
+  phone: '809-555-1234',
   address: 'Av. 27 de Febrero',
-  municipality: '010101',
-  province: '01',
+  municipality: '010101',  // Santo Domingo de Guzmán (D.M.) per ProvinciaMunicipioType
+  province: '010000',      // Distrito Nacional per ProvinciaMunicipioType
 };
 
 const consumerBuyer: BuyerInput = {
@@ -215,7 +216,8 @@ describe('XmlBuilderService', () => {
     });
 
     it('should emit FechaVencimientoSecuencia when provided', () => {
-      const input = makeInput('E31', { sequenceExpiresAt: '2025-12-31' });
+      // Use ISO format with explicit time to avoid UTC→GMT-4 date shift
+      const input = makeInput('E31', { sequenceExpiresAt: '2025-12-31T12:00:00' });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
       expect(tagContent(xml, 'FechaVencimientoSecuencia')).toBe('31-12-2025');
     });
@@ -284,10 +286,10 @@ describe('XmlBuilderService', () => {
       expect(tagContent(xml, 'TipoPago')).toBe('1');
     });
 
-    it('should pad FormaPago to 2 digits', () => {
+    it('should emit FormaPago as xs:integer (no zero-padding per XSD FormaPagoType)', () => {
       const input = makeInput('E31', { payment: { type: 1, method: 1 } });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
-      expect(tagContent(xml, 'FormaPago')).toBe('01');
+      expect(tagContent(xml, 'FormaPago')).toBe('1');
     });
 
     it('should wrap FormaPago/MontoPago inside FormaDePago container', () => {
@@ -480,13 +482,13 @@ describe('XmlBuilderService', () => {
       expect(totalesSection).toContain('MontoImpuestoAdicional');
     });
 
-    it('should emit TotalDescuento when items have discounts', () => {
+    it('should NOT emit TotalDescuento (does not exist in any XSD Totales section)', () => {
       const input = makeInput('E31', {
         items: [basicItem({ discount: 50 })],
       });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
       const totalesSection = xml.substring(xml.indexOf('<Totales>'), xml.indexOf('</Totales>'));
-      expect(totalesSection).toContain('TotalDescuento');
+      expect(totalesSection).not.toContain('TotalDescuento');
     });
 
     it('should emit retention fields for E41', () => {
@@ -498,13 +500,13 @@ describe('XmlBuilderService', () => {
       expect(tagContent(xml, 'TotalISRRetencion')).toBe('100.00');
     });
 
-    it('should emit retention fields with value 0 (DGII allows it)', () => {
+    it('should NOT emit retention fields when value is 0 (no retention performed)', () => {
       const input = makeInput('E41', {
         retention: { itbisRetenido: 0, isrRetencion: 0 },
       });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E410000000001');
-      expect(tagContent(xml, 'TotalITBISRetenido')).toBe('0.00');
-      expect(tagContent(xml, 'TotalISRRetencion')).toBe('0.00');
+      expect(hasTag(xml, 'TotalITBISRetenido')).toBe(false);
+      expect(hasTag(xml, 'TotalISRRetencion')).toBe(false);
     });
 
     it('should format amounts with exactly 2 decimals', () => {
@@ -586,12 +588,12 @@ describe('XmlBuilderService', () => {
       expect(items[0]).not.toContain('<TasaITBIS>');
     });
 
-    it('should emit TasaITBIS/MontoITBIS for E31 items', () => {
+    it('should NOT emit TasaITBIS/MontoITBIS for any items (not in XSD Item section)', () => {
       const input = makeInput('E31');
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
       const items = getItems(xml);
-      expect(items[0]).toContain('<TasaITBIS>');
-      expect(items[0]).toContain('<MontoITBIS>');
+      expect(items[0]).not.toContain('<TasaITBIS>');
+      expect(items[0]).not.toContain('<MontoITBIS>');
     });
 
     it('should emit Retencion block for E41 items', () => {
@@ -625,13 +627,14 @@ describe('XmlBuilderService', () => {
       expect(tagBefore(item, 'PrecioUnitarioItem', 'MontoItem')).toBe(true);
     });
 
-    it('should format PrecioUnitarioItem with 4 decimals', () => {
+    it('should format PrecioUnitarioItem with up to 4 decimals (per XSD Decimal20D1or4)', () => {
       const input = makeInput('E31', {
         items: [basicItem({ unitPrice: 100 })],
       });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
       const price = tagContent(xml, 'PrecioUnitarioItem');
-      expect(price).toMatch(/^\d+\.\d{4}$/);
+      // XSD allows 1-4 decimal places; formatPrice strips trailing zeros
+      expect(price).toMatch(/^\d+\.\d{2,4}$/);
     });
   });
 
@@ -824,7 +827,7 @@ describe('XmlBuilderService', () => {
       const input = makeInput('E31', {
         items: [
           basicItem({ quantity: 1, unitPrice: 1000, itbisRate: 18 }),
-          exemptItem({ quantity: 1, unitPrice: 500, indicadorFacturacion: 'E' }),
+          exemptItem({ quantity: 1, unitPrice: 500, indicadorFacturacion: 4 }),
         ],
       });
       const { totals } = service.buildEcfXml(input, mockEmitter, 'E310000000001');

@@ -115,25 +115,10 @@ export class InvoicesService {
       }
     }
 
-    // Calculate totals for E32 threshold check
-    const calcTotal = dto.items.reduce((sum, item) => {
-      const base = item.quantity * item.unitPrice - (item.discount || 0);
-      const rate = item.itbisRate ?? 18;
-      return sum + base + base * (rate / 100);
-    }, 0);
-
-    // E32 max 250K DOP (RFCE threshold)
-    if (dto.ecfType === 'E32' && calcTotal > FC_FULL_SUBMISSION_THRESHOLD) {
+    // TipoPago 2 (Crédito) requires termDays
+    if (dto.payment.type === 2 && !dto.payment.termDays) {
       throw new BadRequestException(
-        `Factura de Consumo (E32) con monto RD$ ${calcTotal.toFixed(2)} excede el límite de ` +
-        `RD$ ${FC_FULL_SUBMISSION_THRESHOLD.toLocaleString()} para RFCE. Use E31 (Crédito Fiscal) en su lugar.`,
-      );
-    }
-
-    // Payment type 4 (Credit) requires termDays
-    if (dto.payment.type === 4 && !dto.payment.termDays) {
-      throw new BadRequestException(
-        'Pago a crédito (tipo 4) requiere especificar "termDays" (días de crédito).',
+        'Pago a crédito (TipoPago=2) requiere especificar "termDays" (días de crédito).',
       );
     }
 
@@ -155,9 +140,11 @@ export class InvoicesService {
       rnc: company.rnc,
       businessName: company.businessName,
       tradeName: company.tradeName || undefined,
+      branchCode: company.branchCode || undefined,
       address: company.address || undefined,
       municipality: company.municipality || undefined,
       province: company.province || undefined,
+      economicActivity: company.economicActivity || undefined,
     };
 
     const inputWithSequence = {
@@ -171,13 +158,17 @@ export class InvoicesService {
       encf,
     );
 
-    // Step 3b: Validate XML against XSD schema
-    const xsdResult = await this.xsdValidation.validateXml(unsignedXml, typeCode);
-    if (!xsdResult.valid) {
-      this.logger.error(`XSD validation failed for ${encf}: ${xsdResult.errors.join('; ')}`);
-      throw new BadRequestException(
-        `XML no pasa validación XSD de DGII: ${xsdResult.errors.slice(0, 3).join('; ')}`,
-      );
+    // Step 3b: Validate XML against XSD schema (only blocks if validation tool is available)
+    if (this.xsdValidation.isAvailable()) {
+      const xsdResult = await this.xsdValidation.validateXml(unsignedXml, typeCode);
+      if (!xsdResult.valid) {
+        this.logger.error(`XSD validation failed for ${encf}: ${xsdResult.errors.join('; ')}`);
+        throw new BadRequestException(
+          `XML no pasa validación XSD de DGII: ${xsdResult.errors.slice(0, 3).join('; ')}`,
+        );
+      }
+    } else {
+      this.logger.warn(`XSD validation unavailable for ${encf} — xmllint not installed`);
     }
 
     // Determine if RFCE (Factura Consumo < 250K)
@@ -215,7 +206,7 @@ export class InvoicesService {
     // Create invoice lines
     await this.prisma.invoiceLine.createMany({
       data: dto.items.map((item, index) => {
-        const lineSubtotal = item.quantity * item.unitPrice - (item.discount || 0);
+        const lineSubtotal = item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0);
         const rate = item.itbisRate ?? 18;
         const itbisAmount = lineSubtotal * (rate / 100);
 
@@ -303,10 +294,12 @@ export class InvoicesService {
           data: { xmlRfce: rfceXml },
         });
 
+        // S6 fix: DGII requires filename = {RNCEmisor}{eNCF}.xml
         submissionResult = await this.dgiiService.submitRfce(
           rfceXml,
           token,
           company.dgiiEnv,
+          `${company.rnc}${encf}.xml`,
         );
       } else {
         // ========== STANDARD FLOW ==========

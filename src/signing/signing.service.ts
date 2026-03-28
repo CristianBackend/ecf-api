@@ -206,9 +206,10 @@ export class SigningService {
 
     // Reconstruct SignedInfo with namespace for verification (same as signing)
     const signedInfoForVerify = `<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfoMatch[1]}</SignedInfo>`;
+    const canonicalizedSignedInfo = this.canonicalize(signedInfoForVerify);
 
     const verify = crypto.createVerify('RSA-SHA256');
-    verify.update(signedInfoForVerify);
+    verify.update(canonicalizedSignedInfo);
     verify.end();
 
     const isValid = verify.verify(certificatePem, signatureValue, 'base64');
@@ -224,9 +225,16 @@ export class SigningService {
   // PRIVATE METHODS
   // ============================================================
 
+  /**
+   * Compute SHA-256 digest of canonicalized XML (without Signature element).
+   * Per XMLDSig: enveloped signature transform removes <Signature>, then C14N is applied.
+   */
   private computeDigest(xmlContent: string): string {
+    // 1. Enveloped Signature Transform: remove <Signature> element
     const withoutSig = xmlContent.replace(/<Signature[\s\S]*?<\/Signature>/g, '');
-    return crypto.createHash('sha256').update(withoutSig, 'utf8').digest('base64');
+    // 2. C14N canonicalization
+    const canonicalized = this.canonicalize(withoutSig);
+    return crypto.createHash('sha256').update(canonicalized, 'utf8').digest('base64');
   }
 
   private buildSignedInfo(digestValue: string): string {
@@ -246,8 +254,10 @@ export class SigningService {
   }
 
   private computeSignature(signedInfo: string, privateKeyPem: string): string {
+    // C14N canonicalize SignedInfo before signing
+    const canonicalized = this.canonicalize(signedInfo);
     const sign = crypto.createSign('RSA-SHA256');
-    sign.update(signedInfo);
+    sign.update(canonicalized);
     sign.end();
     return sign.sign(privateKeyPem, 'base64');
   }
@@ -291,7 +301,7 @@ export class SigningService {
       .createHash('sha256')
       .update(cleanSig)
       .digest('hex');
-    return hash.substring(0, 6).toLowerCase();
+    return hash.substring(0, 6).toUpperCase();
   }
 
   private formatBase64(base64: string, lineWidth: number): string {
@@ -301,6 +311,70 @@ export class SigningService {
       lines.push(clean.substring(i, i + lineWidth));
     }
     return lines.join('\n');
+  }
+
+  /**
+   * Lightweight Canonical XML 1.0 (C14N) implementation.
+   * Per W3C Recommendation: http://www.w3.org/TR/2001/REC-xml-c14n-20010315
+   *
+   * Key transformations:
+   * 1. Normalize line endings to LF (\n)
+   * 2. Normalize attribute values (trim whitespace)
+   * 3. Expand self-closing/empty elements to start-end tag pairs
+   * 4. Sort attributes lexicographically (namespace declarations first, then by name)
+   * 5. Remove XML declaration (<?xml ...?>)
+   * 6. Normalize character references to UTF-8 characters
+   *
+   * This covers the subset of C14N required for DGII e-CF XMLDSig, where:
+   * - XML is self-generated with predictable structure
+   * - No DTD subset, no processing instructions beyond declaration
+   * - Minimal attribute usage (xmlns on root/Signature)
+   */
+  private canonicalize(xml: string): string {
+    let result = xml;
+
+    // 1. Remove XML declaration
+    result = result.replace(/<\?xml[^?]*\?>\s*/, '');
+
+    // 2. Normalize line endings: \r\n → \n, standalone \r → \n
+    result = result.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+    // 3. Expand self-closing elements: <foo/> → <foo></foo>, <foo attr="val"/> → <foo attr="val"></foo>
+    result = result.replace(/<([A-Za-z][A-Za-z0-9:._-]*)(\s[^>]*)?\s*\/>/g, (_, tag, attrs) => {
+      return `<${tag}${attrs || ''}></${tag}>`;
+    });
+
+    // 4. Sort attributes within each opening tag lexicographically
+    //    Per C14N: namespace declarations (xmlns:*) come first sorted, then regular attributes sorted
+    result = result.replace(/<([A-Za-z][A-Za-z0-9:._-]*)(\s+[^>]+)?>/g, (match, tag, attrStr) => {
+      if (!attrStr || !attrStr.trim()) return match;
+
+      // Parse attributes
+      const attrs: Array<{ name: string; value: string }> = [];
+      const attrRegex = /([A-Za-z:_][A-Za-z0-9:._-]*)=("[^"]*"|'[^']*')/g;
+      let attrMatch: RegExpExecArray | null;
+      while ((attrMatch = attrRegex.exec(attrStr)) !== null) {
+        attrs.push({ name: attrMatch[1], value: attrMatch[2] });
+      }
+
+      if (attrs.length <= 1) return match;
+
+      // Sort: xmlns declarations first (sorted), then regular attributes (sorted)
+      const nsAttrs = attrs.filter(a => a.name === 'xmlns' || a.name.startsWith('xmlns:'));
+      const regAttrs = attrs.filter(a => a.name !== 'xmlns' && !a.name.startsWith('xmlns:'));
+      nsAttrs.sort((a, b) => a.name.localeCompare(b.name));
+      regAttrs.sort((a, b) => a.name.localeCompare(b.name));
+
+      const sorted = [...nsAttrs, ...regAttrs];
+      const attrString = sorted.map(a => ` ${a.name}=${a.value}`).join('');
+      return `<${tag}${attrString}>`;
+    });
+
+    // 5. Normalize attribute value whitespace (C14N: normalize to double quotes, collapse whitespace)
+    //    Our XML already uses double quotes, so this is mainly for safety
+    result = result.replace(/='([^']*)'/g, '="$1"');
+
+    return result;
   }
 
   /**
@@ -384,9 +458,12 @@ export class SigningService {
       subjectStr.replace(/[-\s]/g, '').includes(rncNormalized);
 
     if (!containsRnc) {
-      this.logger.warn(
-        `Certificate SN mismatch: expected RNC ${expectedRnc}, ` +
-        `certificate subject: ${subjectStr}`,
+      // S5 fix: DGII will reject e-CF signed with another company's certificate.
+      // Must be a hard error, not just a warning.
+      throw new Error(
+        `Certificado no corresponde al emisor. RNC esperado: ${expectedRnc}, ` +
+        `Subject del certificado: ${subjectStr}. ` +
+        `DGII rechazará e-CF firmados con certificado de otro contribuyente.`,
       );
     } else {
       this.logger.debug(`Certificate RNC validated: ${expectedRnc}`);

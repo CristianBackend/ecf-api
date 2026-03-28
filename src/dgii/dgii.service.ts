@@ -63,38 +63,8 @@ export class DgiiService {
 
     const baseUrl = this.getBaseUrl(environment);
 
-    // Step 1: Request seed
-    // URL: {base}/autenticacion/api/autenticacion/semilla
-    this.logger.debug(`Requesting seed from DGII (${environment})...`);
-    const seedUrl = buildDgiiUrl(baseUrl, DGII_SERVICES.SEED);
-    const seedResponse = await this.httpGet(seedUrl);
-
-    if (!seedResponse.ok) {
-      throw new ServiceUnavailableException(
-        `DGII seed request failed: ${seedResponse.status} ${seedResponse.statusText}`,
-      );
-    }
-
-    const seedXml = await seedResponse.text();
-
-    // Step 2: Sign seed
-    const { signedXml: signedSeed } = this.signingService.signXml(seedXml, privateKey, certificate);
-
-    // Step 3: Validate signed seed → JWT
-    // Per DGII spec: POST multipart/form-data with field "xml"
-    this.logger.debug('Validating signed seed with DGII...');
-    const validateUrl = buildDgiiUrl(baseUrl, DGII_SERVICES.VALIDATE_SEED);
-    const tokenResponse = await this.httpPostMultipart(validateUrl, signedSeed, '');
-
-    if (!tokenResponse.ok) {
-      const errorBody = await tokenResponse.text();
-      throw new ServiceUnavailableException(
-        `DGII token validation failed: ${tokenResponse.status} - ${errorBody}`,
-      );
-    }
-
-    const tokenData = await tokenResponse.text();
-    const token = this.extractToken(tokenData);
+    // Authenticate with retry + exponential backoff (3 attempts)
+    const token = await this.authenticateWithRetry(baseUrl, privateKey, certificate);
 
     if (!token) {
       throw new ServiceUnavailableException('Could not extract token from DGII response');
@@ -241,7 +211,7 @@ export class DgiiService {
     const url = `${buildDgiiUrl(baseUrl, DGII_SERVICES.QUERY_RESULT)}?trackid=${trackId}`;
 
     const response = await this.httpGet(url, {
-      Authorization: `bearer ${token}`,
+      Authorization: `Bearer ${token}`,
     });
 
     const responseText = await response.text();
@@ -274,7 +244,7 @@ export class DgiiService {
     const url = `${buildDgiiUrl(baseUrl, DGII_SERVICES.QUERY_STATE)}?rncemisor=${rncEmisor}&ncfelectronico=${encf}`;
 
     const response = await this.httpGet(url, {
-      Authorization: `bearer ${token}`,
+      Authorization: `Bearer ${token}`,
     });
 
     const responseText = await response.text();
@@ -301,7 +271,7 @@ export class DgiiService {
     const url = `${buildDgiiUrl(baseUrl, DGII_SERVICES.QUERY_TRACKIDS)}?rncemisor=${rncEmisor}&encf=${encf}`;
 
     const response = await this.httpGet(url, {
-      Authorization: `bearer ${token}`,
+      Authorization: `Bearer ${token}`,
     });
 
     const responseText = await response.text();
@@ -332,7 +302,7 @@ export class DgiiService {
     const url = `${buildDgiiUrl(endpoints.fc, DGII_SERVICES.FC_QUERY)}?RNC_Emisor=${rncEmisor}&ENCF=${encf}&Cod_Seguridad_eCF=${securityCode}`;
 
     const response = await this.httpGet(url, {
-      Authorization: `bearer ${token}`,
+      Authorization: `Bearer ${token}`,
     });
 
     const responseText = await response.text();
@@ -481,7 +451,7 @@ export class DgiiService {
     }
 
     const response = await this.httpGet(url, {
-      Authorization: `bearer ${token}`,
+      Authorization: `Bearer ${token}`,
     });
 
     const responseText = await response.text();
@@ -535,6 +505,62 @@ export class DgiiService {
   // ============================================================
   // PRIVATE HELPERS
   // ============================================================
+
+  /**
+   * Authenticate with DGII using retry + exponential backoff.
+   * 3 attempts: immediate, 2s, 4s.
+   */
+  private async authenticateWithRetry(
+    baseUrl: string,
+    privateKey: string,
+    certificate: string,
+  ): Promise<string | null> {
+    const MAX_AUTH_RETRIES = 3;
+    const BASE_DELAY_MS = 2000;
+
+    for (let attempt = 1; attempt <= MAX_AUTH_RETRIES; attempt++) {
+      try {
+        // Step 1: Request seed
+        this.logger.debug(`Requesting seed from DGII (attempt ${attempt})...`);
+        const seedUrl = buildDgiiUrl(baseUrl, DGII_SERVICES.SEED);
+        const seedResponse = await this.httpGet(seedUrl);
+
+        if (!seedResponse.ok) {
+          throw new ServiceUnavailableException(
+            `DGII seed request failed: ${seedResponse.status} ${seedResponse.statusText}`,
+          );
+        }
+
+        const seedXml = await seedResponse.text();
+
+        // Step 2: Sign seed
+        const { signedXml: signedSeed } = this.signingService.signXml(seedXml, privateKey, certificate);
+
+        // Step 3: Validate signed seed → JWT
+        this.logger.debug('Validating signed seed with DGII...');
+        const validateUrl = buildDgiiUrl(baseUrl, DGII_SERVICES.VALIDATE_SEED);
+        const tokenResponse = await this.httpPostMultipart(validateUrl, signedSeed, '');
+
+        if (!tokenResponse.ok) {
+          const errorBody = await tokenResponse.text();
+          throw new ServiceUnavailableException(
+            `DGII token validation failed: ${tokenResponse.status} - ${errorBody}`,
+          );
+        }
+
+        const tokenData = await tokenResponse.text();
+        return this.extractToken(tokenData);
+      } catch (error: any) {
+        if (attempt === MAX_AUTH_RETRIES) {
+          throw error;
+        }
+        const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        this.logger.warn(`Auth attempt ${attempt} failed: ${error.message}. Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    return null;
+  }
 
   private getBaseUrl(environment: string): string {
     const endpoints = DGII_ENDPOINTS[environment as keyof typeof DGII_ENDPOINTS];
@@ -671,12 +697,17 @@ export class DgiiService {
   /**
    * HTTP POST as multipart/form-data (how DGII expects XML submissions).
    */
+  /** HTTP timeout in milliseconds for all DGII requests */
+  private static readonly HTTP_TIMEOUT_MS = 30_000;
+
   private async httpPostMultipart(
     url: string,
     xmlContent: string,
     token: string,
     fileName = 'ecf.xml',
   ): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DgiiService.HTTP_TIMEOUT_MS);
     try {
       // DGII expects multipart/form-data with 'xml' field
       // Per Descripción Técnica p.59: filename must be {RNCEmisor}{eNCF}.xml
@@ -697,23 +728,28 @@ export class DgiiService {
 
       // Token may be empty during seed validation (authentication step)
       if (token) {
-        headers['Authorization'] = `bearer ${token}`;
+        headers['Authorization'] = `Bearer ${token}`;
       }
 
       return await fetch(url, {
         method: 'POST',
         headers,
         body,
+        signal: controller.signal,
       });
     } catch (error: any) {
       this.logger.error(`HTTP POST failed: ${url} - ${error.message}`);
       throw new ServiceUnavailableException(
         `No se pudo conectar con DGII: ${error.message}`,
       );
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
   private async httpGet(url: string, headers?: Record<string, string>): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DgiiService.HTTP_TIMEOUT_MS);
     try {
       return await fetch(url, {
         method: 'GET',
@@ -721,12 +757,15 @@ export class DgiiService {
           Accept: 'application/xml, application/json',
           ...headers,
         },
+        signal: controller.signal,
       });
     } catch (error: any) {
       this.logger.error(`HTTP GET failed: ${url} - ${error.message}`);
       throw new ServiceUnavailableException(
         `No se pudo conectar con DGII: ${error.message}`,
       );
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -736,6 +775,8 @@ export class DgiiService {
     contentType: string,
     headers?: Record<string, string>,
   ): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DgiiService.HTTP_TIMEOUT_MS);
     try {
       return await fetch(url, {
         method: 'POST',
@@ -745,12 +786,15 @@ export class DgiiService {
           ...headers,
         },
         body,
+        signal: controller.signal,
       });
     } catch (error: any) {
       this.logger.error(`HTTP POST failed: ${url} - ${error.message}`);
       throw new ServiceUnavailableException(
         `No se pudo conectar con DGII: ${error.message}`,
       );
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }

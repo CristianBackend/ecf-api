@@ -76,12 +76,25 @@ export interface RetentionInput {
   isrPercepcion?: number;
 }
 
-/** E46 Exportaciones - Additional info (Formato campos 56-77) */
+/** Additional info — common fields for all types + E46-specific export fields */
 export interface ExportAdditionalInfoInput {
+  // Common fields (present in both E31 and E46 XSDs)
   shipmentDate?: string;           // FechaEmbarque (dd-MM-AAAA)
   shipmentNumber?: string;         // NumeroEmbarque
   containerNumber?: string;        // NumeroContenedor
   referenceNumber?: string;        // NumeroReferencia
+
+  // E31 XSD fields (weight, packaging)
+  grossWeight?: number;            // PesoBruto
+  netWeight?: number;              // PesoNeto
+  grossWeightUnit?: number;        // UnidadPesoBruto (UnidadMedidaType)
+  netWeightUnit?: number;          // UnidadPesoNeto (UnidadMedidaType)
+  packageCount?: number;           // CantidadBulto
+  packageUnit?: number;            // UnidadBulto (UnidadMedidaType)
+  packageVolume?: number;          // VolumenBulto
+  volumeUnit?: number;             // UnidadVolumen (UnidadMedidaType)
+
+  // E46-only export fields
   portOfShipment?: string;         // NombrePuertoEmbarque
   deliveryConditions?: string;     // CondicionesEntrega (CIF, FOB, etc)
   totalFob?: number;               // TotalFob
@@ -94,8 +107,18 @@ export interface ExportAdditionalInfoInput {
   arrivalPort?: string;            // NombrePuertoDesembarque
 }
 
-/** E46 Exportaciones - Transport info (Formato campos 78-87) */
+/** Transport info — common fields for all types + E46-specific export fields */
 export interface TransportInput {
+  // Common fields (E31 XSD: Conductor, DocumentoTransporte, Ficha, Placa, RutaTransporte, ZonaTransporte, NumeroAlbaran)
+  conductor?: string;               // Conductor name
+  documentoTransporte?: number;     // Transport document number
+  ficha?: string;                   // Ficha
+  placa?: string;                   // License plate (max 7 chars)
+  rutaTransporte?: string;          // Transport route
+  zonaTransporte?: string;          // Transport zone
+  numeroAlbaran?: string;           // Delivery note number
+
+  // E46-only export fields
   /** ViaTransporte: 01=Terrestre, 02=Marítimo, 03=Aérea */
   viaTransporte?: number;
   countryOrigin?: string;           // PaisOrigen
@@ -134,15 +157,17 @@ export interface InvoiceItemInput {
   unitPrice: number;
   discount?: number;
 
+  /** M3: RecargoMonto - per-item surcharge amount (Decimal18D1or2, optional) */
+  surcharge?: number;
+
   /** ITBIS rate: 18, 16, or 0 (defaults to 18). Use 'E' string for exempt */
   itbisRate?: number;
 
-  /** Good or Service indicator for facturación:
-   * 1=Bien gravado 18%, 2=Servicio gravado 18%,
-   * 3=Bien gravado 16%, 4=Servicio gravado 16%,
-   * E=Exento
+  /**
+   * IndicadorFacturacion per XSD IndicadorFacturacionType (xs:integer):
+   * 0=No Facturable, 1=ITBIS 18%, 2=ITBIS 16%, 3=ITBIS 0%, 4=Exento
    */
-  indicadorFacturacion?: number | string;
+  indicadorFacturacion?: number;
 
   /** 1=Bien, 2=Servicio (obligatorio en E41, recomendado en todos) */
   goodService?: number;
@@ -173,8 +198,14 @@ export interface InvoiceItemInput {
   referenceQuantity?: number;
   /** Sub-quantity (liters per unit for alcohol) */
   subQuantity?: number;
+  /** M6: CodigoSubcantidad - unit of measure code for sub-quantity (UnidadMedidaType) */
+  subQuantityCode?: number;
   /** PVP - Precio de Venta al Público (reference price for ISC) */
   referenceUnitPrice?: number;
+
+  /** M4: FechaElaboracion - manufacturing/creation date (DD-MM-YYYY, optional) */
+  manufacturingDate?: string;
+
   /** Indicator if item amount includes ITBIS: 0=no, 1=yes */
   indicadorMontoGravado?: number;
 }
@@ -187,6 +218,12 @@ export interface PaymentInput {
   method?: number;
   date?: string;
   termDays?: number;
+  /** M5: TipoCuentaPago - account type: CT=Corriente, AH=Ahorro, OT=Otra */
+  accountType?: string;
+  /** M5: NumeroCuentaPago - account number (max 28 chars) */
+  accountNumber?: string;
+  /** M5: BancoPago - bank name (max 75 chars) */
+  bank?: string;
 }
 
 /** Reference to original e-CF (for credit/debit notes) */
@@ -294,6 +331,26 @@ export interface DiscountSurchargeInput {
   amount: number;
   /** Indicador Norma 10-07: set to 1 when applicable */
   indicadorNorma1007?: number;
+  /** M7: MontoDescuentooRecargoOtraMoneda - amount in alternate currency */
+  amountOtherCurrency?: number;
+  /** M7: IndicadorFacturacionDescuentooRecargo - 1=ITBIS 18%, 2=ITBIS 16%, 3=ITBIS 0%, 4=Exento */
+  indicadorFacturacion?: number;
+}
+
+/**
+ * Per-tax-code entry for ImpuestosAdicionales in Totales (XSD structure).
+ */
+export interface AdditionalTaxEntry {
+  /** Tax code per DGII CodificacionTipoImpuestosType (e.g., '001'-'039') */
+  tipoImpuesto: string;
+  /** Tax rate */
+  tasaImpuestoAdicional: number;
+  /** ISC Específico amount for this tax code */
+  montoIscEspecifico?: number;
+  /** ISC Ad-Valorem amount for this tax code */
+  montoIscAdvalorem?: number;
+  /** Other additional tax amount for this tax code */
+  otrosImpuestosAdicionales?: number;
 }
 
 /**
@@ -340,4 +397,7 @@ export interface InvoiceTotals {
 
   /** Tolerance for cuadratura (= number of detail lines) */
   toleranciaGlobal: number;
+
+  /** Per-tax-code entries for ImpuestosAdicionales wrapper in Totales */
+  additionalTaxEntries: AdditionalTaxEntry[];
 }

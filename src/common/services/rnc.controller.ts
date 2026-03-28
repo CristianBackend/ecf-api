@@ -7,6 +7,8 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { RncValidationService } from './rnc-validation.service';
 import { ApiKeyGuard } from '../guards/api-key.guard';
+import { RequireScopes } from '../decorators/scopes.decorator';
+import { ApiKeyScope } from '@prisma/client';
 
 @ApiTags('rnc')
 @Controller('rnc')
@@ -16,6 +18,7 @@ export class RncController {
   constructor(private readonly rncService: RncValidationService) {}
 
   @Get(':rnc/validate')
+  @RequireScopes(ApiKeyScope.INVOICES_READ)
   @ApiOperation({
     summary: 'Validar formato de RNC/Cédula (offline, sin consulta DGII)',
     description: 'Verifica el dígito verificador algorítmicamente. No requiere conexión a DGII.',
@@ -26,6 +29,7 @@ export class RncController {
   }
 
   @Get(':rnc/lookup')
+  @RequireScopes(ApiKeyScope.INVOICES_READ)
   @ApiOperation({
     summary: 'Consultar datos del contribuyente en DGII',
     description:

@@ -14,7 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
 import { ReceptionService } from './reception.service';
 import { ResponseXmlBuilder, ArecfInput } from '../xml-builder/response-xml-builder';
-import { getTypeFromEncf, isValidEncf } from '../xml-builder/ecf-types';
+import { getTypeFromEncf, isValidEncf, ACECF_EXCLUDED_TYPES } from '../xml-builder/ecf-types';
 import { CertificatesService } from '../certificates/certificates.service';
 
 /**
@@ -134,35 +134,57 @@ export class FeReceptorController {
     const rncComprador = this.extractXmlField(xmlContent, 'RNCComprador');
     const encf = this.extractXmlField(xmlContent, 'eNCF');
 
+    // ----------------------------------------------------------------
+    // STEP 1: Look up the receiving company FIRST (before validation)
+    // so we can sign error ARECFs with the receiver's certificate.
+    // Per DGII protocol, ALL ARECFs should be signed when possible.
+    // ----------------------------------------------------------------
+    let company: any = null;
+    let signingMaterial: { privateKey: any; certificate: any } | null = null;
+
+    if (rncComprador) {
+      company = await this.prisma.company.findFirst({
+        where: { rnc: rncComprador },
+      });
+
+      if (company) {
+        try {
+          const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(
+            company.tenantId, company.id,
+          );
+          signingMaterial = this.signingService.extractFromP12(p12Buffer, passphrase);
+        } catch (err: any) {
+          this.logger.warn(`Could not load certificate for company ${company.id}: ${err.message}`);
+        }
+      }
+    }
+
+    // ----------------------------------------------------------------
+    // STEP 2: Validate the incoming e-CF — return signed error ARECFs
+    // ----------------------------------------------------------------
     if (!rncEmisor || !encf) {
-      // Error de especificación: return ARECF Estado=1, code 1
-      return this.buildErrorArecf(rncEmisor || '', rncComprador || '', encf || '', 1);
+      return this.buildSignedErrorArecf(rncEmisor || '', rncComprador || '', encf || '', 1, signingMaterial);
     }
 
     if (!isValidEncf(encf)) {
-      return this.buildErrorArecf(rncEmisor, rncComprador, encf, 1);
+      return this.buildSignedErrorArecf(rncEmisor, rncComprador, encf, 1, signingMaterial);
     }
 
-    // Per DGII Descripción Técnica p.50:
-    // Types 32, 41, 43, 45, 46, 47 do NOT apply for inter-taxpayer transmission
+    // Per DGII Descripción Técnica: ACECF applies to E31, E33, E34, E44, E45
     const typeCode = getTypeFromEncf(encf);
-    const excludedFromReception = [32, 41, 43, 45, 46, 47];
-    if (excludedFromReception.includes(typeCode)) {
-      return this.buildErrorArecf(rncEmisor, rncComprador, encf, 1);
+    if (ACECF_EXCLUDED_TYPES.includes(typeCode)) {
+      return this.buildSignedErrorArecf(rncEmisor, rncComprador, encf, 1, signingMaterial);
     }
-
-    // Find the receiving company by RNC
-    const company = await this.prisma.company.findFirst({
-      where: { rnc: rncComprador },
-    });
 
     if (!company) {
       this.logger.warn(`Received e-CF for unknown RNC: ${rncComprador}`);
-      // RNC Comprador no corresponde: code 4
-      return this.buildErrorArecf(rncEmisor, rncComprador, encf, 4);
+      // RNC Comprador no corresponde: code 4 (cannot sign — no company found)
+      return this.buildSignedErrorArecf(rncEmisor, rncComprador, encf, 4, null);
     }
 
-    // Store the received document
+    // ----------------------------------------------------------------
+    // STEP 3: Store the received document
+    // ----------------------------------------------------------------
     const emitterName = this.extractXmlField(xmlContent, 'RazonSocialEmisor') || rncEmisor;
     const totalAmount = parseFloat(this.extractXmlField(xmlContent, 'MontoTotal') || '0');
 
@@ -184,7 +206,9 @@ export class FeReceptorController {
       }
     }
 
-    // Build and sign ARECF as response
+    // ----------------------------------------------------------------
+    // STEP 4: Build and sign success ARECF (Estado=0)
+    // ----------------------------------------------------------------
     const arecfInput: ArecfInput = {
       receiverRnc: company.rnc,
       receiverName: company.businessName,
@@ -199,15 +223,15 @@ export class FeReceptorController {
 
     const arecfXml = this.responseXmlBuilder.buildArecfXml(arecfInput);
 
-    // Sign the ARECF with the receiver's certificate
-    const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(
-      company.tenantId, company.id,
-    );
-    const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase);
-    const { signedXml } = this.signingService.signXml(arecfXml, privateKey, certificate);
+    if (signingMaterial) {
+      const { signedXml } = this.signingService.signXml(arecfXml, signingMaterial.privateKey, signingMaterial.certificate);
+      this.logger.log(`Signed ARECF returned for ${encf} from ${rncEmisor}`);
+      return signedXml;
+    }
 
-    this.logger.log(`ARECF returned for ${encf} from ${rncEmisor}`);
-    return signedXml;
+    // Fallback: return unsigned if certificate could not be loaded (should not happen for success path)
+    this.logger.warn(`Unsigned ARECF returned for ${encf} — certificate unavailable`);
+    return arecfXml;
   }
 
   // ============================================================
@@ -263,10 +287,17 @@ export class FeReceptorController {
   // ============================================================
 
   /**
-   * Build a signed ARECF with Estado=1 (No Recibido) for validation errors.
-   * Per DGII protocol, the receiver always returns an ARECF XML.
+   * Build an ARECF with Estado=1 (No Recibido) for validation errors,
+   * signed with the receiver's certificate when available.
+   * Per DGII protocol, ALL ARECFs should be digitally signed.
    */
-  private buildErrorArecf(rncEmisor: string, rncComprador: string, encf: string, errorCode: number): string {
+  private buildSignedErrorArecf(
+    rncEmisor: string,
+    rncComprador: string,
+    encf: string,
+    errorCode: number,
+    signingMaterial: { privateKey: any; certificate: any } | null,
+  ): string {
     const arecfXml = this.responseXmlBuilder.buildArecfErrorXml({
       emitterRnc: rncEmisor,
       receiverRnc: rncComprador,
@@ -274,7 +305,15 @@ export class FeReceptorController {
       errorCode,
     });
 
-    this.logger.warn(`ARECF error returned for ${encf}: code ${errorCode}`);
+    if (signingMaterial) {
+      const { signedXml } = this.signingService.signXml(
+        arecfXml, signingMaterial.privateKey, signingMaterial.certificate,
+      );
+      this.logger.warn(`Signed ARECF error returned for ${encf}: code ${errorCode}`);
+      return signedXml;
+    }
+
+    this.logger.warn(`Unsigned ARECF error returned for ${encf}: code ${errorCode} (no certificate available)`);
     return arecfXml;
   }
 

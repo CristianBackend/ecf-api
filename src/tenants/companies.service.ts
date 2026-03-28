@@ -59,6 +59,8 @@ export class CompaniesService {
         municipality: dto.municipality,
         province: dto.province,
         activityCode: dto.activityCode,
+        branchCode: dto.branchCode,
+        economicActivity: dto.economicActivity,
         dgiiEnv: dto.dgiiEnv,
       },
     });
