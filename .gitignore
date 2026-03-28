@@ -1,8 +1,28 @@
-dist/
+# Dependencies
 node_modules/
+
+# Build
+dist/
+
+# Environment variables
 .env
+.env.*
+
+# Certificates
 *.p12
 *.pfx
+
+# Claude Code
+.claude/
+
+# Coverage
 coverage/
-.DS_Store
+.nyc_output/
+
+# Logs
 *.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
