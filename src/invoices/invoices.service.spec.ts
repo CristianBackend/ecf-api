@@ -12,7 +12,7 @@
  */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { InvoicesService } from './invoices.service';
-import { InvoiceStatus } from '@prisma/client';
+import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 
 type Mock = jest.Mock;
 
@@ -112,6 +112,10 @@ function makeMocks() {
     enqueueEcfProcessing: jest.fn(async () => ({ id: 'job-1' })) as Mock,
   };
 
+  const webhooksService = {
+    emit: jest.fn(async () => ({ jobId: 'hook-1', deliveryId: 'del-1' })) as Mock,
+  };
+
   // unused by create() but wired so DI works
   const signingService: any = {};
   const dgiiService: any = {};
@@ -125,6 +129,7 @@ function makeMocks() {
     sequencesService,
     rncValidation,
     queueService,
+    webhooksService,
     signingService,
     dgiiService,
     certificatesService,
@@ -144,6 +149,7 @@ function buildService(mocks: ReturnType<typeof makeMocks>) {
     mocks.xsdValidation as any,
     mocks.rncValidation as any,
     mocks.queueService as any,
+    mocks.webhooksService as any,
   );
 }
 
@@ -207,6 +213,22 @@ describe('InvoicesService.create — async pipeline', () => {
     const auditArgs = mocks.prisma.auditLog.create.mock.calls[0][0];
     expect(auditArgs.data.action).toBe('queued');
     expect(auditArgs.data.entityType).toBe('invoice');
+  });
+
+  it('emits the INVOICE_QUEUED webhook after enqueuing the job', async () => {
+    await service.create('tenant-1', makeValidDto());
+
+    expect(mocks.webhooksService.emit).toHaveBeenCalledTimes(1);
+    const [tenantId, event, payload] = mocks.webhooksService.emit.mock.calls[0];
+    expect(tenantId).toBe('tenant-1');
+    expect(event).toBe(WebhookEvent.INVOICE_QUEUED);
+    expect(payload).toEqual(
+      expect.objectContaining({
+        invoiceId: 'invoice-uuid-1',
+        encf: 'E310000000001',
+        ecfType: 'E31',
+      }),
+    );
   });
 
   it('does not touch signing, certificates, or DGII in create()', async () => {

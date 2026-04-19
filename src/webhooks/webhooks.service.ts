@@ -1,25 +1,73 @@
-import {
-  Injectable,
-  NotFoundException,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWebhookDto, UpdateWebhookDto } from './dto/webhook.dto';
 import { WebhookEvent } from '@prisma/client';
-import * as crypto from 'crypto';
+import { QUEUES } from '../queue/queue.constants';
+import {
+  WebhookDeliveryJobData,
+  WEBHOOK_MAX_ATTEMPTS,
+} from './webhook-delivery.processor';
 
+/**
+ * WebhooksService owns the public API for webhook subscriptions and the
+ * single emit() entry-point used by the rest of the app.
+ *
+ * There is **only one** public way to emit a webhook: {@link emit}. It
+ * enqueues a WebhookDelivery job to BullMQ; the WebhookDeliveryProcessor
+ * handles fan-out, HMAC signing, HTTP POST, retry/backoff, and auto-
+ * deactivation. Callers never open HTTP connections themselves.
+ */
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @InjectQueue(QUEUES.WEBHOOK_DELIVERY)
+    private readonly webhookQueue: Queue<WebhookDeliveryJobData>,
+  ) {}
 
   /**
-   * Create a webhook subscription.
-   * Generates an HMAC secret for payload verification.
+   * Emit a webhook event. Enqueues a delivery job; the actual HTTP POST
+   * happens asynchronously on the WebhookDeliveryProcessor worker.
+   */
+  async emit(
+    tenantId: string,
+    event: WebhookEvent,
+    payload: Record<string, any>,
+  ): Promise<{ jobId: string; deliveryId: string }> {
+    const deliveryId = crypto.randomUUID();
+    const emittedAt = new Date().toISOString();
+
+    const job = await this.webhookQueue.add(
+      event,
+      { tenantId, event, payload, deliveryId, emittedAt },
+      {
+        attempts: WEBHOOK_MAX_ATTEMPTS,
+        backoff: { type: 'custom' },
+        removeOnComplete: { age: 86400 },
+        removeOnFail: { age: 604800 },
+      },
+    );
+
+    this.logger.debug(`Emitted ${event} (delivery ${deliveryId}, job ${job.id})`);
+    return { jobId: String(job.id), deliveryId };
+  }
+
+  // ============================================================
+  // CRUD
+  // ============================================================
+
+  /**
+   * Create a webhook subscription. Generates a fresh secret (returned only
+   * once) and stores its SHA-256 hash, which is the HMAC key used by the
+   * delivery processor — subscribers therefore verify signatures with
+   * `sha256(secret).hex()` as the key.
    */
   async create(tenantId: string, dto: CreateWebhookDto) {
-    // Generate HMAC secret for this subscription
     const secret = `whsec_${crypto.randomBytes(32).toString('hex')}`;
     const secretHash = crypto.createHash('sha256').update(secret).digest('hex');
 
@@ -39,7 +87,7 @@ export class WebhooksService {
       id: webhook.id,
       url: webhook.url,
       events: webhook.events,
-      secret, // Only shown once!
+      secret,
       isActive: webhook.isActive,
       createdAt: webhook.createdAt,
       note: '⚠️ Guarda el secret. No se mostrará de nuevo. Úsalo para verificar la firma HMAC.',
@@ -109,173 +157,5 @@ export class WebhooksService {
 
     await this.prisma.webhookSubscription.delete({ where: { id } });
     return { message: 'Webhook eliminado' };
-  }
-
-  /**
-   * Dispatch an event to all matching webhook subscriptions.
-   * Creates delivery records and attempts immediate delivery.
-   */
-  async dispatch(tenantId: string, event: WebhookEvent, payload: any): Promise<void> {
-    const subscriptions = await this.prisma.webhookSubscription.findMany({
-      where: {
-        tenantId,
-        isActive: true,
-        events: { has: event },
-      },
-    });
-
-    if (subscriptions.length === 0) {
-      this.logger.debug(`No webhooks for event ${event} (tenant: ${tenantId})`);
-      return;
-    }
-
-    this.logger.log(`Dispatching ${event} to ${subscriptions.length} webhook(s)`);
-
-    for (const sub of subscriptions) {
-      // Create delivery record
-      const delivery = await this.prisma.webhookDelivery.create({
-        data: {
-          tenantId,
-          subscriptionId: sub.id,
-          event,
-          payload,
-          attempts: 0,
-          maxAttempts: 5,
-        },
-      });
-
-      // Attempt immediate delivery
-      this.deliverWebhook(delivery.id, sub.url, sub.secretHash, event, payload)
-        .catch((err) => this.logger.warn(`Webhook delivery failed: ${err.message}`));
-    }
-  }
-
-  /**
-   * Retry failed webhook deliveries.
-   * Called periodically or on-demand.
-   */
-  async retryFailed(): Promise<number> {
-    const pending = await this.prisma.webhookDelivery.findMany({
-      where: {
-        deliveredAt: null,
-        attempts: { lt: 5 },
-        nextRetryAt: { lte: new Date() },
-      },
-      include: {
-        subscription: { select: { url: true, secretHash: true } },
-      },
-      take: 50,
-    });
-
-    let retried = 0;
-    for (const delivery of pending) {
-      await this.deliverWebhook(
-        delivery.id,
-        delivery.subscription.url,
-        delivery.subscription.secretHash,
-        delivery.event,
-        delivery.payload,
-      ).catch(() => {});
-      retried++;
-    }
-
-    if (retried > 0) {
-      this.logger.log(`Retried ${retried} webhook deliveries`);
-    }
-
-    return retried;
-  }
-
-  // ============================================================
-  // PRIVATE DELIVERY LOGIC
-  // ============================================================
-
-  private async deliverWebhook(
-    deliveryId: string,
-    url: string,
-    secretHash: string,
-    event: WebhookEvent,
-    payload: any,
-  ): Promise<void> {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const body = JSON.stringify(payload);
-
-    // Create HMAC signature: sha256(timestamp.body) using the secret
-    const signaturePayload = `${timestamp}.${body}`;
-    const signature = crypto
-      .createHmac('sha256', secretHash)
-      .update(signaturePayload)
-      .digest('hex');
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-ECF-Event': event,
-          'X-ECF-Timestamp': String(timestamp),
-          'X-ECF-Signature': `sha256=${signature}`,
-          'X-ECF-Delivery-Id': deliveryId,
-          'User-Agent': 'ECF-API-Webhook/1.0',
-        },
-        body,
-        signal: AbortSignal.timeout(10000), // 10s timeout
-      });
-
-      const responseBody = await response.text().catch(() => '');
-
-      if (response.ok) {
-        // Success
-        await this.prisma.webhookDelivery.update({
-          where: { id: deliveryId },
-          data: {
-            statusCode: response.status,
-            responseBody: responseBody.substring(0, 1000),
-            attempts: { increment: 1 },
-            deliveredAt: new Date(),
-          },
-        });
-        this.logger.debug(`Webhook delivered: ${deliveryId} → ${response.status}`);
-      } else {
-        // HTTP error - schedule retry
-        await this.scheduleRetry(deliveryId, response.status, responseBody);
-      }
-    } catch (error: any) {
-      // Network error - schedule retry
-      await this.scheduleRetry(deliveryId, 0, error.message);
-    }
-  }
-
-  private async scheduleRetry(
-    deliveryId: string,
-    statusCode: number,
-    responseBody: string,
-  ): Promise<void> {
-    const delivery = await this.prisma.webhookDelivery.findUnique({
-      where: { id: deliveryId },
-    });
-
-    if (!delivery) return;
-
-    const attempt = delivery.attempts + 1;
-
-    // Exponential backoff: 30s, 2min, 8min, 32min, 2h
-    const backoffSeconds = Math.min(30 * Math.pow(4, attempt - 1), 7200);
-    const nextRetry = new Date(Date.now() + backoffSeconds * 1000);
-
-    await this.prisma.webhookDelivery.update({
-      where: { id: deliveryId },
-      data: {
-        statusCode,
-        responseBody: responseBody.substring(0, 1000),
-        attempts: attempt,
-        nextRetryAt: attempt < delivery.maxAttempts ? nextRetry : null,
-      },
-    });
-
-    this.logger.warn(
-      `Webhook ${deliveryId} failed (attempt ${attempt}/${delivery.maxAttempts}). ` +
-      `Next retry: ${nextRetry.toISOString()}`,
-    );
   }
 }

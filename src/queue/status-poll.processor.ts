@@ -6,6 +6,7 @@ import { DgiiService } from '../dgii/dgii.service';
 import { SigningService } from '../signing/signing.service';
 import { CertificatesService } from '../certificates/certificates.service';
 import { QueueService } from './queue.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 import { QUEUES } from './queue.constants';
 
@@ -42,6 +43,7 @@ export class StatusPollProcessor extends WorkerHost {
     private readonly signingService: SigningService,
     private readonly certificatesService: CertificatesService,
     private readonly queueService: QueueService,
+    private readonly webhooksService: WebhooksService,
   ) {
     super();
   }
@@ -167,11 +169,11 @@ export class StatusPollProcessor extends WorkerHost {
         message: result.message, attempts: attempt,
       };
       if (newStatus === InvoiceStatus.ACCEPTED) {
-        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_ACCEPTED, webhookPayload);
+        await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_ACCEPTED, webhookPayload);
       } else if (newStatus === InvoiceStatus.REJECTED) {
-        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_REJECTED, webhookPayload);
+        await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_REJECTED, webhookPayload);
       } else if (newStatus === InvoiceStatus.CONDITIONAL) {
-        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_CONDITIONAL, webhookPayload);
+        await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_CONDITIONAL, webhookPayload);
       }
 
       return {

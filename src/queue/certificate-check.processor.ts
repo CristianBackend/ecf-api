@@ -2,6 +2,8 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
+import { WebhookEvent } from '@prisma/client';
 import { QUEUES } from './queue.constants';
 
 export interface CertificateCheckJobData {
@@ -12,19 +14,22 @@ export interface CertificateCheckJobData {
 /**
  * Certificate Check Worker
  *
- * Periodic job (run daily via cron) that checks certificate expiration
- * dates and logs warnings at different severity levels.
+ * Periodic job (enqueued daily by SchedulerService) that checks certificate
+ * expiration dates.
  *
  * Thresholds:
- * - 30 days: WARNING
- * - 7 days: CRITICAL
- * - 0 days: EXPIRED (auto-deactivate)
+ * - 30 days:  WARNING  → emits CERTIFICATE_EXPIRING webhook
+ * - 7 days:   CRITICAL → emits CERTIFICATE_EXPIRING webhook
+ * - 0 days:   EXPIRED  → auto-deactivates + emits CERTIFICATE_EXPIRING
  */
 @Processor(QUEUES.CERTIFICATE_CHECK)
 export class CertificateCheckProcessor extends WorkerHost {
   private readonly logger = new Logger(CertificateCheckProcessor.name);
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly webhooksService: WebhooksService,
+  ) {
     super();
   }
 
@@ -62,25 +67,26 @@ export class CertificateCheckProcessor extends WorkerHost {
 
       if (daysUntilExpiry <= 0) {
         expired.push(info);
-
         await this.prisma.certificate.update({
           where: { id: cert.id },
           data: { isActive: false },
         });
-
         this.logger.error(
           `EXPIRED: Certificate for ${cert.company.businessName} (${cert.company.rnc})`,
         );
+        await this.emitExpiringWebhook(cert.tenantId, info, 'EXPIRED');
       } else if (daysUntilExpiry <= 7) {
         critical.push(info);
         this.logger.warn(
           `CRITICAL: Certificate for ${cert.company.businessName} expires in ${daysUntilExpiry} days`,
         );
+        await this.emitExpiringWebhook(cert.tenantId, info, 'CRITICAL');
       } else if (daysUntilExpiry <= 30) {
         warnings.push(info);
         this.logger.log(
           `WARNING: Certificate for ${cert.company.businessName} expires in ${daysUntilExpiry} days`,
         );
+        await this.emitExpiringWebhook(cert.tenantId, info, 'WARNING');
       }
     }
 
@@ -100,5 +106,17 @@ export class CertificateCheckProcessor extends WorkerHost {
     );
 
     return result;
+  }
+
+  private async emitExpiringWebhook(
+    tenantId: string,
+    info: Record<string, any>,
+    severity: 'WARNING' | 'CRITICAL' | 'EXPIRED',
+  ): Promise<void> {
+    await this.webhooksService
+      .emit(tenantId, WebhookEvent.CERTIFICATE_EXPIRING, { ...info, severity })
+      .catch((err) =>
+        this.logger.error(`Failed to emit CERTIFICATE_EXPIRING: ${err.message}`),
+      );
   }
 }

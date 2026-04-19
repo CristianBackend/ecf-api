@@ -15,8 +15,9 @@ import { ValidationService } from '../validation/validation.service';
 import { XsdValidationService } from '../validation/xsd-validation.service';
 import { RncValidationService } from '../common/services/rnc-validation.service';
 import { QueueService } from '../queue/queue.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { CreateInvoiceDto, TYPES_REQUIRING_RNC } from './dto/invoice.dto';
-import { InvoiceStatus, EcfType } from '@prisma/client';
+import { InvoiceStatus, EcfType, WebhookEvent } from '@prisma/client';
 import {
   DGII_STATUS,
   FC_FULL_SUBMISSION_THRESHOLD,
@@ -38,6 +39,7 @@ export class InvoicesService {
     private readonly xsdValidation: XsdValidationService,
     private readonly rncValidation: RncValidationService,
     private readonly queueService: QueueService,
+    private readonly webhooksService: WebhooksService,
   ) {}
 
   /**
@@ -230,6 +232,14 @@ export class InvoicesService {
       invoiceId: invoice.id,
       tenantId,
       companyId: dto.companyId,
+    });
+
+    await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_QUEUED, {
+      invoiceId: invoice.id,
+      encf,
+      ecfType,
+      isRfce,
+      totalAmount: totals.totalAmount,
     });
 
     return this.findOne(tenantId, invoice.id);
@@ -425,6 +435,14 @@ export class InvoicesService {
     });
 
     await this.createAuditLog(tenantId, 'invoice', invoice.id, 'voided', {
+      encf: invoice.encf,
+      ecfType: invoice.ecfType,
+      previousStatus: invoice.status,
+      reason: reason || 'Anulada por el usuario',
+    });
+
+    await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_VOIDED, {
+      invoiceId: invoice.id,
       encf: invoice.encf,
       ecfType: invoice.ecfType,
       previousStatus: invoice.status,

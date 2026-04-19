@@ -70,12 +70,4 @@ export class WebhooksController {
   ) {
     return this.webhooksService.delete(tenant.id, id);
   }
-
-  @Post('retry')
-  @RequireScopes(ApiKeyScope.WEBHOOKS_MANAGE)
-  @ApiOperation({ summary: 'Reintentar entregas fallidas' })
-  async retry(@CurrentTenant() tenant: RequestTenant) {
-    const count = await this.webhooksService.retryFailed();
-    return { retriedCount: count };
-  }
 }

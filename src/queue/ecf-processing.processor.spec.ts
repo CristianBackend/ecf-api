@@ -76,7 +76,10 @@ function makeProcessor() {
 
   const queueService = {
     enqueueStatusPoll: jest.fn(async () => ({ id: 'poll-1' })) as Mock,
-    fireWebhookEvent: jest.fn(async () => ({ id: 'hook-1' })) as Mock,
+  };
+
+  const webhooksService = {
+    emit: jest.fn(async () => ({ jobId: 'hook-1', deliveryId: 'del-1' })) as Mock,
   };
 
   const processor = new EcfProcessingProcessor(
@@ -86,6 +89,7 @@ function makeProcessor() {
     dgiiService as any,
     certificatesService as any,
     queueService as any,
+    webhooksService as any,
   );
 
   return {
@@ -96,6 +100,7 @@ function makeProcessor() {
     dgiiService,
     certificatesService,
     queueService,
+    webhooksService,
   };
 }
 
@@ -130,7 +135,7 @@ describe('EcfProcessingProcessor', () => {
       expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
 
       // Webhook fan-out: submitted (has trackId) + accepted
-      const events = m.queueService.fireWebhookEvent.mock.calls.map((c) => c[1]);
+      const events = m.webhooksService.emit.mock.calls.map((c) => c[1]);
       expect(events).toContain(WebhookEvent.INVOICE_SUBMITTED);
       expect(events).toContain(WebhookEvent.INVOICE_ACCEPTED);
 
@@ -161,7 +166,7 @@ describe('EcfProcessingProcessor', () => {
         }),
       );
 
-      const events = m.queueService.fireWebhookEvent.mock.calls.map((c) => c[1]);
+      const events = m.webhooksService.emit.mock.calls.map((c) => c[1]);
       expect(events).toContain(WebhookEvent.INVOICE_SUBMITTED);
       // No final-state webhook while still PROCESSING
       expect(events).not.toContain(WebhookEvent.INVOICE_ACCEPTED);
@@ -186,7 +191,7 @@ describe('EcfProcessingProcessor', () => {
       expect(statusUpdates).toContain(InvoiceStatus.CONTINGENCY);
 
       // No INVOICE_ERROR webhook (that's only for non-network errors)
-      const events = m.queueService.fireWebhookEvent.mock.calls.map((c) => c[1]);
+      const events = m.webhooksService.emit.mock.calls.map((c) => c[1]);
       expect(events).not.toContain(WebhookEvent.INVOICE_ERROR);
     });
   });
@@ -208,7 +213,7 @@ describe('EcfProcessingProcessor', () => {
         .filter((s) => !!s);
       expect(statusUpdates).toContain(InvoiceStatus.ERROR);
 
-      const events = m.queueService.fireWebhookEvent.mock.calls.map((c) => c[1]);
+      const events = m.webhooksService.emit.mock.calls.map((c) => c[1]);
       expect(events).toContain(WebhookEvent.INVOICE_ERROR);
     });
   });
@@ -227,7 +232,7 @@ describe('EcfProcessingProcessor', () => {
         new Error('DGII 503'),
       );
 
-      const events = m.queueService.fireWebhookEvent.mock.calls.map((c) => c[1]);
+      const events = m.webhooksService.emit.mock.calls.map((c) => c[1]);
       expect(events).toContain(WebhookEvent.INVOICE_CONTINGENCY);
     });
 
@@ -240,7 +245,7 @@ describe('EcfProcessingProcessor', () => {
         new Error('DGII 503'),
       );
 
-      expect(m.queueService.fireWebhookEvent).not.toHaveBeenCalled();
+      expect(m.webhooksService.emit).not.toHaveBeenCalled();
       // Should not even need to look at the invoice yet
       expect(m.prisma.invoice.findFirst).not.toHaveBeenCalled();
     });
@@ -257,7 +262,7 @@ describe('EcfProcessingProcessor', () => {
         new Error('DGII 503'),
       );
 
-      expect(m.queueService.fireWebhookEvent).not.toHaveBeenCalled();
+      expect(m.webhooksService.emit).not.toHaveBeenCalled();
     });
   });
 
@@ -273,7 +278,7 @@ describe('EcfProcessingProcessor', () => {
       expect(result.status).toBe(InvoiceStatus.ACCEPTED);
       expect(m.signingService.signXml).not.toHaveBeenCalled();
       expect(m.dgiiService.submitEcf).not.toHaveBeenCalled();
-      expect(m.queueService.fireWebhookEvent).not.toHaveBeenCalled();
+      expect(m.webhooksService.emit).not.toHaveBeenCalled();
     });
   });
 });

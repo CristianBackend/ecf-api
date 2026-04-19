@@ -7,6 +7,7 @@ import { SigningService } from '../signing/signing.service';
 import { DgiiService } from '../dgii/dgii.service';
 import { CertificatesService } from '../certificates/certificates.service';
 import { QueueService } from './queue.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 import { QUEUES } from './queue.constants';
 import { FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-types';
@@ -46,6 +47,7 @@ export class EcfProcessingProcessor extends WorkerHost {
     private readonly dgiiService: DgiiService,
     private readonly certificatesService: CertificatesService,
     private readonly queueService: QueueService,
+    private readonly webhooksService: WebhooksService,
   ) {
     super();
   }
@@ -186,7 +188,7 @@ export class EcfProcessingProcessor extends WorkerHost {
       //    the subsequent status). Subscribers use this to record the DGII
       //    acknowledgment distinct from the final accepted/rejected decision.
       if (submissionResult.trackId) {
-        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_SUBMITTED, {
+        await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_SUBMITTED, {
           invoiceId,
           encf: invoice.encf,
           trackId: submissionResult.trackId,
@@ -207,15 +209,15 @@ export class EcfProcessingProcessor extends WorkerHost {
 
       // 9. Fire webhook for final statuses
       if (newStatus === InvoiceStatus.ACCEPTED) {
-        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_ACCEPTED, {
+        await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_ACCEPTED, {
           invoiceId, encf: invoice.encf, trackId: submissionResult.trackId,
         });
       } else if (newStatus === InvoiceStatus.REJECTED) {
-        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_REJECTED, {
+        await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_REJECTED, {
           invoiceId, encf: invoice.encf, message: submissionResult.message,
         });
       } else if (newStatus === InvoiceStatus.CONDITIONAL) {
-        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_CONDITIONAL, {
+        await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_CONDITIONAL, {
           invoiceId, encf: invoice.encf, message: submissionResult.message,
         });
       }
@@ -247,7 +249,7 @@ export class EcfProcessingProcessor extends WorkerHost {
 
       // Fire webhook for ERROR status (non-network errors only, network will retry)
       if (!isNetworkError) {
-        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_ERROR, {
+        await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_ERROR, {
           invoiceId, encf: invoice.encf, error: error.message,
         }).catch(() => {});
       }
@@ -286,7 +288,7 @@ export class EcfProcessingProcessor extends WorkerHost {
       return;
     }
 
-    await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_CONTINGENCY, {
+    await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_CONTINGENCY, {
       invoiceId,
       encf: invoice.encf,
       error: error.message,

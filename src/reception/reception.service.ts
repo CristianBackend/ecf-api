@@ -66,7 +66,7 @@ export class ReceptionService {
       this.logger.warn(`ARECF send failed for ${data.encf}: ${error.message}`);
     }
 
-    await this.webhooksService.dispatch(tenantId, WebhookEvent.DOCUMENT_RECEIVED, {
+    await this.webhooksService.emit(tenantId, WebhookEvent.DOCUMENT_RECEIVED, {
       id: received.id,
       encf: data.encf,
       emitterRnc: data.emitterRnc,
@@ -210,7 +210,7 @@ export class ReceptionService {
       },
     });
 
-    await this.webhooksService.dispatch(
+    await this.webhooksService.emit(
       tenantId,
       WebhookEvent.COMMERCIAL_APPROVAL_RECEIVED,
       { encf: doc.encf, emitterRnc: doc.emitterRnc, approved, rejectionReason },
