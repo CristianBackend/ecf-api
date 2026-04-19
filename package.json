@@ -35,6 +35,7 @@
     "@nestjs/swagger": "^7.4.0",
     "@nestjs/throttler": "^6.2.0",
     "@prisma/client": "^5.19.0",
+    "@xmldom/xmldom": "^0.9.10",
     "bcrypt": "^5.1.1",
     "bullmq": "^5.12.0",
     "class-transformer": "^0.5.1",
@@ -51,6 +52,7 @@
     "pino-pretty": "^11.2.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "xml-crypto": "^6.1.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
