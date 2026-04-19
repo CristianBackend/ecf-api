@@ -2,6 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
+import { EncryptionService } from '../common/services/encryption.service';
 import { WebhookEvent } from '@prisma/client';
 import { QUEUES } from '../queue/queue.constants';
 import * as crypto from 'crypto';
@@ -51,8 +52,11 @@ export const WEBHOOK_AUTO_DEACTIVATE_THRESHOLD = 10;
  *     X-ECF-Delivery-Id: <uuid>
  *     X-ECF-Timestamp: <ISO8601 emittedAt>
  *     X-ECF-Signature: sha256=<hex>   (HMAC-SHA256 of the raw body, keyed
- *                                      by the webhook secret stored as
- *                                      WebhookSubscription.secretHash)
+ *                                      by the raw webhook secret — the same
+ *                                      `whsec_...` string returned once at
+ *                                      creation. The ciphertext lives in
+ *                                      WebhookSubscription.secretEnc and is
+ *                                      decrypted per delivery.)
  *     User-Agent: ECF-API-Webhook/1.0
  *
  * Retries: up to 5 attempts total (one initial + 4 retries) with backoff
@@ -76,18 +80,31 @@ export const WEBHOOK_AUTO_DEACTIVATE_THRESHOLD = 10;
 export class WebhookDeliveryProcessor extends WorkerHost {
   private readonly logger = new Logger(WebhookDeliveryProcessor.name);
 
-  constructor(private readonly prisma: PrismaService) {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
+  ) {
     super();
   }
 
   async process(job: Job<WebhookDeliveryJobData>): Promise<any> {
     const { tenantId, event, payload, deliveryId, emittedAt } = job.data;
 
+    // `needsRegeneration` rows are skipped because we intentionally have no
+    // way to recover their secret — subscribers must recreate them.
     const webhooks = await this.prisma.webhookSubscription.findMany({
       where: {
         tenantId,
         isActive: true,
         events: { has: event },
+        needsRegeneration: false,
+        secretEnc: { not: null },
+      },
+      select: {
+        id: true,
+        tenantId: true,
+        url: true,
+        secretEnc: true,
       },
     });
 
@@ -126,7 +143,7 @@ export class WebhookDeliveryProcessor extends WorkerHost {
       id: string;
       tenantId: string;
       url: string;
-      secretHash: string;
+      secretEnc: Buffer | null;
     },
     event: WebhookEvent,
     payload: Record<string, any>,
@@ -140,7 +157,15 @@ export class WebhookDeliveryProcessor extends WorkerHost {
       data: payload,
     });
 
-    const signature = computeHmacSha256(webhook.secretHash, body);
+    if (!webhook.secretEnc) {
+      throw new Error(
+        `Webhook ${webhook.id} has no encrypted secret — cannot sign delivery.`,
+      );
+    }
+    const secret = this.encryption
+      .decrypt(Buffer.from(webhook.secretEnc))
+      .toString('utf8');
+    const signature = computeHmacSha256(secret, body);
 
     let statusCode = 0;
     let responseBody = '';

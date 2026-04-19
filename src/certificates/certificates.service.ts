@@ -5,8 +5,8 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EncryptionService } from '../common/services/encryption.service';
 import { UploadCertificateDto } from './dto/certificate.dto';
-import * as crypto from 'crypto';
 
 /**
  * Certificate info extracted from .p12 file
@@ -20,29 +20,22 @@ interface CertificateInfo {
   validTo: Date;
 }
 
+/**
+ * Certificates are stored AES-256-GCM encrypted using the shared
+ * {@link EncryptionService}, which is keyed off `CERT_ENCRYPTION_KEY` —
+ * intentionally decoupled from the JWT signing secret so operators can
+ * rotate that key during a security incident without destroying every
+ * stored .p12 container. Key rotation for the certificate keystore itself
+ * is done via `scripts/rotate-cert-encryption.ts`.
+ */
 @Injectable()
 export class CertificatesService {
   private readonly logger = new Logger(CertificatesService.name);
 
-  /**
-   * Encryption key derived from JWT_SECRET for local dev.
-   * In production, this would use AWS KMS envelope encryption.
-   */
-  private readonly encryptionKey: Buffer;
-
-  constructor(private readonly prisma: PrismaService) {
-    // Derive a 256-bit key from environment secret
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      const fallback = process.env.NODE_ENV === 'production' ? null : 'dev-secret-do-not-use-in-prod';
-      if (!fallback) {
-        throw new Error('JWT_SECRET environment variable is required in production for certificate encryption');
-      }
-      this.encryptionKey = crypto.createHash('sha256').update(fallback).digest();
-    } else {
-      this.encryptionKey = crypto.createHash('sha256').update(secret).digest();
-    }
-  }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
+  ) {}
 
   /**
    * Upload and store a .p12 certificate.
@@ -80,11 +73,9 @@ export class CertificatesService {
     // For now, generate a fingerprint from the file content
     const certInfo = this.extractCertInfo(p12Buffer, dto.passphrase);
 
-    // Encrypt the .p12 file
-    const encryptedP12 = this.encrypt(p12Buffer);
-
-    // Encrypt the passphrase
-    const encryptedPass = this.encryptString(dto.passphrase);
+    // Encrypt the .p12 file and the passphrase
+    const encryptedP12 = this.encryption.encrypt(p12Buffer);
+    const encryptedPass = this.encryption.encryptString(dto.passphrase);
 
     // Deactivate previous certificates for this company
     await this.prisma.certificate.updateMany({
@@ -201,8 +192,8 @@ export class CertificatesService {
       throw new BadRequestException('Certificate has expired');
     }
 
-    const p12Buffer = this.decrypt(cert.encryptedP12);
-    const passphrase = this.decryptString(cert.encryptedPass);
+    const p12Buffer = this.encryption.decrypt(cert.encryptedP12);
+    const passphrase = this.encryption.decryptString(cert.encryptedPass);
 
     return { p12Buffer, passphrase };
   }
@@ -290,47 +281,4 @@ export class CertificatesService {
     };
   }
 
-  /**
-   * Encrypt binary data with AES-256-GCM
-   */
-  private encrypt(data: Buffer): Buffer {
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-gcm', this.encryptionKey, iv);
-    const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
-    const authTag = cipher.getAuthTag();
-
-    // Format: iv (16) + authTag (16) + encrypted data
-    return Buffer.concat([iv, authTag, encrypted]);
-  }
-
-  /**
-   * Decrypt binary data with AES-256-GCM
-   */
-  private decrypt(encryptedData: Buffer): Buffer {
-    const iv = encryptedData.subarray(0, 16);
-    const authTag = encryptedData.subarray(16, 32);
-    const data = encryptedData.subarray(32);
-
-    const decipher = crypto.createDecipheriv('aes-256-gcm', this.encryptionKey, iv);
-    decipher.setAuthTag(authTag);
-
-    return Buffer.concat([decipher.update(data), decipher.final()]);
-  }
-
-  /**
-   * Encrypt a string and return base64
-   */
-  private encryptString(text: string): string {
-    const encrypted = this.encrypt(Buffer.from(text, 'utf8'));
-    return encrypted.toString('base64');
-  }
-
-  /**
-   * Decrypt a base64 string
-   */
-  private decryptString(encryptedBase64: string): string {
-    const encrypted = Buffer.from(encryptedBase64, 'base64');
-    const decrypted = this.decrypt(encrypted);
-    return decrypted.toString('utf8');
-  }
 }

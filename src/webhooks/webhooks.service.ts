@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { EncryptionService } from '../common/services/encryption.service';
 import { CreateWebhookDto, UpdateWebhookDto } from './dto/webhook.dto';
 import { WebhookEvent } from '@prisma/client';
 import { QUEUES } from '../queue/queue.constants';
@@ -26,6 +27,7 @@ export class WebhooksService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly encryption: EncryptionService,
     @InjectQueue(QUEUES.WEBHOOK_DELIVERY)
     private readonly webhookQueue: Queue<WebhookDeliveryJobData>,
   ) {}
@@ -63,20 +65,22 @@ export class WebhooksService {
 
   /**
    * Create a webhook subscription. Generates a fresh secret (returned only
-   * once) and stores its SHA-256 hash, which is the HMAC key used by the
-   * delivery processor — subscribers therefore verify signatures with
-   * `sha256(secret).hex()` as the key.
+   * once), stores it AES-256-GCM encrypted with {@link EncryptionService}, and
+   * reuses the raw secret as the HMAC-SHA256 key when signing deliveries —
+   * subscribers therefore verify signatures with `HMAC(secret, body)` exactly
+   * like Stripe/GitHub/Shopify webhooks.
    */
   async create(tenantId: string, dto: CreateWebhookDto) {
     const secret = `whsec_${crypto.randomBytes(32).toString('hex')}`;
-    const secretHash = crypto.createHash('sha256').update(secret).digest('hex');
+    const secretEnc = this.encryption.encrypt(Buffer.from(secret, 'utf8'));
 
     const webhook = await this.prisma.webhookSubscription.create({
       data: {
         tenantId,
         url: dto.url,
         events: dto.events,
-        secretHash,
+        secretEnc,
+        needsRegeneration: false,
         isActive: true,
       },
     });
@@ -90,7 +94,7 @@ export class WebhooksService {
       secret,
       isActive: webhook.isActive,
       createdAt: webhook.createdAt,
-      note: '⚠️ Guarda el secret. No se mostrará de nuevo. Úsalo para verificar la firma HMAC.',
+      note: '⚠️ Guarda el secret. No se mostrará de nuevo. Verifica la firma con HMAC-SHA256(secret, body).',
     };
   }
 

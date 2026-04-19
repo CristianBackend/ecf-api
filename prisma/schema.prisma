@@ -380,14 +380,23 @@ model ApiKey {
 // ===========================================
 
 model WebhookSubscription {
-  id          String         @id @default(uuid()) @db.Uuid
-  tenantId    String         @map("tenant_id") @db.Uuid
-  url         String         @db.VarChar(500)
-  events      WebhookEvent[]
-  secretHash  String         @map("secret_hash") @db.VarChar(128)
-  isActive    Boolean        @default(true) @map("is_active")
-  createdAt   DateTime       @default(now()) @map("created_at")
-  updatedAt   DateTime       @updatedAt @map("updated_at")
+  id                String         @id @default(uuid()) @db.Uuid
+  tenantId          String         @map("tenant_id") @db.Uuid
+  url               String         @db.VarChar(500)
+  events            WebhookEvent[]
+  // DEPRECATED: SHA-256 of the secret, kept for legacy rows only. A follow-up
+  // migration will drop the column once every subscription has been
+  // regenerated and has a non-null `secretEnc`.
+  secretHash        String?        @map("secret_hash") @db.VarChar(128)
+  // AES-256-GCM envelope of the raw secret (see EncryptionService). This is
+  // the HMAC key used when signing delivery bodies (HMAC(raw_secret, body)).
+  secretEnc         Bytes?         @map("secret_enc")
+  // True for rows migrated in without a decryptable secret. Subscribers must
+  // re-create the webhook to obtain a new secret.
+  needsRegeneration Boolean        @default(false) @map("needs_regeneration")
+  isActive          Boolean        @default(true) @map("is_active")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
 
   // Relations
   tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)

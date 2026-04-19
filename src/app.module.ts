@@ -19,6 +19,7 @@ import { ReceptionModule } from './reception/reception.module';
 import { HealthModule } from './health/health.module';
 import { ValidationModule } from './validation/validation.module';
 import { RncModule } from './common/services/rnc.module';
+import { EncryptionModule } from './common/services/encryption.module';
 import { BuyersModule } from './buyers/buyers.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
@@ -63,6 +64,7 @@ import configuration from './config/configuration';
 
     // Phase 1 - Foundation
     PrismaModule,
+    EncryptionModule,
     AuthModule,
     RncModule,
     TenantsModule,
