@@ -24,12 +24,18 @@ import { BuyersModule } from './buyers/buyers.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import configuration from './config/configuration';
+import { envValidationSchema } from './config/env.validation';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       load: [configuration],
+      validationSchema: envValidationSchema,
+      validationOptions: {
+        abortEarly: false, // surface ALL env errors at once, not one-by-one
+        allowUnknown: true, // tolerate deployment-platform-injected variables
+      },
     }),
 
     ThrottlerModule.forRootAsync({

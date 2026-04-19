@@ -35,8 +35,15 @@ export class AuthService {
     private readonly config: ConfigService,
   ) {
     this.keyPrefix = this.config.get('API_KEY_PREFIX', 'frd');
-    this.jwtSecret = this.config.get('JWT_SECRET', 'ecf-api-jwt-secret-change-in-production');
-    this.jwtExpiresIn = this.config.get('JWT_EXPIRES_IN', '24h');
+    // JWT_SECRET is required (Joi-enforced at boot); fall back is only for
+    // defensive coding — if the Joi validator was somehow skipped, crash
+    // rather than sign with a placeholder.
+    const secret = this.config.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new Error('JWT_SECRET is required (should be caught by env validation).');
+    }
+    this.jwtSecret = secret;
+    this.jwtExpiresIn = this.config.get('JWT_EXPIRATION', '24h');
   }
 
   /**
