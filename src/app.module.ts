@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bullmq';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
@@ -20,6 +21,7 @@ import { HealthModule } from './health/health.module';
 import { ValidationModule } from './validation/validation.module';
 import { RncModule } from './common/services/rnc.module';
 import { EncryptionModule } from './common/services/encryption.module';
+import { DistributedLockModule } from './common/services/distributed-lock.module';
 import { BuyersModule } from './buyers/buyers.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
@@ -37,6 +39,10 @@ import { envValidationSchema } from './config/env.validation';
         allowUnknown: true, // tolerate deployment-platform-injected variables
       },
     }),
+
+    // Global @Cron discovery. Every @Cron(...) decorator below is picked up
+    // by this module at boot.
+    ScheduleModule.forRoot(),
 
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
@@ -71,6 +77,7 @@ import { envValidationSchema } from './config/env.validation';
     // Phase 1 - Foundation
     PrismaModule,
     EncryptionModule,
+    DistributedLockModule,
     AuthModule,
     RncModule,
     TenantsModule,

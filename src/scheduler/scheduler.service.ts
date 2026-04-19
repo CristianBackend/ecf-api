@@ -1,60 +1,98 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { InvoiceStatus } from '@prisma/client';
 import { ContingencyService } from '../contingency/contingency.service';
 import { QueueService } from '../queue/queue.service';
+import { DistributedLockService } from '../common/services/distributed-lock.service';
 
 /**
  * Scheduler Service
  *
- * Runs periodic tasks:
- * 1. Process contingency queue when DGII is available (5min)
- * 2. Clean up expired DGII tokens (1h)
- * 3. Dispatch a certificate expiration check job (24h) — the actual check
- *    work runs on the CertificateCheckProcessor worker.
+ * Runs periodic tasks using `@nestjs/schedule`. Each job is wrapped in a
+ * Redis-backed distributed lock so only one replica actually does the work
+ * per tick — multiple pods all run the schedule, but they compete for the
+ * lock and only one wins. Lock TTLs are set generously above the expected
+ * job duration so if the holder dies mid-run the lock expires and the next
+ * tick can recover.
  *
- * NOTE: Individual invoice status polling is handled exclusively by
- * BullMQ (StatusPollProcessor) with exponential backoff delays.
- * This scheduler only handles periodic batch tasks.
+ * Jobs:
+ * 1. contingencyRetry — every 5 minutes. Pushes CONTINGENCY invoices
+ *    through ContingencyService.processQueue().
+ * 2. tokenCleanup — every hour. Deletes expired DgiiToken rows.
+ * 3. certificateExpiryCheck — every day at 02:00 (server TZ). Enqueues a
+ *    CERTIFICATE_CHECK job on BullMQ; the actual work runs on the
+ *    CertificateCheckProcessor.
+ *
+ * Individual invoice status polling remains exclusive to the BullMQ
+ * StatusPollProcessor with exponential backoff — this file only owns the
+ * periodic batch work.
  */
 @Injectable()
-export class SchedulerService implements OnModuleInit, OnModuleDestroy {
+export class SchedulerService implements OnModuleInit {
   private readonly logger = new Logger(SchedulerService.name);
-  private contingencyInterval: NodeJS.Timeout | null = null;
-  private cleanupInterval: NodeJS.Timeout | null = null;
-  private certCheckInterval: NodeJS.Timeout | null = null;
+
+  // Generous TTLs: bigger than the worst-case job duration we've measured so
+  // a slow run doesn't start releasing its lock under someone else.
+  private static readonly CONTINGENCY_LOCK_TTL_MS = 10 * 60 * 1000; // 10min
+  private static readonly TOKEN_CLEANUP_LOCK_TTL_MS = 5 * 60 * 1000; // 5min
+  private static readonly CERT_CHECK_LOCK_TTL_MS = 30 * 60 * 1000; // 30min
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly contingencyService: ContingencyService,
     private readonly queueService: QueueService,
+    private readonly lock: DistributedLockService,
   ) {}
 
   onModuleInit() {
-    this.contingencyInterval = setInterval(() => this.processContingency(), 5 * 60 * 1000);
-    this.cleanupInterval = setInterval(() => this.cleanupTokens(), 60 * 60 * 1000);
-    this.certCheckInterval = setInterval(() => this.scheduleCertificateCheck(), 24 * 60 * 60 * 1000);
-
-    // Run certificate check once on startup so expiring certificates are
-    // noticed without waiting up to 24 hours.
-    this.scheduleCertificateCheck();
-
-    this.logger.log('Scheduler started: contingency (5min), cleanup (1hr), cert-check (24hr)');
+    // Boot-time kick so a freshly deployed pod doesn't wait up to 24h to
+    // notice expiring certificates. The lock keeps this safe even when
+    // every replica boots in parallel.
+    this.scheduleCertificateCheck().catch((err) =>
+      this.logger.error(`Boot-time cert check failed: ${err.message}`),
+    );
+    this.logger.log(
+      'Scheduler started: contingency (5min), tokens (1hr), cert-check (daily 02:00)',
+    );
   }
 
-  onModuleDestroy() {
-    if (this.contingencyInterval) clearInterval(this.contingencyInterval);
-    if (this.cleanupInterval) clearInterval(this.cleanupInterval);
-    if (this.certCheckInterval) clearInterval(this.certCheckInterval);
-    this.logger.log('Scheduler stopped');
+  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'contingency-retry' })
+  async contingencyRetry(): Promise<void> {
+    await this.lock.withLock(
+      'scheduler:contingency-retry',
+      SchedulerService.CONTINGENCY_LOCK_TTL_MS,
+      () => this.processContingency(),
+    );
+  }
+
+  @Cron(CronExpression.EVERY_HOUR, { name: 'token-cleanup' })
+  async tokenCleanup(): Promise<void> {
+    await this.lock.withLock(
+      'scheduler:token-cleanup',
+      SchedulerService.TOKEN_CLEANUP_LOCK_TTL_MS,
+      () => this.cleanupTokens(),
+    );
   }
 
   /**
-   * Enqueue a certificate expiration check job. The worker logs + deactivates
-   * expired certificates; in Task 3 it will also emit CERTIFICATE_EXPIRING
-   * webhooks.
+   * Every day at 02:00 (server timezone) so cert-expiry checks don't pile
+   * on top of business-hours traffic.
    */
-  private async scheduleCertificateCheck() {
+  @Cron('0 2 * * *', { name: 'certificate-expiry-check' })
+  async certificateExpiryCheck(): Promise<void> {
+    await this.lock.withLock(
+      'scheduler:certificate-expiry-check',
+      SchedulerService.CERT_CHECK_LOCK_TTL_MS,
+      () => this.scheduleCertificateCheck(),
+    );
+  }
+
+  // ============================================================
+  // job bodies
+  // ============================================================
+
+  private async scheduleCertificateCheck(): Promise<void> {
     try {
       await this.queueService.scheduleCertificateCheck();
     } catch (error: any) {
@@ -62,15 +100,11 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Process contingency queue.
-   */
-  private async processContingency() {
+  private async processContingency(): Promise<void> {
     try {
       const count = await this.prisma.invoice.count({
         where: { status: InvoiceStatus.CONTINGENCY },
       });
-
       if (count === 0) return;
 
       this.logger.debug(`Processing ${count} contingency invoice(s)...`);
@@ -86,10 +120,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Clean up expired DGII tokens.
-   */
-  private async cleanupTokens() {
+  private async cleanupTokens(): Promise<void> {
     try {
       const result = await this.prisma.dgiiToken.deleteMany({
         where: { expiresAt: { lt: new Date() } },
