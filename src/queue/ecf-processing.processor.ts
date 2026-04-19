@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
@@ -182,7 +182,19 @@ export class EcfProcessingProcessor extends WorkerHost {
 
       this.logger.log(`${invoice.encf} → DGII: ${newStatus} | TrackId: ${submissionResult.trackId}`);
 
-      // 7. If IN_PROCESS, schedule status poll
+      // 7. Fire INVOICE_SUBMITTED when DGII assigned a TrackId (regardless of
+      //    the subsequent status). Subscribers use this to record the DGII
+      //    acknowledgment distinct from the final accepted/rejected decision.
+      if (submissionResult.trackId) {
+        await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_SUBMITTED, {
+          invoiceId,
+          encf: invoice.encf,
+          trackId: submissionResult.trackId,
+          status: newStatus,
+        });
+      }
+
+      // 8. If IN_PROCESS, schedule status poll
       if (newStatus === InvoiceStatus.PROCESSING || newStatus === InvoiceStatus.SENT) {
         await this.queueService.enqueueStatusPoll({
           invoiceId,
@@ -193,7 +205,7 @@ export class EcfProcessingProcessor extends WorkerHost {
         this.logger.log(`${invoice.encf} scheduled for status polling (${newStatus})`);
       }
 
-      // 8. Fire webhook for final statuses
+      // 9. Fire webhook for final statuses
       if (newStatus === InvoiceStatus.ACCEPTED) {
         await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_ACCEPTED, {
           invoiceId, encf: invoice.encf, trackId: submissionResult.trackId,
@@ -248,6 +260,40 @@ export class EcfProcessingProcessor extends WorkerHost {
       // Non-network errors: don't retry
       return { status: failStatus, error: error.message };
     }
+  }
+
+  /**
+   * Worker failed event — fires after each failed attempt (including retries).
+   *
+   * Only emit the INVOICE_CONTINGENCY webhook when BullMQ has exhausted its
+   * retry budget (`attemptsMade >= opts.attempts`). Earlier attempts may still
+   * succeed on retry; emitting on every attempt would spam subscribers.
+   */
+  @OnWorkerEvent('failed')
+  async onFailed(job: Job<EcfProcessingJobData>, error: Error): Promise<void> {
+    const maxAttempts = job.opts?.attempts ?? 1;
+    if (job.attemptsMade < maxAttempts) {
+      return;
+    }
+
+    const { invoiceId, tenantId } = job.data;
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { id: invoiceId, tenantId },
+      select: { encf: true, status: true },
+    });
+
+    if (!invoice || invoice.status !== InvoiceStatus.CONTINGENCY) {
+      return;
+    }
+
+    await this.queueService.fireWebhookEvent(tenantId, WebhookEvent.INVOICE_CONTINGENCY, {
+      invoiceId,
+      encf: invoice.encf,
+      error: error.message,
+      attempts: job.attemptsMade,
+    }).catch((err) => {
+      this.logger.error(`Failed to emit INVOICE_CONTINGENCY webhook: ${err.message}`);
+    });
   }
 
   private mapDgiiStatus(dgiiStatus: number): InvoiceStatus {

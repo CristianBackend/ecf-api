@@ -14,6 +14,7 @@ import { SequencesService } from '../sequences/sequences.service';
 import { ValidationService } from '../validation/validation.service';
 import { XsdValidationService } from '../validation/xsd-validation.service';
 import { RncValidationService } from '../common/services/rnc-validation.service';
+import { QueueService } from '../queue/queue.service';
 import { CreateInvoiceDto, TYPES_REQUIRING_RNC } from './dto/invoice.dto';
 import { InvoiceStatus, EcfType } from '@prisma/client';
 import {
@@ -36,24 +37,29 @@ export class InvoicesService {
     private readonly validationService: ValidationService,
     private readonly xsdValidation: XsdValidationService,
     private readonly rncValidation: RncValidationService,
+    private readonly queueService: QueueService,
   ) {}
 
   /**
-   * Create and process an invoice — full DGII-compliant flow:
+   * Accept an invoice request, persist it as QUEUED, and enqueue the async
+   * pipeline.
    *
-   * 1. Validate + idempotency
-   * 2. Get company data (emitter)
-   * 3. Assign eNCF from sequences
-   * 4. Build XML
-   * 5. Extract key/cert from .p12 → sign XML
-   * 6. Determine submission:
-   *    - E32 < 250K → RFCE (summary only to DGII, full XML local)
-   *    - All others → Full signed XML to DGII
-   * 7. Authenticate → submit → get TrackId
-   * 8. Store everything → return result
+   * Synchronous work kept here (must reject invalid input before any side
+   * effects or async job are created):
+   * 1. Idempotency check
+   * 2. Company lookup + DGII business validations (RNC, E33/E34 reference,
+   *    discount-per-line, E32 250K threshold, credit term-days)
+   * 3. eNCF assignment from sequences
+   * 4. Unsigned XML build + local XSD validation
+   * 5. INSERT invoice (status=QUEUED) + invoice lines
+   * 6. Audit log
+   * 7. Enqueue EcfProcessingProcessor — the processor owns signing, DGII
+   *    submission, status polling, webhook delivery and retry/contingency.
+   *
+   * The controller returns HTTP 202 Accepted with { id, eNCF, status:
+   * 'QUEUED' }. All DGII interaction happens out-of-request.
    */
   async create(tenantId: string, dto: CreateInvoiceDto) {
-    // Step 0: Idempotency check
     if (dto.idempotencyKey) {
       const existing = await this.prisma.invoice.findUnique({
         where: { idempotencyKey: dto.idempotencyKey },
@@ -64,18 +70,13 @@ export class InvoicesService {
       }
     }
 
-    // Step 1: Get company data
     const company = await this.prisma.company.findFirst({
       where: { id: dto.companyId, tenantId, isActive: true },
     });
-
     if (!company) {
       throw new NotFoundException('Empresa no encontrada o inactiva');
     }
 
-    // ── Business Logic Validations ──
-
-    // RNC required for certain ecfTypes
     if (TYPES_REQUIRING_RNC.includes(dto.ecfType) && !dto.buyer.rnc) {
       throw new BadRequestException(
         `RNC del comprador es obligatorio para tipo ${dto.ecfType}. ` +
@@ -83,7 +84,6 @@ export class InvoicesService {
       );
     }
 
-    // Validate buyer RNC format if provided (check digit is soft, DGII lookup is authoritative)
     if (dto.buyer.rnc) {
       const rncCheck = this.rncValidation.validateFormat(dto.buyer.rnc);
       if (!rncCheck.valid) {
@@ -96,7 +96,6 @@ export class InvoicesService {
       }
     }
 
-    // Reference required for NC (E34) and ND (E33)
     if ((dto.ecfType === 'E33' || dto.ecfType === 'E34') && !dto.reference) {
       throw new BadRequestException(
         `Referencia al documento original es obligatoria para ${dto.ecfType === 'E33' ? 'Nota de Débito (E33)' : 'Nota de Crédito (E34)'}. ` +
@@ -104,7 +103,6 @@ export class InvoicesService {
       );
     }
 
-    // Validate discount does not exceed line subtotal
     for (let i = 0; i < dto.items.length; i++) {
       const item = dto.items[i];
       const lineSubtotal = item.quantity * item.unitPrice;
@@ -115,7 +113,6 @@ export class InvoicesService {
       }
     }
 
-    // TipoPago 2 (Crédito) requires termDays
     if (dto.payment.type === 2 && !dto.payment.termDays) {
       throw new BadRequestException(
         'Pago a crédito (TipoPago=2) requiere especificar "termDays" (días de crédito).',
@@ -125,17 +122,14 @@ export class InvoicesService {
     const ecfType = dto.ecfType as EcfType;
     const typeCode = ECF_TYPE_CODES[dto.ecfType as keyof typeof ECF_TYPE_CODES];
 
-    // Step 2: Assign eNCF
     const encf = await this.sequencesService.getNextEncf(tenantId, dto.companyId, ecfType);
     this.logger.log(`eNCF assigned: ${encf}`);
 
-    // Get sequence expiry date for XML (E32/E34 don't include it in XML per DGII spec)
     const activeSequence = await this.prisma.sequence.findFirst({
       where: { tenantId, companyId: dto.companyId, ecfType, isActive: true },
       select: { expiresAt: true },
     });
 
-    // Step 3: Build XML
     const emitterData: EmitterData = {
       rnc: company.rnc,
       businessName: company.businessName,
@@ -158,7 +152,6 @@ export class InvoicesService {
       encf,
     );
 
-    // Step 3b: Validate XML against XSD schema (only blocks if validation tool is available)
     if (this.xsdValidation.isAvailable()) {
       const xsdResult = await this.xsdValidation.validateXml(unsignedXml, typeCode);
       if (!xsdResult.valid) {
@@ -171,17 +164,15 @@ export class InvoicesService {
       this.logger.warn(`XSD validation unavailable for ${encf} — xmllint not installed`);
     }
 
-    // Determine if RFCE (Factura Consumo < 250K)
     const isRfce = typeCode === 32 && totals.totalAmount < FC_FULL_SUBMISSION_THRESHOLD;
 
-    // Step 4: Create invoice record
     const invoice = await this.prisma.invoice.create({
       data: {
         tenantId,
         companyId: dto.companyId,
         ecfType,
         encf,
-        status: InvoiceStatus.PROCESSING,
+        status: InvoiceStatus.QUEUED,
         buyerRnc: dto.buyer.rnc,
         buyerName: dto.buyer.name,
         buyerEmail: dto.buyer.email,
@@ -203,7 +194,6 @@ export class InvoicesService {
       },
     });
 
-    // Create invoice lines
     await this.prisma.invoiceLine.createMany({
       data: dto.items.map((item, index) => {
         const lineSubtotal = item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0);
@@ -229,135 +219,18 @@ export class InvoicesService {
       }),
     });
 
-    // Step 5: Sign and submit
-    try {
-      // Get decrypted .p12 certificate
-      const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(
-        tenantId,
-        dto.companyId,
-      );
+    await this.createAuditLog(tenantId, 'invoice', invoice.id, 'queued', {
+      encf,
+      ecfType,
+      isRfce,
+      totalAmount: totals.totalAmount,
+    });
 
-      // Extract private key and certificate from .p12
-      // Per DGII p.60: validate that certificate SN matches company RNC
-      const { privateKey, certificate } = this.signingService.extractFromP12(
-        p12Buffer,
-        passphrase,
-        company.rnc,
-      );
-
-      // Sign the XML
-      const { signedXml, securityCode, signTime } = this.signingService.signXml(
-        unsignedXml,
-        privateKey,
-        certificate,
-      );
-
-      this.logger.log(`XML signed: ${encf} | Security code: ${securityCode}`);
-
-      // Update invoice with signed data
-      await this.prisma.invoice.update({
-        where: { id: invoice.id },
-        data: {
-          xmlSigned: signedXml,
-          securityCode,
-          signedAt: signTime,
-        },
-      });
-
-      // Step 6: Authenticate with DGII
-      const token = await this.dgiiService.getToken(
-        tenantId,
-        dto.companyId,
-        privateKey,
-        certificate,
-        company.dgiiEnv,
-      );
-
-      // Step 7: Submit to DGII
-      let submissionResult;
-
-      if (isRfce) {
-        // ========== RFCE FLOW ==========
-        // E32 < 250K: send only summary, store full XML locally
-        this.logger.log(`RFCE flow: ${encf} (total: RD$${totals.totalAmount})`);
-
-        const rfceXml = this.xmlBuilder.buildRfceXml(
-          dto as any,
-          emitterData,
-          encf,
-          totals,
-          securityCode,
-        );
-
-        await this.prisma.invoice.update({
-          where: { id: invoice.id },
-          data: { xmlRfce: rfceXml },
-        });
-
-        // S6 fix: DGII requires filename = {RNCEmisor}{eNCF}.xml
-        submissionResult = await this.dgiiService.submitRfce(
-          rfceXml,
-          token,
-          company.dgiiEnv,
-          `${company.rnc}${encf}.xml`,
-        );
-      } else {
-        // ========== STANDARD FLOW ==========
-        // File name per DGII spec: {RNCEmisor}{eNCF}.xml
-        submissionResult = await this.dgiiService.submitEcf(
-          signedXml,
-          `${company.rnc}${encf}.xml`,
-          token,
-          company.dgiiEnv,
-        );
-      }
-
-      // Step 8: Update with DGII response
-      const newStatus = this.mapDgiiStatus(submissionResult.status);
-
-      await this.prisma.invoice.update({
-        where: { id: invoice.id },
-        data: {
-          status: newStatus,
-          trackId: submissionResult.trackId,
-          dgiiResponse: submissionResult as any,
-          dgiiMessage: submissionResult.message,
-          dgiiTimestamp: new Date(),
-        },
-      });
-
-      this.logger.log(`${encf} → DGII: ${newStatus} | TrackId: ${submissionResult.trackId}`);
-
-      // Audit log
-      await this.createAuditLog(tenantId, 'invoice', invoice.id, 'submitted', {
-        encf, ecfType, isRfce,
-        totalAmount: totals.totalAmount,
-        securityCode,
-        dgiiStatus: newStatus,
-        trackId: submissionResult.trackId,
-      });
-
-    } catch (error: any) {
-      this.logger.error(`Error processing ${encf}: ${error.message}`);
-
-      const isNetworkError =
-        error.status === 503 ||
-        error.message?.includes('DGII') ||
-        error.message?.includes('ECONNREFUSED') ||
-        error.message?.includes('ETIMEDOUT');
-
-      await this.prisma.invoice.update({
-        where: { id: invoice.id },
-        data: {
-          status: isNetworkError ? InvoiceStatus.CONTINGENCY : InvoiceStatus.ERROR,
-          dgiiMessage: error.message,
-        },
-      });
-
-      if (isNetworkError) {
-        this.logger.warn(`${encf} saved in CONTINGENCY mode`);
-      }
-    }
+    await this.queueService.enqueueEcfProcessing({
+      invoiceId: invoice.id,
+      tenantId,
+      companyId: dto.companyId,
+    });
 
     return this.findOne(tenantId, invoice.id);
   }

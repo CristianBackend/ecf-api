@@ -28,12 +28,14 @@ export class InvoicesController {
 
   @Post()
   @RequireScopes(ApiKeyScope.INVOICES_WRITE)
-  @HttpCode(HttpStatus.CREATED)
+  @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
-    summary: 'Crear factura electrónica (e-CF)',
+    summary: 'Crear factura electrónica (e-CF) — asíncrono',
     description:
-      'Crea una factura, construye XML según XSD de DGII, firma digitalmente, ' +
-      'y envía a la DGII. Soporta los 10 tipos de e-CF (31-47).',
+      'Valida los datos, asigna eNCF, construye y guarda el XML sin firmar, ' +
+      'y encola el trabajo de firma + envío a DGII en BullMQ. Responde 202 con ' +
+      'status=QUEUED inmediatamente. Firma, submit y polling a DGII ocurren en ' +
+      'background. El estado final se comunica vía webhook.',
   })
   async create(
     @CurrentTenant() tenant: RequestTenant,

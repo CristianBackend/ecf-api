@@ -2,13 +2,16 @@ import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { InvoiceStatus } from '@prisma/client';
 import { ContingencyService } from '../contingency/contingency.service';
+import { QueueService } from '../queue/queue.service';
 
 /**
  * Scheduler Service
  *
  * Runs periodic tasks:
- * 1. Process contingency queue when DGII is available
- * 2. Clean up expired DGII tokens
+ * 1. Process contingency queue when DGII is available (5min)
+ * 2. Clean up expired DGII tokens (1h)
+ * 3. Dispatch a certificate expiration check job (24h) — the actual check
+ *    work runs on the CertificateCheckProcessor worker.
  *
  * NOTE: Individual invoice status polling is handled exclusively by
  * BullMQ (StatusPollProcessor) with exponential backoff delays.
@@ -19,26 +22,44 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SchedulerService.name);
   private contingencyInterval: NodeJS.Timeout | null = null;
   private cleanupInterval: NodeJS.Timeout | null = null;
+  private certCheckInterval: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly contingencyService: ContingencyService,
+    private readonly queueService: QueueService,
   ) {}
 
   onModuleInit() {
-    // Try contingency queue every 5 minutes
     this.contingencyInterval = setInterval(() => this.processContingency(), 5 * 60 * 1000);
-
-    // Clean expired tokens every hour
     this.cleanupInterval = setInterval(() => this.cleanupTokens(), 60 * 60 * 1000);
+    this.certCheckInterval = setInterval(() => this.scheduleCertificateCheck(), 24 * 60 * 60 * 1000);
 
-    this.logger.log('Scheduler started: contingency (5min), cleanup (1hr)');
+    // Run certificate check once on startup so expiring certificates are
+    // noticed without waiting up to 24 hours.
+    this.scheduleCertificateCheck();
+
+    this.logger.log('Scheduler started: contingency (5min), cleanup (1hr), cert-check (24hr)');
   }
 
   onModuleDestroy() {
     if (this.contingencyInterval) clearInterval(this.contingencyInterval);
     if (this.cleanupInterval) clearInterval(this.cleanupInterval);
+    if (this.certCheckInterval) clearInterval(this.certCheckInterval);
     this.logger.log('Scheduler stopped');
+  }
+
+  /**
+   * Enqueue a certificate expiration check job. The worker logs + deactivates
+   * expired certificates; in Task 3 it will also emit CERTIFICATE_EXPIRING
+   * webhooks.
+   */
+  private async scheduleCertificateCheck() {
+    try {
+      await this.queueService.scheduleCertificateCheck();
+    } catch (error: any) {
+      this.logger.error(`Certificate check enqueue error: ${error.message}`);
+    }
   }
 
   /**

@@ -6,6 +6,7 @@ import { SigningModule } from '../signing/signing.module';
 import { DgiiModule } from '../dgii/dgii.module';
 import { CertificatesModule } from '../certificates/certificates.module';
 import { SequencesModule } from '../sequences/sequences.module';
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { SequencesModule } from '../sequences/sequences.module';
     DgiiModule,
     CertificatesModule,
     SequencesModule,
+    QueueModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService],
