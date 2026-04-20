@@ -102,7 +102,24 @@ export class SigningService {
 
   /**
    * Verify an XMLDSig-signed XML document.
-   * Returns the PEM certificate embedded in the KeyInfo on success, throws on failure.
+   *
+   * When to use this:
+   * - Inter-taxpayer DGII endpoints exposed by this API where a *peer*
+   *   emitter sends us their own signed XML and we must reject it unless
+   *   the signature is cryptographically valid. Today the only caller is
+   *   `POST /fe/autenticacion/api/validacioncertificado`
+   *   ({@link FeReceptorController} — see fe-receptor.controller.ts), which
+   *   uses it to validate a signed SemillaModel before issuing a
+   *   short-lived session token to the remote emitter.
+   *
+   * Do NOT call this for our OWN outbound signed XMLs (e-CF / RFCE /
+   * ANECF / ARECF / ACECF). DGII verifies those on its side; re-verifying
+   * locally is redundant and would only catch tampering *we* introduced,
+   * which should never happen.
+   *
+   * Returns the PEM certificate embedded in the KeyInfo on success, throws
+   * with a specific Error on any failure (missing Signature, missing
+   * X509Certificate, bad digest, bad SignatureValue).
    */
   verifySignedXml(signedXml: string): { certificatePem: string } {
     const doc = new DOMParser().parseFromString(signedXml, 'text/xml');
