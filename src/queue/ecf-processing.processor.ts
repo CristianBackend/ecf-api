@@ -26,7 +26,9 @@ export interface EcfProcessingJobData {
  * Flow:
  * 1. Load invoice + unsigned XML from DB
  * 2. Get certificate (.p12)
- * 3. Sign XML with XAdES-BES
+ * 3. Sign XML with XMLDSig (enveloped, RSA-SHA256, C14N 1.0) — NOT XAdES.
+ *    DGII requires plain W3C XMLDSig; there is no <xades:QualifyingProperties>
+ *    block in the signature. See src/signing/signing.service.ts.
  * 4. Authenticate with DGII (semilla/token)
  * 5. Submit signed XML (or RFCE for E32 < 250K)
  * 6. Update invoice status + trackId
