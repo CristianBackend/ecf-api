@@ -18,6 +18,7 @@ import {
 import { EncryptionService } from '../common/services/encryption.service';
 import { WebhookEvent } from '@prisma/client';
 import * as crypto from 'crypto';
+import { makeTestLogger } from '../common/logger/test-logger';
 
 type Mock = jest.Mock;
 
@@ -35,7 +36,11 @@ function makeProcessor() {
     },
   };
   const encryption = new EncryptionService(TEST_KEY_HEX);
-  const processor = new WebhookDeliveryProcessor(prisma as any, encryption);
+  const processor = new WebhookDeliveryProcessor(
+    prisma as any,
+    encryption,
+    makeTestLogger(),
+  );
   return { processor, prisma, encryption };
 }
 

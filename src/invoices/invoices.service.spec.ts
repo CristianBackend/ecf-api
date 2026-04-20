@@ -13,6 +13,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { InvoicesService } from './invoices.service';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
+import { makeTestLogger } from '../common/logger/test-logger';
 
 type Mock = jest.Mock;
 
@@ -150,6 +151,7 @@ function buildService(mocks: ReturnType<typeof makeMocks>) {
     mocks.rncValidation as any,
     mocks.queueService as any,
     mocks.webhooksService as any,
+    makeTestLogger(),
   );
 }
 

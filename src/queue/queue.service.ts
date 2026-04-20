@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { QUEUES } from './queue.constants';
@@ -15,12 +16,12 @@ import { CertificateCheckJobData } from './certificate-check.processor';
  */
 @Injectable()
 export class QueueService {
-  private readonly logger = new Logger(QueueService.name);
-
   constructor(
     @InjectQueue(QUEUES.ECF_PROCESSING) private readonly ecfQueue: Queue,
     @InjectQueue(QUEUES.ECF_STATUS_POLL) private readonly pollQueue: Queue,
     @InjectQueue(QUEUES.CERTIFICATE_CHECK) private readonly certQueue: Queue,
+    @InjectPinoLogger(QueueService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   /**
@@ -39,7 +40,7 @@ export class QueueService {
       removeOnFail: { age: 604800 },
     });
 
-    this.logger.log(`Enqueued ECF processing: ${job.id} for invoice ${data.invoiceId}`);
+    this.logger.info(`Enqueued ECF processing: ${job.id} for invoice ${data.invoiceId}`);
     return job;
   }
 
@@ -59,7 +60,7 @@ export class QueueService {
       removeOnFail: { age: 86400 },
     });
 
-    this.logger.log(
+    this.logger.info(
       `Enqueued status poll #${attempt} for ${data.invoiceId} (delay: ${Math.round(delay / 1000)}s)`,
     );
     return job;
@@ -75,7 +76,7 @@ export class QueueService {
       removeOnFail: { age: 86400 },
     });
 
-    this.logger.log(`Certificate check scheduled: ${job.id}`);
+    this.logger.info(`Certificate check scheduled: ${job.id}`);
     return job;
   }
 

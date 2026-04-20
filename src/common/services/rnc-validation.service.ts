@@ -1,8 +1,8 @@
 import {
   Injectable,
   BadRequestException,
-  Logger,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 export interface DgiiTaxpayerInfo {
   rnc: string;
@@ -17,7 +17,10 @@ export interface DgiiTaxpayerInfo {
 
 @Injectable()
 export class RncValidationService {
-  private readonly logger = new Logger(RncValidationService.name);
+  constructor(
+    @InjectPinoLogger(RncValidationService.name)
+    private readonly logger: PinoLogger,
+  ) {}
 
   /**
    * Full validation: format → check digit (soft) → DGII lookup.

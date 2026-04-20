@@ -1,6 +1,7 @@
 import {
-  Injectable, NotFoundException, BadRequestException, ConflictException, Logger,
+  Injectable, NotFoundException, BadRequestException, ConflictException,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { RncValidationService, DgiiTaxpayerInfo } from '../common/services/rnc-validation.service';
 import { CreateBuyerDto, UpdateBuyerDto } from './dto/buyer.dto';
@@ -18,11 +19,11 @@ import { resolveEcfType } from './ecf-type.resolver';
  */
 @Injectable()
 export class BuyersService {
-  private readonly logger = new Logger(BuyersService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly rncValidation: RncValidationService,
+    @InjectPinoLogger(BuyersService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   /**
@@ -83,7 +84,7 @@ export class BuyersService {
       },
     });
 
-    this.logger.log(`Client created: ${buyer.name} [${buyer.rnc}] → ${resolution.ecfType} (${resolution.reason})`);
+    this.logger.info(`Client created: ${buyer.name} [${buyer.rnc}] → ${resolution.ecfType} (${resolution.reason})`);
     return this.format(buyer);
   }
 

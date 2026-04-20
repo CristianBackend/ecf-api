@@ -1,5 +1,5 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { EncryptionService } from '../common/services/encryption.service';
@@ -78,11 +78,11 @@ export const WEBHOOK_AUTO_DEACTIVATE_THRESHOLD = 10;
   },
 })
 export class WebhookDeliveryProcessor extends WorkerHost {
-  private readonly logger = new Logger(WebhookDeliveryProcessor.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    @InjectPinoLogger(WebhookDeliveryProcessor.name)
+    private readonly logger: PinoLogger,
   ) {
     super();
   }
@@ -113,7 +113,7 @@ export class WebhookDeliveryProcessor extends WorkerHost {
       return { delivered: 0, event };
     }
 
-    this.logger.log(`Delivering ${event} to ${webhooks.length} webhook(s)`);
+    this.logger.info(`Delivering ${event} to ${webhooks.length} webhook(s)`);
 
     const results = await Promise.allSettled(
       webhooks.map((wh) =>
@@ -124,7 +124,7 @@ export class WebhookDeliveryProcessor extends WorkerHost {
     const succeeded = results.filter((r) => r.status === 'fulfilled').length;
     const failed = results.filter((r) => r.status === 'rejected').length;
 
-    this.logger.log(`${event}: ${succeeded} delivered, ${failed} failed`);
+    this.logger.info(`${event}: ${succeeded} delivered, ${failed} failed`);
 
     // Any rejected delivery rethrows so BullMQ schedules another attempt.
     // The per-endpoint retry count is tracked in the DB across BullMQ retries.
@@ -250,6 +250,56 @@ export class WebhookDeliveryProcessor extends WorkerHost {
 
       throw error;
     }
+  }
+
+  @OnWorkerEvent('active')
+  onActive(job: Job<WebhookDeliveryJobData>): void {
+    this.logger.info(
+      {
+        jobId: job.id,
+        queue: QUEUES.WEBHOOK_DELIVERY,
+        event: job.data.event,
+        deliveryId: job.data.deliveryId,
+        attempt: job.attemptsMade + 1,
+      },
+      'job started',
+    );
+  }
+
+  @OnWorkerEvent('completed')
+  onCompleted(job: Job<WebhookDeliveryJobData>, result: any): void {
+    const durationMs =
+      job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined;
+    this.logger.info(
+      {
+        jobId: job.id,
+        queue: QUEUES.WEBHOOK_DELIVERY,
+        durationMs,
+        event: job.data.event,
+        deliveryId: job.data.deliveryId,
+        succeeded: result?.succeeded ?? 0,
+        failed: result?.failed ?? 0,
+      },
+      'job completed',
+    );
+  }
+
+  @OnWorkerEvent('failed')
+  onFailed(job: Job<WebhookDeliveryJobData>, error: Error): void {
+    const durationMs =
+      job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined;
+    this.logger.error(
+      {
+        jobId: job.id,
+        queue: QUEUES.WEBHOOK_DELIVERY,
+        durationMs,
+        event: job.data.event,
+        deliveryId: job.data.deliveryId,
+        attempt: job.attemptsMade,
+        err: { message: error.message, stack: error.stack },
+      },
+      'job failed',
+    );
   }
 }
 

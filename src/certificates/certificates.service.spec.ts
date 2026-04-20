@@ -12,6 +12,7 @@
 import { CertificatesService } from './certificates.service';
 import { EncryptionService } from '../common/services/encryption.service';
 import { buildTestP12, TestP12 } from '../signing/test-fixtures';
+import { makeTestLogger } from '../common/logger/test-logger';
 
 type Mock = jest.Mock;
 
@@ -49,7 +50,7 @@ describe('CertificatesService — encryption at rest', () => {
   it('upload → getDecryptedCertificate round-trips the original buffer and passphrase', async () => {
     const encryption = new EncryptionService(KEY_A);
     const prisma = makePrisma();
-    const service = new CertificatesService(prisma as any, encryption);
+    const service = new CertificatesService(prisma as any, encryption, makeTestLogger());
 
     await service.upload('tenant-1', {
       companyId: 'company-1',
@@ -80,7 +81,7 @@ describe('CertificatesService — encryption at rest', () => {
   it('a different CERT_ENCRYPTION_KEY cannot decrypt — clear error surface', async () => {
     const keyA = new EncryptionService(KEY_A);
     const prisma = makePrisma();
-    const uploader = new CertificatesService(prisma as any, keyA);
+    const uploader = new CertificatesService(prisma as any, keyA, makeTestLogger());
 
     await uploader.upload('tenant-1', {
       companyId: 'company-1',
@@ -91,7 +92,7 @@ describe('CertificatesService — encryption at rest', () => {
     // Swap the encryption key under the same data — simulates rotating the
     // key without re-encrypting.
     const keyB = new EncryptionService(KEY_B);
-    const reader = new CertificatesService(prisma as any, keyB);
+    const reader = new CertificatesService(prisma as any, keyB, makeTestLogger());
 
     await expect(
       reader.getDecryptedCertificate('tenant-1', 'company-1'),

@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import {
   InvoiceInput,
   InvoiceItemInput,
@@ -37,7 +38,10 @@ import {
  */
 @Injectable()
 export class ValidationService {
-  private readonly logger = new Logger(ValidationService.name);
+  constructor(
+    @InjectPinoLogger(ValidationService.name)
+    private readonly logger: PinoLogger,
+  ) {}
 
   // ============================================================
   // MAIN VALIDATION ENTRY POINT

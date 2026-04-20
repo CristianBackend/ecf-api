@@ -8,6 +8,7 @@
  * atomicity and the Lua GET/compare/DEL.
  */
 import { DistributedLockService, LockRedisClient } from './distributed-lock.service';
+import { makeTestLogger } from '../logger/test-logger';
 
 interface StoredEntry {
   value: string;
@@ -67,7 +68,7 @@ describe('DistributedLockService', () => {
 
   beforeEach(() => {
     redis = new FakeRedis();
-    service = new DistributedLockService(redis);
+    service = new DistributedLockService(redis, makeTestLogger());
   });
 
   it('acquires a lock with a unique holder token', async () => {

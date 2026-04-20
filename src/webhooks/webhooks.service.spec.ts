@@ -13,6 +13,7 @@ import { WebhooksService } from './webhooks.service';
 import { EncryptionService } from '../common/services/encryption.service';
 import { WebhookEvent } from '@prisma/client';
 import { WEBHOOK_MAX_ATTEMPTS } from './webhook-delivery.processor';
+import { makeTestLogger } from '../common/logger/test-logger';
 import * as crypto from 'crypto';
 
 const TEST_KEY_HEX = 'f'.repeat(64); // 32 bytes of 0xff
@@ -35,7 +36,7 @@ describe('WebhooksService', () => {
     const prisma: any = {
       webhookSubscription: { create: prismaCreate },
     };
-    service = new WebhooksService(prisma, encryption, queue);
+    service = new WebhooksService(prisma, encryption, queue, makeTestLogger());
   });
 
   describe('emit()', () => {

@@ -2,8 +2,8 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  Logger,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { CreateTenantDto, UpdateTenantDto } from './dto/tenant.dto';
@@ -12,11 +12,11 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class TenantsService {
-  private readonly logger = new Logger(TenantsService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly authService: AuthService,
+    @InjectPinoLogger(TenantsService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   /**
@@ -59,7 +59,7 @@ export class TenantsService {
       [ApiKeyScope.FULL_ACCESS],
     );
 
-    this.logger.log(`Tenant created: ${tenant.id} (${tenant.name})`);
+    this.logger.info(`Tenant created: ${tenant.id} (${tenant.name})`);
 
     return {
       tenant,

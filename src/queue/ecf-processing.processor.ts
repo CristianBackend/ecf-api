@@ -1,5 +1,5 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { XmlBuilderService, EmitterData } from '../xml-builder/xml-builder.service';
@@ -38,8 +38,6 @@ export interface EcfProcessingJobData {
  */
 @Processor(QUEUES.ECF_PROCESSING)
 export class EcfProcessingProcessor extends WorkerHost {
-  private readonly logger = new Logger(EcfProcessingProcessor.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly xmlBuilder: XmlBuilderService,
@@ -48,13 +46,15 @@ export class EcfProcessingProcessor extends WorkerHost {
     private readonly certificatesService: CertificatesService,
     private readonly queueService: QueueService,
     private readonly webhooksService: WebhooksService,
+    @InjectPinoLogger(EcfProcessingProcessor.name)
+    private readonly logger: PinoLogger,
   ) {
     super();
   }
 
   async process(job: Job<EcfProcessingJobData>): Promise<any> {
     const { invoiceId, tenantId, companyId } = job.data;
-    this.logger.log(`Processing job ${job.id} for invoice ${invoiceId}`);
+    this.logger.info(`Processing job ${job.id} for invoice ${invoiceId}`);
 
     // 1. Load invoice
     const invoice = await this.prisma.invoice.findFirst({
@@ -90,7 +90,7 @@ export class EcfProcessingProcessor extends WorkerHost {
         invoice.xmlUnsigned, privateKey, certificate,
       );
 
-      this.logger.log(`XML signed: ${invoice.encf} | Security: ${securityCode}`);
+      this.logger.info(`XML signed: ${invoice.encf} | Security: ${securityCode}`);
 
       // Update with signed data
       await this.prisma.invoice.update({
@@ -182,7 +182,7 @@ export class EcfProcessingProcessor extends WorkerHost {
         },
       });
 
-      this.logger.log(`${invoice.encf} → DGII: ${newStatus} | TrackId: ${submissionResult.trackId}`);
+      this.logger.info(`${invoice.encf} → DGII: ${newStatus} | TrackId: ${submissionResult.trackId}`);
 
       // 7. Fire INVOICE_SUBMITTED when DGII assigned a TrackId (regardless of
       //    the subsequent status). Subscribers use this to record the DGII
@@ -204,7 +204,7 @@ export class EcfProcessingProcessor extends WorkerHost {
           companyId,
           attempt: 1,
         });
-        this.logger.log(`${invoice.encf} scheduled for status polling (${newStatus})`);
+        this.logger.info(`${invoice.encf} scheduled for status polling (${newStatus})`);
       }
 
       // 9. Fire webhook for final statuses
@@ -264,15 +264,62 @@ export class EcfProcessingProcessor extends WorkerHost {
     }
   }
 
+  @OnWorkerEvent('active')
+  onActive(job: Job<EcfProcessingJobData>): void {
+    this.logger.info(
+      {
+        jobId: job.id,
+        queue: QUEUES.ECF_PROCESSING,
+        attempt: job.attemptsMade + 1,
+        invoiceId: job.data.invoiceId,
+        tenantId: job.data.tenantId,
+      },
+      'job started',
+    );
+  }
+
+  @OnWorkerEvent('completed')
+  onCompleted(job: Job<EcfProcessingJobData>, result: any): void {
+    const durationMs =
+      job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined;
+    this.logger.info(
+      {
+        jobId: job.id,
+        queue: QUEUES.ECF_PROCESSING,
+        durationMs,
+        invoiceId: job.data.invoiceId,
+        outcome: result?.status ?? 'ok',
+      },
+      'job completed',
+    );
+  }
+
   /**
    * Worker failed event — fires after each failed attempt (including retries).
    *
-   * Only emit the INVOICE_CONTINGENCY webhook when BullMQ has exhausted its
-   * retry budget (`attemptsMade >= opts.attempts`). Earlier attempts may still
-   * succeed on retry; emitting on every attempt would spam subscribers.
+   * Responsibilities:
+   * - Emit a structured error log with jobId / queue / duration / error.
+   * - Emit the INVOICE_CONTINGENCY webhook, but ONLY once BullMQ has
+   *   exhausted its retry budget (`attemptsMade >= opts.attempts`).
+   *   Earlier attempts may still succeed on retry; emitting on every
+   *   attempt would spam subscribers.
    */
   @OnWorkerEvent('failed')
   async onFailed(job: Job<EcfProcessingJobData>, error: Error): Promise<void> {
+    const durationMs =
+      job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined;
+    this.logger.error(
+      {
+        jobId: job.id,
+        queue: QUEUES.ECF_PROCESSING,
+        durationMs,
+        invoiceId: job.data.invoiceId,
+        attempt: job.attemptsMade,
+        err: { message: error.message, stack: error.stack },
+      },
+      'job failed',
+    );
+
     const maxAttempts = job.opts?.attempts ?? 1;
     if (job.attemptsMade < maxAttempts) {
       return;

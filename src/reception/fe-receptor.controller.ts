@@ -3,11 +3,11 @@ import {
   Get,
   Post,
   Body,
-  Logger,
   HttpCode,
   HttpStatus,
   BadRequestException,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -37,14 +37,14 @@ import { CertificatesService } from '../certificates/certificates.service';
 @ApiTags('fe-receptor')
 @Controller('fe')
 export class FeReceptorController {
-  private readonly logger = new Logger(FeReceptorController.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly signingService: SigningService,
     private readonly receptionService: ReceptionService,
     private readonly responseXmlBuilder: ResponseXmlBuilder,
     private readonly certificatesService: CertificatesService,
+    @InjectPinoLogger(FeReceptorController.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   // ============================================================
@@ -105,7 +105,7 @@ export class FeReceptorController {
     const token = crypto.randomBytes(48).toString('base64url');
     const expira = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
-    this.logger.log('Emitter authenticated via verified signed semilla');
+    this.logger.info('Emitter authenticated via verified signed semilla');
 
     return { token, expira };
   }
@@ -225,7 +225,7 @@ export class FeReceptorController {
 
     if (signingMaterial) {
       const { signedXml } = this.signingService.signXml(arecfXml, signingMaterial.privateKey, signingMaterial.certificate);
-      this.logger.log(`Signed ARECF returned for ${encf} from ${rncEmisor}`);
+      this.logger.info(`Signed ARECF returned for ${encf} from ${rncEmisor}`);
       return signedXml;
     }
 
@@ -256,7 +256,7 @@ export class FeReceptorController {
     const encf = this.extractXmlField(xmlContent, 'eNCF');
     const estado = this.extractXmlField(xmlContent, 'Estado');
 
-    this.logger.log(`ACECF received for ${encf}: Estado=${estado}`);
+    this.logger.info(`ACECF received for ${encf}: Estado=${estado}`);
 
     // Update the invoice with the commercial approval status
     if (encf) {

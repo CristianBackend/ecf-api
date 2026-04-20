@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ValidationService } from '../validation/validation.service';
 
 /**
@@ -59,7 +60,10 @@ function escapeXml(str: string): string {
 
 @Injectable()
 export class ResponseXmlBuilder {
-  private readonly logger = new Logger(ResponseXmlBuilder.name);
+  constructor(
+    @InjectPinoLogger(ResponseXmlBuilder.name)
+    private readonly logger: PinoLogger,
+  ) {}
 
   /**
    * Build ARECF XML (Acuse de Recibo Electrónico)

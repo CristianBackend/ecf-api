@@ -8,6 +8,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { XmlBuilderService, EmitterData } from './xml-builder.service';
 import { ValidationService } from '../validation/validation.service';
+import { TestLoggerModule } from '../common/logger/test-logger.module';
 import {
   InvoiceInput,
   InvoiceItemInput,
@@ -127,6 +128,7 @@ describe('XmlBuilderService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
+      imports: [TestLoggerModule],
       providers: [XmlBuilderService, ValidationService],
     }).compile();
 

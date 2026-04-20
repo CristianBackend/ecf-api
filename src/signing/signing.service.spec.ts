@@ -7,6 +7,7 @@
  */
 import { SigningService } from './signing.service';
 import { buildTestP12, TestP12 } from './test-fixtures';
+import { makeTestLogger } from '../common/logger/test-logger';
 
 describe('SigningService', () => {
   let service: SigningService;
@@ -19,7 +20,7 @@ describe('SigningService', () => {
   });
 
   beforeEach(() => {
-    service = new SigningService();
+    service = new SigningService(makeTestLogger());
   });
 
   // ----------------------------------------------------------

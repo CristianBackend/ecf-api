@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as crypto from 'crypto';
 import { SignedXml } from 'xml-crypto';
 import { DOMParser } from '@xmldom/xmldom';
@@ -33,7 +34,10 @@ const DSIG_NS = 'http://www.w3.org/2000/09/xmldsig#';
  */
 @Injectable()
 export class SigningService {
-  private readonly logger = new Logger(SigningService.name);
+  constructor(
+    @InjectPinoLogger(SigningService.name)
+    private readonly logger: PinoLogger,
+  ) {}
 
   /**
    * Sign an XML document using XMLDSig (enveloped, C14N 1.0, RSA-SHA256).

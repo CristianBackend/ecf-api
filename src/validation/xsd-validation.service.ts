@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
@@ -50,10 +51,14 @@ const ECF_TYPE_TO_XSD: Record<number, string> = {
  */
 @Injectable()
 export class XsdValidationService implements OnModuleInit {
-  private readonly logger = new Logger(XsdValidationService.name);
   private xsdDir: string;
   private xmllintPath: string | null = null;
   private availableSchemas: Set<number> = new Set();
+
+  constructor(
+    @InjectPinoLogger(XsdValidationService.name)
+    private readonly logger: PinoLogger,
+  ) {}
 
   async onModuleInit() {
     // Resolve XSD directory (relative to project root)
@@ -75,7 +80,7 @@ export class XsdValidationService implements OnModuleInit {
         `No XSD schemas found in ${this.xsdDir}. Run: bash xsd/download-xsd.sh`,
       );
     } else {
-      this.logger.log(
+      this.logger.info(
         `XSD validation ready: ${this.availableSchemas.size} schemas, xmllint at ${this.xmllintPath}`,
       );
     }
@@ -264,7 +269,7 @@ export class XsdValidationService implements OnModuleInit {
         );
         if (patched !== content) {
           fs.writeFileSync(xsdPath, patched, 'utf-8');
-          this.logger.log(`Patched DGII XSD bug in ${filename}`);
+          this.logger.info(`Patched DGII XSD bug in ${filename}`);
         }
       } catch {
         // Read-only filesystem, skip patching

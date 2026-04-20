@@ -3,8 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
-  Logger,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { XmlBuilderService, EmitterData } from '../xml-builder/xml-builder.service';
 import { SigningService } from '../signing/signing.service';
@@ -26,8 +26,6 @@ import {
 
 @Injectable()
 export class InvoicesService {
-  private readonly logger = new Logger(InvoicesService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly xmlBuilder: XmlBuilderService,
@@ -40,6 +38,8 @@ export class InvoicesService {
     private readonly rncValidation: RncValidationService,
     private readonly queueService: QueueService,
     private readonly webhooksService: WebhooksService,
+    @InjectPinoLogger(InvoicesService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   /**
@@ -125,7 +125,7 @@ export class InvoicesService {
     const typeCode = ECF_TYPE_CODES[dto.ecfType as keyof typeof ECF_TYPE_CODES];
 
     const encf = await this.sequencesService.getNextEncf(tenantId, dto.companyId, ecfType);
-    this.logger.log(`eNCF assigned: ${encf}`);
+    this.logger.info(`eNCF assigned: ${encf}`);
 
     const activeSequence = await this.prisma.sequence.findFirst({
       where: { tenantId, companyId: dto.companyId, ecfType, isActive: true },
@@ -449,7 +449,7 @@ export class InvoicesService {
       reason: reason || 'Anulada por el usuario',
     });
 
-    this.logger.log(`Invoice ${invoice.encf || invoice.id} voided (was ${invoice.status})`);
+    this.logger.info(`Invoice ${invoice.encf || invoice.id} voided (was ${invoice.status})`);
 
     return updated;
   }

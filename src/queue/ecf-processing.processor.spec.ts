@@ -10,6 +10,7 @@
  */
 import { EcfProcessingProcessor } from './ecf-processing.processor';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
+import { makeTestLogger } from '../common/logger/test-logger';
 
 type Mock = jest.Mock;
 
@@ -90,6 +91,7 @@ function makeProcessor() {
     certificatesService as any,
     queueService as any,
     webhooksService as any,
+    makeTestLogger(),
   );
 
   return {

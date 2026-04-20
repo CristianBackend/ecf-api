@@ -2,19 +2,19 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
-  Logger,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { RncValidationService } from '../common/services/rnc-validation.service';
 import { CreateCompanyDto, UpdateCompanyDto } from './dto/company.dto';
 
 @Injectable()
 export class CompaniesService {
-  private readonly logger = new Logger(CompaniesService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly rncValidation: RncValidationService,
+    @InjectPinoLogger(CompaniesService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   async create(tenantId: string, dto: CreateCompanyDto) {
@@ -23,7 +23,7 @@ export class CompaniesService {
 
     // Auto-fill business name from DGII if not provided or if matches
     if (dgiiInfo) {
-      this.logger.log(
+      this.logger.info(
         `DGII lookup OK: ${dto.rnc} → ${dgiiInfo.name} (${dgiiInfo.status})`,
       );
 
@@ -65,7 +65,7 @@ export class CompaniesService {
       },
     });
 
-    this.logger.log(`Company created: ${company.id} (RNC: ${company.rnc})`);
+    this.logger.info(`Company created: ${company.id} (RNC: ${company.rnc})`);
     return company;
   }
 

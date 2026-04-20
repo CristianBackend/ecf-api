@@ -3,8 +3,8 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
-  Logger,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
 import { DgiiService } from '../dgii/dgii.service';
@@ -33,14 +33,14 @@ const ECF_TYPE_PREFIX: Record<EcfType, string> = {
 
 @Injectable()
 export class SequencesService {
-  private readonly logger = new Logger(SequencesService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly signingService: SigningService,
     private readonly dgiiService: DgiiService,
     private readonly certificatesService: CertificatesService,
     private readonly xmlBuilder: XmlBuilderService,
+    @InjectPinoLogger(SequencesService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   /**
@@ -128,7 +128,7 @@ export class SequencesService {
       },
     });
 
-    this.logger.log(
+    this.logger.info(
       `Sequence created: ${prefix} [${dto.startNumber}-${dto.endNumber}] for company ${dto.companyId}`,
     );
 
@@ -324,7 +324,7 @@ export class SequencesService {
       annulments.push(annulment);
     }
 
-    this.logger.log(
+    this.logger.info(
       `ANECF submitted for company ${companyId}: ${ranges.length} range(s), result: ${result.success ? 'OK' : 'FAILED'}`,
     );
 

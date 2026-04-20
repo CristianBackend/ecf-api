@@ -22,11 +22,13 @@ import { ValidationModule } from './validation/validation.module';
 import { RncModule } from './common/services/rnc.module';
 import { EncryptionModule } from './common/services/encryption.module';
 import { DistributedLockModule } from './common/services/distributed-lock.module';
+import { LoggerModule } from './common/logger/logger.module';
 import { BuyersModule } from './buyers/buyers.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import configuration from './config/configuration';
 import { envValidationSchema } from './config/env.validation';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 @Module({
   imports: [
@@ -39,6 +41,10 @@ import { envValidationSchema } from './config/env.validation';
         allowUnknown: true, // tolerate deployment-platform-injected variables
       },
     }),
+
+    // Structured logging via pino. Must come before any module that
+    // injects Logger / PinoLogger.
+    LoggerModule,
 
     // Global @Cron discovery. Every @Cron(...) decorator below is picked up
     // by this module at boot.
@@ -106,5 +112,7 @@ import { envValidationSchema } from './config/env.validation';
     // Utils
     HealthModule,
   ],
+  providers: [HttpExceptionFilter],
+  exports: [HttpExceptionFilter],
 })
 export class AppModule {}

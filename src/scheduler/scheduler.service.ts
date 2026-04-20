@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { InvoiceStatus } from '@prisma/client';
@@ -30,8 +31,6 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
  */
 @Injectable()
 export class SchedulerService implements OnModuleInit {
-  private readonly logger = new Logger(SchedulerService.name);
-
   // Generous TTLs: bigger than the worst-case job duration we've measured so
   // a slow run doesn't start releasing its lock under someone else.
   private static readonly CONTINGENCY_LOCK_TTL_MS = 10 * 60 * 1000; // 10min
@@ -43,6 +42,8 @@ export class SchedulerService implements OnModuleInit {
     private readonly contingencyService: ContingencyService,
     private readonly queueService: QueueService,
     private readonly lock: DistributedLockService,
+    @InjectPinoLogger(SchedulerService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   onModuleInit() {
@@ -52,7 +53,7 @@ export class SchedulerService implements OnModuleInit {
     this.scheduleCertificateCheck().catch((err) =>
       this.logger.error(`Boot-time cert check failed: ${err.message}`),
     );
-    this.logger.log(
+    this.logger.info(
       'Scheduler started: contingency (5min), tokens (1hr), cert-check (daily 02:00)',
     );
   }
@@ -111,7 +112,7 @@ export class SchedulerService implements OnModuleInit {
       const result = await this.contingencyService.processQueue();
 
       if (result.processed > 0 || result.failed > 0) {
-        this.logger.log(
+        this.logger.info(
           `Contingency: ${result.processed} OK, ${result.failed} failed, ${result.remaining} remaining`,
         );
       }

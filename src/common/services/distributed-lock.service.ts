@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as crypto from 'crypto';
 
 /**
@@ -61,10 +62,10 @@ export interface AcquiredLock {
  */
 @Injectable()
 export class DistributedLockService {
-  private readonly logger = new Logger(DistributedLockService.name);
-
   constructor(
     @Inject(LOCK_REDIS_CLIENT) private readonly redis: LockRedisClient,
+    @InjectPinoLogger(DistributedLockService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   /**

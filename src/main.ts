@@ -1,29 +1,33 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, VersioningType } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
+import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
-    logger: ['error', 'warn', 'log', 'debug', 'verbose'],
-  });
+  // `bufferLogs: true` so any log emitted during module init is held until
+  // the pino Logger is adopted via `app.useLogger(...)`.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
 
   const configService = app.get(ConfigService);
+  const logger = app.get(Logger);
 
   // Security
   app.use(helmet());
+  const corsOrigin = configService.get<string>('CORS_ORIGIN', '*');
   app.enableCors({
-    origin: configService.get('CORS_ORIGIN', '*'),
+    origin: corsOrigin,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
 
   // Global prefix
-  const prefix = configService.get('API_PREFIX', 'api/v1');
+  const prefix = configService.get<string>('API_PREFIX', 'api/v1');
   app.setGlobalPrefix(prefix);
 
   // Global pipes
@@ -37,7 +41,7 @@ async function bootstrap() {
   );
 
   // Global filters & interceptors
-  app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalFilters(app.get(HttpExceptionFilter));
   app.useGlobalInterceptors(new TransformInterceptor());
 
   // Swagger
@@ -45,7 +49,7 @@ async function bootstrap() {
     .setTitle('ECF API')
     .setDescription(
       'API SaaS de Facturación Electrónica (e-CF) para República Dominicana. ' +
-      'Integra emisión, firma digital y comunicación con la DGII.',
+        'Integra emisión, firma digital y comunicación con la DGII.',
     )
     .setVersion('0.1.0')
     .addBearerAuth(
@@ -64,20 +68,24 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, document, {
     customSiteTitle: 'ECF API - Documentación',
-   customfavIcon: undefined,
     swaggerOptions: {
       persistAuthorization: true,
       docExpansion: 'none',
     },
   });
 
-  const port = configService.get('PORT', 3000);
+  const port = configService.get<number>('PORT', 3000);
   await app.listen(port);
 
-  console.log(`🚀 ECF API running on http://localhost:${port}`);
-  console.log(`📚 Swagger docs: http://localhost:${port}/docs`);
-  console.log(`🔧 Environment: ${configService.get('NODE_ENV', 'development')}`);
-  console.log(`🏛️  DGII Environment: ${configService.get('DGII_ENVIRONMENT', 'DEV')}`);
+  logger.log(
+    {
+      port,
+      nodeEnv: configService.get('NODE_ENV', 'development'),
+      dgiiEnv: configService.get('DGII_ENVIRONMENT', 'DEV'),
+      swaggerUrl: `http://localhost:${port}/docs`,
+    },
+    `ECF API listening on http://localhost:${port}`,
+  );
 }
 
 bootstrap();

@@ -3,8 +3,8 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
-  Logger,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from '../../auth/auth.service';
@@ -14,12 +14,12 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
-  private readonly logger = new Logger(ApiKeyGuard.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly reflector: Reflector,
     private readonly authService: AuthService,
+    @InjectPinoLogger(ApiKeyGuard.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

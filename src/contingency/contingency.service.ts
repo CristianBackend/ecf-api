@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { InvoiceStatus } from '@prisma/client';
 import { SigningService } from '../signing/signing.service';
@@ -16,14 +17,14 @@ import { DGII_STATUS, FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-ty
  */
 @Injectable()
 export class ContingencyService {
-  private readonly logger = new Logger(ContingencyService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly signingService: SigningService,
     private readonly dgiiService: DgiiService,
     private readonly certificatesService: CertificatesService,
     private readonly queueService: QueueService,
+    @InjectPinoLogger(ContingencyService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   /**
@@ -119,7 +120,7 @@ export class ContingencyService {
       data: { status: InvoiceStatus.CONTINGENCY },
     });
 
-    this.logger.log(`Invoice ${invoiceId} marked for retry (CONTINGENCY)`);
+    this.logger.info(`Invoice ${invoiceId} marked for retry (CONTINGENCY)`);
     return { message: 'Factura marcada para reintento', invoiceId };
   }
 
@@ -132,7 +133,7 @@ export class ContingencyService {
       data: { status: InvoiceStatus.CONTINGENCY },
     });
 
-    this.logger.log(`${result.count} invoices marked for retry`);
+    this.logger.info(`${result.count} invoices marked for retry`);
     return { markedCount: result.count };
   }
 
@@ -260,10 +261,10 @@ export class ContingencyService {
             companyId: invoice.companyId,
             attempt: 1,
           });
-          this.logger.log(`Scheduled status polling for ${invoice.encf} (EN_PROCESO)`);
+          this.logger.info(`Scheduled status polling for ${invoice.encf} (EN_PROCESO)`);
         }
 
-        this.logger.log(`Contingency resubmit OK: ${invoice.encf} → ${newStatus}`);
+        this.logger.info(`Contingency resubmit OK: ${invoice.encf} → ${newStatus}`);
         processed++;
       } catch (error: any) {
         this.logger.error(`Contingency resubmit FAILED: ${invoice.encf} — ${error.message}`);
@@ -286,7 +287,7 @@ export class ContingencyService {
       where: remainingWhere,
     });
 
-    this.logger.log(`Contingency batch: ${processed} OK, ${failed} failed, ${remaining} remaining`);
+    this.logger.info(`Contingency batch: ${processed} OK, ${failed} failed, ${remaining} remaining`);
     return { processed, failed, remaining };
   }
 }

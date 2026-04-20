@@ -1,9 +1,9 @@
 import {
   Injectable,
-  Logger,
   ServiceUnavailableException,
   BadRequestException,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
@@ -27,12 +27,12 @@ import { DGII_ENDPOINTS, DGII_SERVICES, DGII_STATUS, DGII_STATUS_SERVICE_URL, bu
  */
 @Injectable()
 export class DgiiService {
-  private readonly logger = new Logger(DgiiService.name);
-
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly signingService: SigningService,
+    @InjectPinoLogger(DgiiService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   // ============================================================
@@ -82,7 +82,7 @@ export class DgiiService {
       data: { tenantId, companyId, token, environment: environment as any, expiresAt },
     });
 
-    this.logger.log(`DGII token obtained for company ${companyId} (${environment})`);
+    this.logger.info(`DGII token obtained for company ${companyId} (${environment})`);
     return token;
   }
 
@@ -117,7 +117,7 @@ export class DgiiService {
 
     // Parse full response: { trackId, error, mensaje }
     const { trackId, error: dgiiError, mensaje } = this.parseSubmissionResponse(responseText);
-    this.logger.log(`e-CF submitted. TrackId: ${trackId}${dgiiError ? ` Error: ${dgiiError}` : ''}`);
+    this.logger.info(`e-CF submitted. TrackId: ${trackId}${dgiiError ? ` Error: ${dgiiError}` : ''}`);
 
     return {
       success: true,

@@ -2,8 +2,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  Logger,
 } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { EncryptionService } from '../common/services/encryption.service';
 import { UploadCertificateDto } from './dto/certificate.dto';
@@ -30,11 +30,11 @@ interface CertificateInfo {
  */
 @Injectable()
 export class CertificatesService {
-  private readonly logger = new Logger(CertificatesService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
+    @InjectPinoLogger(CertificatesService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   /**
@@ -100,7 +100,7 @@ export class CertificatesService {
       },
     });
 
-    this.logger.log(
+    this.logger.info(
       `Certificate uploaded for company ${dto.companyId}: ${certInfo.fingerprint}`,
     );
 
@@ -266,7 +266,7 @@ export class CertificatesService {
 
     const serialNumber = cert.serialNumber || 'Unknown';
 
-    this.logger.log(
+    this.logger.info(
       `Certificate parsed: subject="${subject}", issuer="${issuer}", ` +
       `valid ${cert.validity.notBefore.toISOString()} → ${cert.validity.notAfter.toISOString()}`,
     );

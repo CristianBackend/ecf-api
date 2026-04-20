@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import * as crypto from 'crypto';
@@ -23,13 +24,13 @@ import {
  */
 @Injectable()
 export class WebhooksService {
-  private readonly logger = new Logger(WebhooksService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     @InjectQueue(QUEUES.WEBHOOK_DELIVERY)
     private readonly webhookQueue: Queue<WebhookDeliveryJobData>,
+    @InjectPinoLogger(WebhooksService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   /**
@@ -85,7 +86,7 @@ export class WebhooksService {
       },
     });
 
-    this.logger.log(`Webhook created: ${webhook.id} → ${dto.url}`);
+    this.logger.info(`Webhook created: ${webhook.id} → ${dto.url}`);
 
     return {
       id: webhook.id,

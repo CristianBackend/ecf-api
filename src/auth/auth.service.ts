@@ -1,4 +1,5 @@
-import { Injectable, ConflictException, UnauthorizedException, Logger } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiKeyScope } from '@prisma/client';
@@ -25,7 +26,6 @@ export interface JwtPayload {
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
   private readonly keyPrefix: string;
   private readonly jwtSecret: string;
   private readonly jwtExpiresIn: string;
@@ -33,6 +33,8 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    @InjectPinoLogger(AuthService.name)
+    private readonly logger: PinoLogger,
   ) {
     this.keyPrefix = this.config.get('API_KEY_PREFIX', 'frd');
     // JWT_SECRET is required (Joi-enforced at boot); fall back is only for
@@ -85,7 +87,7 @@ export class AuthService {
    const token = jwt.sign(payload, this.jwtSecret, {
       expiresIn: this.jwtExpiresIn,
     } as jwt.SignOptions);
-    this.logger.log(`Dashboard login: ${tenant.email}`);
+    this.logger.info(`Dashboard login: ${tenant.email}`);
 
     return {
       token,
@@ -144,7 +146,7 @@ export class AuthService {
       },
     });
 
-    this.logger.log(`API key created for tenant ${tenantId}: ${keyPrefix}...`);
+    this.logger.info(`API key created for tenant ${tenantId}: ${keyPrefix}...`);
 
     return {
       id: apiKey.id,
@@ -195,7 +197,7 @@ export class AuthService {
       data: { isActive: false },
     });
 
-    this.logger.log(`API key revoked: ${key.keyPrefix}...`);
+    this.logger.info(`API key revoked: ${key.keyPrefix}...`);
     return { message: 'API key revoked successfully' };
   }
 

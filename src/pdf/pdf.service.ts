@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
 import { ECF_TYPE_NAMES, FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-types';
@@ -16,11 +17,11 @@ import { ECF_TYPE_NAMES, FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf
  */
 @Injectable()
 export class PdfService {
-  private readonly logger = new Logger(PdfService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly signingService: SigningService,
+    @InjectPinoLogger(PdfService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   async generateHtml(tenantId: string, invoiceId: string): Promise<string> {

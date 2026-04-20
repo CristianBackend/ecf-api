@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import {
   InvoiceInput,
   InvoiceItemInput,
@@ -54,9 +55,11 @@ const fmtPrice = ValidationService.formatPrice;
  */
 @Injectable()
 export class XmlBuilderService {
-  private readonly logger = new Logger(XmlBuilderService.name);
-
-  constructor(private readonly validationService: ValidationService) {}
+  constructor(
+    private readonly validationService: ValidationService,
+    @InjectPinoLogger(XmlBuilderService.name)
+    private readonly logger: PinoLogger,
+  ) {}
 
   /**
    * Build complete e-CF XML from invoice input and emitter data.

@@ -1,5 +1,5 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Job, DelayedError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { DgiiService } from '../dgii/dgii.service';
@@ -32,8 +32,6 @@ export interface StatusPollJobData {
  */
 @Processor(QUEUES.ECF_STATUS_POLL)
 export class StatusPollProcessor extends WorkerHost {
-  private readonly logger = new Logger(StatusPollProcessor.name);
-
   /** Max polling attempts before giving up */
   private static readonly MAX_ATTEMPTS = 20;
 
@@ -44,13 +42,15 @@ export class StatusPollProcessor extends WorkerHost {
     private readonly certificatesService: CertificatesService,
     private readonly queueService: QueueService,
     private readonly webhooksService: WebhooksService,
+    @InjectPinoLogger(StatusPollProcessor.name)
+    private readonly logger: PinoLogger,
   ) {
     super();
   }
 
   async process(job: Job<StatusPollJobData>): Promise<any> {
     const { invoiceId, tenantId, companyId, attempt = 1 } = job.data;
-    this.logger.log(`Status poll #${attempt} for invoice ${invoiceId}`);
+    this.logger.info(`Status poll #${attempt} for invoice ${invoiceId}`);
 
     // Load invoice
     const invoice = await this.prisma.invoice.findFirst({
@@ -67,7 +67,7 @@ export class StatusPollProcessor extends WorkerHost {
     if (invoice.status === InvoiceStatus.ACCEPTED ||
         invoice.status === InvoiceStatus.REJECTED ||
         invoice.status === InvoiceStatus.VOIDED) {
-      this.logger.log(`Invoice ${invoiceId} already final: ${invoice.status}`);
+      this.logger.info(`Invoice ${invoiceId} already final: ${invoice.status}`);
       return { status: invoice.status, final: true };
     }
 
@@ -91,7 +91,7 @@ export class StatusPollProcessor extends WorkerHost {
             where: { id: invoiceId },
             data: { trackId: recoveredTrackId },
           });
-          this.logger.log(`Recovered trackId ${recoveredTrackId} for ${invoice.encf} via eNCF reconciliation`);
+          this.logger.info(`Recovered trackId ${recoveredTrackId} for ${invoice.encf} via eNCF reconciliation`);
           // Continue polling with recovered trackId — let BullMQ re-run
           await job.moveToDelayed(Date.now() + 5000, job.token);
           await job.updateData({ ...job.data, attempt: attempt });
@@ -148,7 +148,7 @@ export class StatusPollProcessor extends WorkerHost {
           },
         });
 
-        this.logger.log(`${invoice.encf}: ${invoice.status} → ${newStatus}`);
+        this.logger.info(`${invoice.encf}: ${invoice.status} → ${newStatus}`);
       }
 
       // If still processing, schedule next poll with backoff
@@ -203,6 +203,51 @@ export class StatusPollProcessor extends WorkerHost {
       this.logger.error(`Poll error for ${invoice.encf}: ${error.message}`);
       return { status: 'ERROR', error: error.message };
     }
+  }
+
+  @OnWorkerEvent('active')
+  onActive(job: Job<StatusPollJobData>): void {
+    this.logger.info(
+      {
+        jobId: job.id,
+        queue: QUEUES.ECF_STATUS_POLL,
+        invoiceId: job.data.invoiceId,
+        attempt: job.data.attempt ?? 1,
+      },
+      'job started',
+    );
+  }
+
+  @OnWorkerEvent('completed')
+  onCompleted(job: Job<StatusPollJobData>, result: any): void {
+    const durationMs =
+      job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined;
+    this.logger.info(
+      {
+        jobId: job.id,
+        queue: QUEUES.ECF_STATUS_POLL,
+        durationMs,
+        invoiceId: job.data.invoiceId,
+        outcome: result?.status ?? 'ok',
+      },
+      'job completed',
+    );
+  }
+
+  @OnWorkerEvent('failed')
+  onFailed(job: Job<StatusPollJobData>, error: Error): void {
+    const durationMs =
+      job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : undefined;
+    this.logger.error(
+      {
+        jobId: job.id,
+        queue: QUEUES.ECF_STATUS_POLL,
+        durationMs,
+        invoiceId: job.data.invoiceId,
+        err: { message: error.message, stack: error.stack },
+      },
+      'job failed',
+    );
   }
 
   /**

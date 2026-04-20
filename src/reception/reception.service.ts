@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { SigningService } from '../signing/signing.service';
@@ -10,8 +11,6 @@ import { WebhookEvent, EcfType, ReceivedDocumentStatus } from '@prisma/client';
 
 @Injectable()
 export class ReceptionService {
-  private readonly logger = new Logger(ReceptionService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly webhooksService: WebhooksService,
@@ -19,6 +18,8 @@ export class ReceptionService {
     private readonly dgiiService: DgiiService,
     private readonly certificatesService: CertificatesService,
     private readonly responseXmlBuilder: ResponseXmlBuilder,
+    @InjectPinoLogger(ReceptionService.name)
+    private readonly logger: PinoLogger,
   ) {}
 
   async storeReceived(tenantId: string, data: {
@@ -75,7 +76,7 @@ export class ReceptionService {
       totalAmount: data.totalAmount,
     });
 
-    this.logger.log(`Document received: ${data.encf} from ${data.emitterRnc}`);
+    this.logger.info(`Document received: ${data.encf} from ${data.emitterRnc}`);
 
     return {
       id: received.id,
@@ -130,7 +131,7 @@ export class ReceptionService {
       },
     });
 
-    this.logger.log(`ARECF sent for ${doc.encf}: TrackId ${result.trackId}`);
+    this.logger.info(`ARECF sent for ${doc.encf}: TrackId ${result.trackId}`);
     return { trackId: result.trackId };
   }
 
@@ -216,7 +217,7 @@ export class ReceptionService {
       { encf: doc.encf, emitterRnc: doc.emitterRnc, approved, rejectionReason },
     );
 
-    this.logger.log(`Document ${doc.encf} ${approved ? 'approved' : 'rejected'} commercially`);
+    this.logger.info(`Document ${doc.encf} ${approved ? 'approved' : 'rejected'} commercially`);
 
     return {
       encf: doc.encf,
