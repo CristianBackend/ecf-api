@@ -63,6 +63,10 @@ services:
       PORT: 3000
       API_PREFIX: api/v1
 
+      # CORS — must be an explicit origin in production (Joi-enforced).
+      # Compose fails fast if the deploy pipeline forgot to set it.
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN must be set (exact origin, not "*") in production}
+
       # Database — uses internal Docker network hostname
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/ecf_api?schema=public
 
@@ -71,9 +75,15 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ""
 
-      # JWT
-      JWT_SECRET: ${JWT_SECRET:-change-this-in-production}
+      # JWT — no default. `openssl rand -hex 32` at deploy time and put the
+      # result in the secret store. Compose refuses to start without it.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — generate with "openssl rand -hex 32" and store in secrets manager}
       JWT_EXPIRATION: ${JWT_EXPIRATION:-24h}
+
+      # Certificate keystore encryption — AES-256-GCM key for .p12 / webhook
+      # secrets at rest. Independent of JWT_SECRET; rotating the JWT key
+      # must NOT touch this one. See README "Rotación de claves".
+      CERT_ENCRYPTION_KEY: ${CERT_ENCRYPTION_KEY:?CERT_ENCRYPTION_KEY is required — exactly 64 hex characters (32 bytes) generated with "openssl rand -hex 32"}
 
       # API Keys
       API_KEY_PREFIX: ${API_KEY_PREFIX:-frd}
