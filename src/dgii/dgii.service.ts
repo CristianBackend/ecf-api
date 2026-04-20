@@ -769,34 +769,6 @@ export class DgiiService {
     }
   }
 
-  private async httpPost(
-    url: string,
-    body: string,
-    contentType: string,
-    headers?: Record<string, string>,
-  ): Promise<Response> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), DgiiService.HTTP_TIMEOUT_MS);
-    try {
-      return await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': contentType,
-          Accept: 'application/xml, application/json',
-          ...headers,
-        },
-        body,
-        signal: controller.signal,
-      });
-    } catch (error: any) {
-      this.logger.error(`HTTP POST failed: ${url} - ${error.message}`);
-      throw new ServiceUnavailableException(
-        `No se pudo conectar con DGII: ${error.message}`,
-      );
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
 }
 
 // ============================================================
