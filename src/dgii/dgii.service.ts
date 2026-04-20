@@ -605,18 +605,6 @@ export class DgiiService {
     };
   }
 
-  private extractTrackId(responseText: string): string | null {
-    const match = responseText.match(/<trackId>([\s\S]*?)<\/trackId>/i);
-    if (match) return match[1].trim();
-
-    try {
-      const json = JSON.parse(responseText);
-      return json.trackId || json.TrackId || null;
-    } catch {}
-
-    return responseText.trim() || null;
-  }
-
   private extractStatusCode(responseText: string): number {
     try {
       const json = JSON.parse(responseText);
