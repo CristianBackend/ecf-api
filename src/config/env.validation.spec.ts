@@ -93,6 +93,43 @@ describe('envValidationSchema', () => {
     expect(messages).toMatch(/REDIS_HOST/);
   });
 
+  describe('CORS_ORIGIN in production', () => {
+    it('rejects "*" as CORS_ORIGIN when NODE_ENV=production', () => {
+      const { error } = validate({
+        ...VALID_BASE,
+        NODE_ENV: 'production',
+        CORS_ORIGIN: '*',
+      });
+      expect(error?.message).toMatch(/CORS_ORIGIN/);
+      expect(error?.message).toMatch(/production/i);
+    });
+
+    it('accepts an explicit origin in production', () => {
+      const { error } = validate({
+        ...VALID_BASE,
+        NODE_ENV: 'production',
+        CORS_ORIGIN: 'https://app.example.com',
+      });
+      expect(error).toBeUndefined();
+    });
+
+    it('allows CORS_ORIGIN="*" outside of production (dev/test)', () => {
+      const { error: devErr } = validate({
+        ...VALID_BASE,
+        NODE_ENV: 'development',
+        CORS_ORIGIN: '*',
+      });
+      expect(devErr).toBeUndefined();
+
+      const { error: testErr } = validate({
+        ...VALID_BASE,
+        NODE_ENV: 'test',
+        CORS_ORIGIN: '*',
+      });
+      expect(testErr).toBeUndefined();
+    });
+  });
+
   it('tolerates unknown variables (allowUnknown:true is set at call site)', () => {
     const { error } = envValidationSchema.validate(
       { ...VALID_BASE, SOMETHING_ELSE: 'x' },

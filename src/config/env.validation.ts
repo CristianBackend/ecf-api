@@ -17,7 +17,16 @@ export const envValidationSchema = Joi.object({
     .default('development'),
   PORT: Joi.number().integer().min(1).max(65535).default(3000),
   API_PREFIX: Joi.string().default('api/v1'),
-  CORS_ORIGIN: Joi.string().default('*'),
+  CORS_ORIGIN: Joi.string()
+    .default('*')
+    .when('NODE_ENV', {
+      is: 'production',
+      then: Joi.string().invalid('*').required().messages({
+        'any.invalid':
+          'CORS_ORIGIN must be an exact origin (e.g. https://app.example.com) in production; "*" is not allowed.',
+        'any.required': 'CORS_ORIGIN is required in production.',
+      }),
+    }),
 
   // Database — required, any valid postgres/postgresql URL.
   DATABASE_URL: Joi.string()
