@@ -18,6 +18,7 @@ import { PdfModule } from './pdf/pdf.module';
 import { ContingencyModule } from './contingency/contingency.module';
 import { ReceptionModule } from './reception/reception.module';
 import { HealthModule } from './health/health.module';
+import { AdminModule } from './admin/admin.module';
 import { ValidationModule } from './validation/validation.module';
 import { RncModule } from './common/services/rnc.module';
 import { EncryptionModule } from './common/services/encryption.module';
@@ -111,6 +112,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
     // Utils
     HealthModule,
+    AdminModule,
   ],
   providers: [HttpExceptionFilter],
   exports: [HttpExceptionFilter],
