@@ -23,7 +23,9 @@ import { ValidationModule } from './validation/validation.module';
 import { RncModule } from './common/services/rnc.module';
 import { EncryptionModule } from './common/services/encryption.module';
 import { DistributedLockModule } from './common/services/distributed-lock.module';
+import { DownloadTokenModule } from './common/services/download-token.module';
 import { LoggerModule } from './common/logger/logger.module';
+import { DownloadsModule } from './downloads/downloads.module';
 import { BuyersModule } from './buyers/buyers.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
@@ -85,6 +87,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
     PrismaModule,
     EncryptionModule,
     DistributedLockModule,
+    DownloadTokenModule,
     AuthModule,
     RncModule,
     TenantsModule,
@@ -113,6 +116,7 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
     // Utils
     HealthModule,
     AdminModule,
+    DownloadsModule,
   ],
   providers: [HttpExceptionFilter],
   exports: [HttpExceptionFilter],

@@ -22,32 +22,40 @@ export class ApiKeyGuard implements CanActivate {
     private readonly logger: PinoLogger,
   ) {}
 
+  /**
+   * Accepts credentials from either `Authorization: Bearer <token>` or
+   * `X-API-Key: <token>`. A legacy query-string fallback used to exist
+   * for browser download links — it was removed because the credential
+   * ended up in reverse-proxy access logs and browser history.
+   * Download flows now use the single-use token endpoint:
+   *   POST /invoices/:id/download-token  →  opaque UUID
+   *   GET  /downloads/invoice-xml/:token →  burns the token server-side
+   */
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
 
-    // Extract token from Authorization header or ?auth= query param (for download links)
     const authHeader = request.headers.authorization;
-    const queryAuth = request.query?.auth as string | undefined;
-
-    if (!authHeader && !queryAuth) {
-      throw new UnauthorizedException('Missing Authorization header');
-    }
+    const apiKeyHeader =
+      (request.headers['x-api-key'] as string | undefined) ?? undefined;
 
     let token: string;
-
     if (authHeader) {
       const [scheme, headerToken] = authHeader.split(' ');
       if (scheme?.toLowerCase() !== 'bearer' || !headerToken) {
-        throw new UnauthorizedException('Invalid Authorization format. Use: Bearer {token}');
+        throw new UnauthorizedException(
+          'Invalid Authorization format. Use: Bearer {token} or the X-API-Key header.',
+        );
       }
       token = headerToken;
+    } else if (apiKeyHeader) {
+      token = apiKeyHeader;
     } else {
-      token = queryAuth!;
+      throw new UnauthorizedException(
+        'Missing credentials. Supply Authorization: Bearer <token> or X-API-Key: <token>.',
+      );
     }
 
-    // Detect if it's a JWT or API key
-    // JWT tokens have 3 parts separated by dots (header.payload.signature)
-    // API keys have format: frd_live_xxx or frd_test_xxx
+    // Detect if it's a JWT (3 dot-separated parts) or an API key (frd_live_xxx / frd_test_xxx).
     if (token.includes('.') && token.split('.').length === 3) {
       return this.validateJwt(token, request);
     } else {

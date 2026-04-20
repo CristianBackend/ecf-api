@@ -18,13 +18,17 @@ import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { RequireScopes } from '../common/decorators/scopes.decorator';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
 import { ApiKeyScope } from '@prisma/client';
+import { DownloadTokenService } from '../common/services/download-token.service';
 
 @ApiTags('invoices')
 @Controller('invoices')
 @UseGuards(ApiKeyGuard)
 @ApiBearerAuth('api-key')
 export class InvoicesController {
-  constructor(private readonly invoicesService: InvoicesService) {}
+  constructor(
+    private readonly invoicesService: InvoicesService,
+    private readonly downloadTokens: DownloadTokenService,
+  ) {}
 
   @Post()
   @RequireScopes(ApiKeyScope.INVOICES_WRITE)
@@ -87,7 +91,13 @@ export class InvoicesController {
 
   @Get(':id/xml')
   @RequireScopes(ApiKeyScope.INVOICES_READ)
-  @ApiOperation({ summary: 'Descargar XML de la factura' })
+  @ApiOperation({
+    summary: 'Descargar XML de la factura (API key o Bearer JWT)',
+    description:
+      'Para descargas server-to-server. Requiere Authorization: Bearer {token} ' +
+      'o X-API-Key: {token}. Para descargas iniciadas desde el browser, usar ' +
+      'POST /invoices/:id/download-token + GET /downloads/invoice-xml/:token.',
+  })
   async getXml(
     @CurrentTenant() tenant: RequestTenant,
     @Param('id') id: string,
@@ -99,6 +109,39 @@ export class InvoicesController {
       'Content-Disposition': `attachment; filename="${id}.xml"`,
     });
     res.send(xml);
+  }
+
+  @Post(':id/download-token')
+  @RequireScopes(ApiKeyScope.INVOICES_READ)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Emitir token single-use de 60s para descarga desde browser',
+    description:
+      'Emite un UUID opaco respaldado en Redis con TTL 60s. La primera ' +
+      'request a GET /downloads/invoice-xml/{token} lo consume atómicamente ' +
+      '(GET+DEL Lua) y entrega el XML. Un replay responde 404. Reemplaza al ' +
+      'viejo flujo que aceptaba la credencial en un query parameter y ' +
+      'terminaba logueándola en los access logs del reverse proxy.',
+  })
+  async createDownloadToken(
+    @CurrentTenant() tenant: RequestTenant,
+    @Param('id') id: string,
+  ) {
+    // Force a tenant-scoped lookup so we refuse to mint a download token
+    // for an invoice that doesn't belong to the caller.
+    await this.invoicesService.findOne(tenant.id, id);
+
+    const { token, expiresInMs } = await this.downloadTokens.issue({
+      type: 'invoice-xml',
+      tenantId: tenant.id,
+      invoiceId: id,
+    });
+
+    return {
+      token,
+      expiresInSeconds: Math.floor(expiresInMs / 1000),
+      url: `/downloads/invoice-xml/${token}`,
+    };
   }
 
   @Post(':id/poll')
