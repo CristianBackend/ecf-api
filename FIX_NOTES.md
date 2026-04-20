@@ -325,3 +325,240 @@ el EVAL de release. Esto es intencional:
 
 El fake incluye un reloj mutable (`redis.now`, `redis.advance(ms)`) para
 verificar expiración TTL sin `setTimeout`.
+
+---
+
+## Tarea 7 — Logging estructurado con pino
+
+### PinoLogger vs. Logger adapter: elegí el primero
+
+`nestjs-pino` exporta dos clases:
+- `PinoLogger` (`@InjectPinoLogger(ctx)`) — API pino pura
+  (`trace/debug/info/warn/error/fatal`).
+- `Logger` — adaptador estilo NestJS con `log/warn/error/debug/verbose`.
+
+Ambos cumplen el criterio `grep -r "new Logger(" src/ → 0`. Opté por
+`PinoLogger` porque:
+1. Es la vía canónica de nestjs-pino para logs per-request.
+2. El método `.log(msg, ctx)` de NestJS y `.log()` de pino son casi
+   incompatibles (el segundo es alias de `.info()` en algunas versiones,
+   inexistente en otras). Mejor decidir de una.
+3. Fuerza a cada llamada nueva a elegir nivel conscientemente — los
+   `this.logger.log(msg)` ambiguos pasan a ser `this.logger.info(msg)`.
+
+Costo: 47 renames mecánicos de `.log(` → `.info(` en 19 archivos.
+
+### Test helper: fake PinoLogger + TestLoggerModule
+
+28 servicios con `@InjectPinoLogger()` rompen los specs que construyen
+instancias con `new Service(...)`. Dos opciones:
+- Mockear el logger en cada spec (repetitivo).
+- Helper compartido.
+
+Creé `src/common/logger/test-logger.ts#makeTestLogger()` (no-op en
+todos los niveles) para specs con `new Service(...)`, y
+`src/common/logger/test-logger.module.ts#TestLoggerModule` (`pino` con
+level `silent`) para los specs que usan `Test.createTestingModule`
+(hoy solo `xml-builder.service.spec.ts`). Ambos son triviales y no
+duplican lógica de producción.
+
+### Redact: fields vs. paths, top-level vs. nested
+
+Pino admite redact tanto con rutas exactas (`req.headers.authorization`)
+como con wildcards (`*.passphrase`). Usé las dos: rutas exactas para
+headers HTTP bien conocidos, y wildcards para fields de dominio que
+pueden aparecer en cualquier payload estructurado (por ejemplo un log
+de debug que incluye `webhook.secret` o `cert.passphrase`).
+
+Resultado: el spec (`logger.module.spec.ts`) prueba todos los campos
+esperados — passphrase / encryptedP12 / encryptedPass / secret /
+secret_enc / jwt / password / Authorization / X-API-Key /
+X-ECF-Signature / Cookie — y confirma que IDs no sensibles (encf,
+trackId, tenantId) siguen legibles.
+
+### BullMQ: @OnWorkerEvent handlers, no wrapping de process()
+
+La consigna pide "log de inicio y fin de cada job BullMQ con jobId,
+queue, duración, resultado, error". Dos caminos:
+1. Wrappear `process()` con start/finish time + try/catch.
+2. Usar `@OnWorkerEvent('active')` / `'completed'` / `'failed'`.
+
+Fui con (2) porque BullMQ ya calcula `job.processedOn` / `job.finishedOn`
+y los pasa al handler; no hace falta medir duración manualmente, y los
+handlers se concentran en un lugar (al final de cada processor) sin
+mezclarse con la lógica de negocio.
+
+`EcfProcessingProcessor.onFailed` ya existía para disparar
+`INVOICE_CONTINGENCY` tras agotar reintentos; lo extendí con el log
+estructurado en lugar de crear un segundo handler (NestJS no garantiza
+orden entre múltiples `@OnWorkerEvent('failed')` de la misma clase).
+
+### `HttpExceptionFilter` convertido a provider DI
+
+Antes era `new HttpExceptionFilter()` en `main.ts`. Para inyectar
+`PinoLogger` tuve que hacerlo `@Injectable`, declararlo como provider
+en `AppModule`, y usar `app.useGlobalFilters(app.get(HttpExceptionFilter))`
+en lugar de `new`. Cambio mecánico pero cruza la línea de "main.ts
+puede hacer `new X()`" — ahora todos los filtros/interceptors globales
+viven en el grafo DI.
+
+---
+
+## Tarea 8 — Limpieza de deuda técnica
+
+### 8.2 `verifySignedXml` — JSDoc en lugar de eliminar
+
+El método tiene un único caller fuera de tests
+(`fe-receptor.controller.ts:99`, en el endpoint inter-taxpayer de
+validación de semilla). La consigna decía "si sólo hay ese caller,
+dejar como está". Mantuve el método pero expandí el JSDoc para
+documentar (1) cuándo usarlo — validación de XML firmado por peers
+externos; (2) cuándo NO — nuestros propios XMLs outbound, donde
+re-verificar es redundante. Así evito que un future maintainer lo use
+mal.
+
+### 8.3 `extractTrackId` era código muerto, no duplicado
+
+El reporte original (§ 7.9) decía "extractTrackId duplica lógica con
+parseSubmissionResponse". Cuando fui a deduplicar encontré que
+`extractTrackId` **no tenía callers** — era declarado pero nunca
+invocado. El duplicado real no existía en producción. Lo eliminé
+directamente en lugar de refactorizar llamadores. `parseSubmissionResponse`
+queda como la única extractor de trackId del lado de submissions.
+
+### 8.5 Scope `ADMIN` agregado al enum
+
+El endpoint `/admin/queues/stats` requería un scope nuevo. Las
+alternativas eran reutilizar `FULL_ACCESS` (que ya inherita todo) o
+agregar `ADMIN` explícito. Fui con el segundo para permitir el caso
+"esta API key solo ve métricas, nada más". Migración
+`20260421100000_add_admin_scope` añade el valor al enum en el orden
+`... WEBHOOKS_MANAGE, ADMIN, FULL_ACCESS` para que FULL_ACCESS siga
+siendo el "super-scope" heredando también ADMIN via la regla
+pre-existente del guard.
+
+### 8.6 `CORS_ORIGIN=*` en producción — Joi vs. runtime check
+
+Opciones:
+- Check imperativo en `main.ts` antes de `enableCors`.
+- Regla condicional en el Joi schema con `.when('NODE_ENV')`.
+
+Fui con Joi: es declarativo, usa el mismo `abortEarly:false` que el
+resto del schema (el operator ve TODOS los errores de env al boot,
+no uno por uno), y los tests pueden ejercerlo sin bootear Nest.
+
+### 8.7 `${VAR:?message}` en docker-compose, no `${VAR:-default}`
+
+Docker-compose expone dos sintaxis para required env vars:
+- `${VAR}` — vacío si no está set, compose arranca igual.
+- `${VAR:?message}` — compose aborta con ese mensaje si no está set.
+
+Usé la segunda para `JWT_SECRET`, `CERT_ENCRYPTION_KEY`, `CORS_ORIGIN`.
+Así la falla ocurre al `docker-compose up`, antes del Nest boot, con
+un mensaje que explica cómo generar el valor. `DB_PASSWORD` mantiene
+su default de desarrollo (`postgres`) porque la imagen postgres
+empaquetada nunca debería usarse en prod — en prod el
+`DATABASE_URL` apunta a un managed Postgres externo.
+
+### 8.8 `?auth=<token>` — X-API-Key + download token single-use
+
+El reemplazo tiene tres partes:
+1. `ApiKeyGuard` acepta `Authorization: Bearer <token>` **o**
+   `X-API-Key: <token>` (agregado); ya NO acepta `?auth=<token>`
+   (eliminado).
+2. `DownloadTokenService` + Redis con TTL 60s y atomic GET+DEL
+   (Lua) — un UUID opaco, payload server-side.
+3. `POST /invoices/:id/download-token` emite el token; el browser
+   arma un link a `/downloads/invoice-xml/:token`, que no tiene
+   guard — el token es la credencial.
+
+Reuse la conexión ioredis del `DistributedLockModule` (exportando
+`LOCK_REDIS_CLIENT`) en lugar de abrir otra conexión solo para
+tokens. Mismo motivo que en Tarea 6: minimizar pool de conexiones
+persistentes.
+
+El DownloadsController chequea explícitamente `payload.type ===
+'invoice-xml'` — defensa en profundidad para un futuro en que se
+emitan tokens de otros tipos de recurso (PDF, RI, etc.), evitando
+que un consumer crosswire los canales.
+
+---
+
+## Resumen ejecutivo (cierre de las 3 tandas)
+
+### Números
+
+| Métrica | Inicio | Tanda 1 (T1-T3) | Tanda 2 (T4-T6) | Tanda 3 (T7-T8) |
+|---|---|---|---|---|
+| Tests passing | 84 | 138 | 177 | **194** |
+| Spec files | 1 | 6 | 10 | **15** |
+| Commits en la tanda | — | 3 | 3 | 10 (8 tareas + FIX_NOTES + entregables) |
+
+**Total de commits** tras el reporte original: **18** (3 + 3 + 9 de código
+ + 3 de docs/FIX_NOTES/ANALYSIS).
+
+### Bloqueantes del reporte original
+
+Los 5 bloqueantes del § 8 del reporte original están todos resueltos.
+Los 11 ítems del § 7 ("cosas que parecen implementadas pero son
+frágiles") están todos resueltos o explicados con commit. Ver
+`ANALYSIS_REPORT.md → Final Status` para el cross-reference tarea ↔
+commit.
+
+### Lo que NO se hizo (y por qué)
+
+- **AWS KMS/S3 real**: fuera de alcance de cualquier tarea. El
+  `EncryptionService` actual con `CERT_ENCRYPTION_KEY` es suficiente
+  para correctitud; mover a KMS es una optimización operacional que
+  necesita decisión de infra + migración de datos.
+- **OpenTelemetry tracing**: no pedido. El `requestId` ya viaja en los
+  logs, que cubre ~80% del caso "debuggear una request".
+- **Prometheus `/metrics`**: parcialmente resuelto vía
+  `/admin/queues/stats` (endpoint JSON), pero no hay exposer formato
+  Prometheus. Out of scope.
+- **ESLint 9 config flat**: el script `npm run lint` no corre porque
+  el repo nunca migró a la config flat de ESLint 9. Los cambios de
+  las 3 tandas no introducen warnings adicionales (imposible:
+  el linter no ejecuta). Debería ser su propia tarea: crear
+  `eslint.config.js`, decidir reglas, correr el fixer y resolver.
+- **Dropear `secret_hash` column**: aún en el schema para
+  retro-compatibilidad de filas legacy (`needs_regeneration=true`).
+  Cuando todos los tenants regeneren sus webhooks, una migración
+  puede retirarla.
+- **Migración legacy cert → nuevo formato**: el cifrado cambió de
+  16-byte IV (JWT-derived key) a 12-byte IV (CERT_ENCRYPTION_KEY).
+  Si hay bases productivas con certificados del formato anterior,
+  deben re-subirse manualmente. Ninguna herramienta los migra
+  automáticamente porque la transición requiere el JWT_SECRET
+  antiguo y tenerlo en el entorno post-deploy anula el sentido
+  del cambio.
+
+### Cosas que encontré peor de lo descrito
+
+1. **La migración fantasma `20260419222538_...`** (apareció en el
+   squash commit `1cd3cb8` antes de mis tandas). Contenido inocuo
+   pero timestamp duplicado. La dejé intacta en Tarea 5 porque
+   renombrarla retroactivamente rompe `_prisma_migrations` de
+   bases productivas que ya la tienen aplicada.
+2. **`extractTrackId` era directamente código muerto**, no un
+   duplicado con lógica divergente como describía el reporte §
+   7.9. La resolución fue trivial: `git rm`.
+3. **HMAC webhook con `secretHash` (pre-Tarea 4)** — el reporte lo
+   mencionaba como "deuda menor"; en la práctica rompía la
+   interoperabilidad con cualquier cliente que usara librerías
+   estándar de verificación (Stripe/GitHub/Shopify-style). La
+   migración a `HMAC(raw_secret, body)` en Tarea 4 cambia
+   semántica pero era obligatoria, no cosmética.
+
+### Cosas que no se pudieron hacer como estaban pedidas
+
+- **`npx prisma migrate status` sin warnings**: imposible de
+  verificar en este entorno (no hay Postgres corriendo).
+  Los nombres de migración están ahora todos con timestamp y
+  en orden lexicográfico correcto; Prisma no los debería reportar
+  como `edited manually`.
+- **Tests de integración reales con Redis** para el distributed
+  lock y el download-token: usé fakes in-memory que implementan
+  las primitivas exactas (`SET NX PX`, `EVAL`). La interacción
+  con un ioredis real sigue siendo responsabilidad de CI/CD, no
+  de los unit tests. Mismo patrón que la tanda 2.

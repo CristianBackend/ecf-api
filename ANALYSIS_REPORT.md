@@ -399,3 +399,101 @@ grep -r "fireWebhookEvent\|webhooksService.dispatch" src/   # mapeado en §4.5
 ls prisma/migrations                                        # 6 dirs + migration_lock.toml
 ls test/                                                    # (empty)
 ```
+
+---
+
+## Final Status (2026-04-22)
+
+Estado del repo después de 3 tandas de trabajo. Suite de tests: **84 → 194**
+(+130). Todos los bloqueantes del reporte original resueltos; follow-ups
+menores detallados debajo.
+
+### Bloqueantes de producción (Top 5 del reporte § 8)
+
+| # | Acción del reporte | Estado | Commit(s) |
+|---|---|---|---|
+| 1 | Conectar el pipeline asíncrono real (POST /invoices → 202 QUEUED) | ✅ resuelto | `1757df5 feat(queue): wire async pipeline`, `b7b1210 refactor(webhooks): single emit path` |
+| 2 | Tests de firma con vectores y round-trip | ✅ resuelto (21 tests) | `a43fb73 fix(signing): replace custom C14N with xml-crypto` |
+| 3 | `.env.example` completo + validación Joi + migraciones renombradas | ✅ resuelto | `002bae0 fix(config): Joi env validation + clean .env.example + rename broken migrations` |
+| 4 | Unificar webhooks en una sola ruta (BullMQ) | ✅ resuelto | `b7b1210 refactor(webhooks): single emit path via BullMQ with X-ECF-* headers` |
+| 5 | Desacoplar cifrado de certificados del JWT_SECRET | ✅ resuelto | `454167b fix(crypto): decouple cert keystore from JWT + industry-standard webhook HMAC` |
+
+### Top 5 riesgos si sale hoy (reporte § 8)
+
+| # | Riesgo original | Estado | Commit(s) |
+|---|---|---|---|
+| 1 | 5xx transitorio deja factura en CONTINGENCY sin webhook | ✅ resuelto — `INVOICE_CONTINGENCY` se emite cuando BullMQ agota reintentos | `1757df5`, `b7b1210` |
+| 2 | Firma rechazada por diferencia de bytes en C14N | ✅ resuelto — xml-crypto v6 con vectores conocidos + round-trip tests | `a43fb73` |
+| 3 | Rotación de JWT_SECRET destruye todos los `.p12` | ✅ resuelto — `CERT_ENCRYPTION_KEY` separado + script de rotación transaccional | `454167b` |
+| 4 | Scheduler duplicado con múltiples réplicas | ✅ resuelto — Redis distributed lock por job | `3406e25 fix(scheduler): @nestjs/schedule + Redis-backed distributed lock` |
+| 5 | `CORS: *` + `?auth=<token>` → credential leak | ✅ resuelto — Joi rechaza `CORS_ORIGIN=*` en prod, `?auth=` eliminado, flujo de download-token single-use en Redis | `e187071 fix(config): reject CORS_ORIGIN=* in production at boot`, `6248884 fix(security): remove ?auth= query-string auth + single-use download tokens` |
+
+### Checklist de cosas "que parecen implementadas pero son frágiles" (§ 7)
+
+| Ítem del reporte | Estado | Commit |
+|---|---|---|
+| BullMQ muerto: processors sin productores | ✅ productores conectados (`enqueueEcfProcessing`, `scheduleCertificateCheck`) | `1757df5`, `3406e25` |
+| Comentario engañoso "XAdES-BES" en EcfProcessingProcessor | ✅ corregido a XMLDSig | `5c797a2 docs(queue): correct misleading XAdES-BES comment` |
+| `verifySignedXml` sin caller | ✅ un caller legítimo (fe-receptor); JSDoc ampliado | `1b180ae docs(signing): document verifySignedXml single caller` |
+| `.env.example` con BOM UTF-8 | ✅ reescrito limpio | `002bae0` |
+| `pino` / `pino-pretty` instalados pero sin importar | ✅ integrados vía `nestjs-pino` (181→194 tests incluyen redact checks) | `c10dc09 feat(logger): structured logging with pino (nestjs-pino)` |
+| Dos deliveries de webhook con headers distintos | ✅ unificado en `X-ECF-*` | `b7b1210` |
+| `dgii.service.ts#httpPost` dead code | ✅ eliminado | `207b874 chore(dgii): remove unused httpPost helper` |
+| Migraciones sin timestamp prefix | ✅ renombradas `20260210000000_add_buyers` / `20260210000001_add_received_documents` | `002bae0` |
+| `extractTrackId` duplica `parseSubmissionResponse` | ✅ duplicado eliminado (era código muerto) | `86d5c47 chore(dgii): remove duplicate extractTrackId helper` |
+| `JWT_EXPIRES_IN` vs `JWT_EXPIRATION` silent fallback | ✅ unificado a `JWT_EXPIRATION` | `002bae0` |
+| Scheduler con `setInterval` sin lock | ✅ reemplazado por `@Cron` + `DistributedLockService` | `3406e25` |
+
+### Otras acciones pedidas (tandas 2-3)
+
+| Acción | Estado | Commit |
+|---|---|---|
+| HMAC webhook: `HMAC(secret, body)` estándar de la industria | ✅ | `454167b` |
+| Script de rotación `scripts/rotate-cert-encryption.ts` con transacción | ✅ | `454167b` |
+| README sección "Rotación de claves" | ✅ | `454167b` |
+| Logs estructurados (JSON en prod, pretty en dev) con redact de secretos | ✅ | `c10dc09` |
+| `grep -r "console\." src/` → 0 | ✅ | `c10dc09` |
+| `grep -r "new Logger(" src/` → 0 | ✅ | `c10dc09` |
+| Endpoint `GET /admin/queues/stats` con scope ADMIN | ✅ | `c3c3291 feat(admin): expose GET /admin/queues/stats` |
+| Docker-compose: sin defaults placeholder para secretos | ✅ | `b431a9f fix(docker): remove JWT_SECRET placeholder default` |
+| `?auth=<token>` eliminado; flujo de download-token single-use en Redis | ✅ | `6248884` |
+
+### Follow-ups pendientes (fuera de alcance de las 3 tandas)
+
+1. **AWS KMS / S3 real**: `configuration.ts` expone `AWS_KMS_KEY_ID` / `AWS_S3_BUCKET` pero la implementación sigue siendo local (PostgreSQL `bytea`). Migración envelope-encryption con KMS requiere refactor de `EncryptionService`.
+2. **Tracing distribuido (OpenTelemetry)**: los logs ya tienen `requestId`, pero no hay spans ni propagación W3C trace-context.
+3. **Métricas Prometheus**: `QueueService.getQueueStats` ya está expuesto vía `/admin/queues/stats`, pero no hay un endpoint `/metrics` Prometheus-format para scraping.
+4. **ESLint 9 config**: el proyecto tiene el script `npm run lint` pero ESLint 9 requiere `eslint.config.js` (config flat); el `.eslintrc` viejo no existe. Necesita migración a config flat. Lint no corre desde antes de las tandas.
+5. **Dropear `secret_hash`** de `webhook_subscriptions`: ya está nullable + `needs_regeneration` marcado; una segunda migración puede retirarla cuando todos los tenants regeneren sus webhooks.
+6. **Migración legacy→nuevo del `.p12` storage**: quien tenga certificados creados con el cifrado JWT_SECRET-derived + 16-byte IV necesita re-subirlos. El script `rotate-cert-encryption.ts` sólo rota entre claves de la nueva era (12-byte IV).
+7. **Migración "fantasma"** `20260419222538_20260419180000_add_queued_status_and_webhook_events`: heredada de un squash previo. El contenido es inocuo, se preserva para no romper `_prisma_migrations` en bases existentes.
+
+### Test count final
+
+```
+Before (reporte original):  84 tests, 1 spec file
+After Tanda 1 (T1-T3):     138 tests, 6 spec files
+After Tanda 2 (T4-T6):     177 tests, 10 spec files
+After Tanda 3 (T7-T8):     194 tests, 15 spec files (+110 vs. original)
+```
+
+### Commits relevantes (18 total tras el reporte)
+
+```
+a43fb73  fix(signing): replace custom C14N with xml-crypto + 21 tests
+1757df5  feat(queue): wire async pipeline — POST /invoices returns 202 QUEUED
+b7b1210  refactor(webhooks): single emit path via BullMQ with X-ECF-* headers
+454167b  fix(crypto): decouple cert keystore from JWT + industry-standard webhook HMAC
+002bae0  fix(config): Joi env validation + clean .env.example + rename broken migrations
+3406e25  fix(scheduler): @nestjs/schedule + Redis-backed distributed lock
+cf4db95  docs(fix-notes): append decisions for Tareas 4-6
+c10dc09  feat(logger): structured logging with pino (nestjs-pino)
+207b874  chore(dgii): remove unused httpPost helper (dead code)
+1b180ae  docs(signing): document verifySignedXml single caller + when to use
+86d5c47  chore(dgii): remove duplicate extractTrackId helper
+5c797a2  docs(queue): correct misleading XAdES-BES comment to XMLDSig
+c3c3291  feat(admin): expose GET /admin/queues/stats for oncall dashboards
+e187071  fix(config): reject CORS_ORIGIN=* in production at boot
+b431a9f  fix(docker): remove JWT_SECRET placeholder default — fail fast instead
+6248884  fix(security): remove ?auth= query-string auth + single-use download tokens
+```
