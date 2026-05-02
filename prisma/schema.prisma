@@ -188,7 +188,6 @@ model Buyer {
   tenant            Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   invoices          Invoice[]
 
-  @@unique([tenantId, rnc])
   @@index([tenantId])
   @@index([name])
   @@map("buyers")
