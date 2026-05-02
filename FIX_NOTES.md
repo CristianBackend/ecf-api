@@ -484,6 +484,83 @@ que un consumer crosswire los canales.
 
 ---
 
+## Tarea 9 — Fix de validación de certificado por modelo de delegado DGII
+
+### Por qué era necesario
+
+La validación anterior (`validateCertificateRnc`) asumía que el RNC del
+emisor tenía que aparecer en el campo SERIALNUMBER del Subject del
+certificado. Eso era incorrecto per las reglas oficiales de DGII:
+
+> "El certificado debe ser emitido a nombre del delegado (persona física)
+> que tendrá a su cargo el rol de Usuario Administrador de e-CF o el rol
+> de firmante." — DGII, Descripción Técnica e-CF
+
+> "Aunque las facturas las emiten las empresas, el certificado debe ser
+> obtenido por la persona física que firmará dichas facturas." — Viafirma
+> (entidad certificadora autorizada por INDOTEL)
+
+El modelo correcto es: el certificado va a nombre de una persona física,
+con su **cédula en formato IDCDO-XXXXXXXXXXX** en el campo SERIALNUMBER
+del Subject. El vínculo entre esa persona y el RNC de la empresa se
+establece en la **OFV de DGII** (Oficina Virtual Fiscal), donde el
+sysadmin registra al firmante. DGII verifica ese vínculo del lado servidor
+al recibir el e-CF firmado.
+
+La validación incorrecta hacía que cualquier certificado real (de Viafirma,
+DigiFirma, Avansi) fuera rechazado en upload, porque ninguno de esos CAs
+pone el RNC de la empresa en el Subject del cert.
+
+### Qué se cambió
+
+**`signing.service.ts`**:
+- Eliminado `validateCertificateRnc` (buscaba RNC del emisor en el Subject).
+- Agregado `validateCertificate` que valida lo correcto:
+  1. Vigencia (`notBefore ≤ now ≤ notAfter`) — lanza con mensaje claro si
+     el cert está vencido o aún no activo.
+  2. Formato SERIALNUMBER `IDCDO-XXXXXXXXXXX` — warning en log si no cumple,
+     pero **no rechaza** (permite firmantes extranjeros con pasaporte).
+  3. Extrae y retorna `CertificateSignerInfo`: `signerName` (CN),
+     `signerId` (cédula sin prefijo IDCDO-), `issuerName` (CN del Issuer),
+     `notBefore`, `notAfter`.
+- `extractFromP12` ya no acepta `expectedRnc` — valida siempre con la
+  nueva lógica.
+- TODO en el código: validar CA contra lista INDOTEL (Viafirma, DigiFirma/
+  CamarDom, Avansi, etc.) — lista cambia, no hardcodeada aún.
+
+**`certificates.service.ts`**:
+- `extractCertInfo` extrae `signerName`, `signerId`, `signerEmail` (del SAN
+  si existe), `issuerName`.
+- `upload` almacena esos campos en la tabla `certificates`.
+
+**`prisma/schema.prisma`** + **migración `20260502000000_add_certificate_signer_fields`**:
+- Cuatro columnas nullable nuevas en `certificates`: `issuer_name`,
+  `signer_name`, `signer_id`, `signer_email`.
+- Las filas existentes quedan con `NULL` en esos campos — sin dato en
+  certs ya almacenados, sin rotura de la app.
+
+**Callers limpiados** (3 sitios que pasaban `invoice.company.rnc` como
+tercer argumento de `extractFromP12`): `contingency.service.ts` (×2) y
+`ecf-processing.processor.ts` (×1).
+
+**`test-fixtures.ts`**:
+- `buildTestP12` ahora acepta `serialNumber`, `notBefore`, `notAfter` para
+  construir certs con configuración controlada.
+- El SERIALNUMBER por defecto pasó de `rnc` plano a `IDCDO-{rnc}`, que es
+  el formato real de los CAs dominicanos.
+
+### Tests
+
+| Test | Resultado |
+|---|---|
+| Cert con SERIALNUMBER=`IDCDO-00114985880` (cédula real) es aceptado | ✓ pasa |
+| Cert vencido (`notAfter` en el pasado) lanza `/vencido/i` | ✓ pasa |
+| Cert no-vigente (`notBefore` en el futuro) lanza `/no es válido/i` | ✓ pasa |
+| Cert con SN no-cédula (`PASSPORT-AB123456`) no lanza (warning solo) | ✓ pasa |
+| Suite completa | **195/195** |
+
+---
+
 ## Resumen ejecutivo (cierre de las 3 tandas)
 
 ### Números

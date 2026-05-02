@@ -23,28 +23,40 @@ export function buildTestP12(options: {
   rnc?: string;
   passphrase?: string;
   commonName?: string;
+  /** OID 2.5.4.5 (SERIALNUMBER) value. Defaults to 'IDCDO-' + rnc (cédula format per DGII delegate model). */
+  serialNumber?: string;
+  /** Certificate notBefore date. Defaults to now. */
+  notBefore?: Date;
+  /** Certificate notAfter date. Defaults to notBefore + 1 year. */
+  notAfter?: Date;
 } = {}): TestP12 {
   const rnc = options.rnc ?? '00000000000';
   const passphrase = options.passphrase ?? 'test-passphrase';
-  const commonName = options.commonName ?? `Test Company ${rnc}`;
+  const commonName = options.commonName ?? `Test Firmante ${rnc}`;
+  const serialNumberValue = options.serialNumber ?? `IDCDO-${rnc}`;
+
+  const notBefore = options.notBefore ?? new Date();
+  const notAfter = options.notAfter ?? (() => {
+    const d = new Date(notBefore);
+    d.setFullYear(d.getFullYear() + 1);
+    return d;
+  })();
 
   const keys = forge.pki.rsa.generateKeyPair(2048);
   const cert = forge.pki.createCertificate();
   cert.publicKey = keys.publicKey;
   cert.serialNumber = '01';
-  cert.validity.notBefore = new Date();
-  cert.validity.notAfter = new Date();
-  cert.validity.notAfter.setFullYear(
-    cert.validity.notBefore.getFullYear() + 1,
-  );
+  cert.validity.notBefore = notBefore;
+  cert.validity.notAfter = notAfter;
 
-  // Subject attribute 2.5.4.5 = serialNumber (the SN field per DGII spec)
+  // Subject attribute 2.5.4.5 = serialNumber (SERIALNUMBER field per DGII delegate model)
+  // For DGII-issued certs the value is 'IDCDO-XXXXXXXXXXX' (cédula of the signer person).
   const attrs = [
     { name: 'commonName', value: commonName },
     { name: 'countryName', value: 'DO' },
     { shortName: 'ST', value: 'Santo Domingo' },
     { name: 'organizationName', value: 'Test SRL' },
-    { type: '2.5.4.5', value: rnc },
+    { type: '2.5.4.5', value: serialNumberValue },
   ];
   cert.setSubject(attrs);
   cert.setIssuer(attrs);

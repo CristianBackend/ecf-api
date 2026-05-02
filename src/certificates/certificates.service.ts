@@ -18,6 +18,10 @@ interface CertificateInfo {
   serialNumber: string;
   validFrom: Date;
   validTo: Date;
+  signerName: string;
+  signerId: string;
+  signerEmail: string | null;
+  issuerName: string;
 }
 
 /**
@@ -96,6 +100,10 @@ export class CertificatesService {
         serialNumber: certInfo.serialNumber,
         validFrom: certInfo.validFrom,
         validTo: certInfo.validTo,
+        signerName: certInfo.signerName || null,
+        signerId: certInfo.signerId || null,
+        signerEmail: certInfo.signerEmail,
+        issuerName: certInfo.issuerName || null,
         isActive: true,
       },
     });
@@ -109,6 +117,10 @@ export class CertificatesService {
       fingerprint: certificate.fingerprint,
       issuer: certificate.issuer,
       subject: certificate.subject,
+      signerName: certificate.signerName,
+      signerId: certificate.signerId,
+      signerEmail: certificate.signerEmail,
+      issuerName: certificate.issuerName,
       validFrom: certificate.validFrom,
       validTo: certificate.validTo,
       isActive: certificate.isActive,
@@ -254,21 +266,36 @@ export class CertificatesService {
     const issuerAttrs = cert.issuer.attributes;
     const subjectAttrs = cert.subject.attributes;
 
-    const issuer = [
-      getAttr(issuerAttrs, 'CN'),
-      getAttr(issuerAttrs, 'O'),
-    ].filter(Boolean).join(', ') || 'Unknown Issuer';
+    const issuerCn = getAttr(issuerAttrs, 'CN');
+    const issuer = [issuerCn, getAttr(issuerAttrs, 'O')].filter(Boolean).join(', ') || 'Unknown Issuer';
 
-    const subject = [
-      getAttr(subjectAttrs, 'CN'),
-      getAttr(subjectAttrs, 'O'),
-    ].filter(Boolean).join(', ') || 'Unknown Subject';
+    const signerName = getAttr(subjectAttrs, 'CN');
+    const subject = [signerName, getAttr(subjectAttrs, 'O')].filter(Boolean).join(', ') || 'Unknown Subject';
 
     const serialNumber = cert.serialNumber || 'Unknown';
 
+    // Extract SERIALNUMBER OID 2.5.4.5 (signer's cédula in DGII delegate model)
+    const snAttr = subjectAttrs.find(
+      (a: any) => a.shortName === 'serialName' || a.type === '2.5.4.5',
+    );
+    const snValue: string = snAttr?.value ?? '';
+    const signerId = snValue.startsWith('IDCDO-') ? snValue.slice(6) : snValue;
+
+    // Extract email from Subject Alternative Name if present
+    let signerEmail: string | null = null;
+    try {
+      const sanExt = cert.getExtension('subjectAltName');
+      if (sanExt?.altNames) {
+        const emailEntry = (sanExt.altNames as any[]).find((n: any) => n.type === 1);
+        signerEmail = emailEntry?.value ?? null;
+      }
+    } catch {
+      // SAN not present or unparseable — non-critical
+    }
+
     this.logger.info(
-      `Certificate parsed: subject="${subject}", issuer="${issuer}", ` +
-      `valid ${cert.validity.notBefore.toISOString()} → ${cert.validity.notAfter.toISOString()}`,
+      `Certificate parsed: signer="${signerName}", signerId="${signerId}", ` +
+      `issuer="${issuer}", valid ${cert.validity.notBefore.toISOString()} → ${cert.validity.notAfter.toISOString()}`,
     );
 
     return {
@@ -278,6 +305,10 @@ export class CertificatesService {
       serialNumber,
       validFrom: cert.validity.notBefore,
       validTo: cert.validity.notAfter,
+      signerName,
+      signerId,
+      signerEmail,
+      issuerName: issuerCn,
     };
   }
 

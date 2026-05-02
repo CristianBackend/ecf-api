@@ -250,7 +250,7 @@ describe('SigningService', () => {
   });
 
   // ----------------------------------------------------------
-  // extractFromP12 — passphrase, RNC mismatch, SN==RNC validation
+  // extractFromP12 — passphrase, DGII delegate model (cédula SN, validity)
   // ----------------------------------------------------------
 
   describe('extractFromP12', () => {
@@ -269,40 +269,41 @@ describe('SigningService', () => {
       ).toThrow();
     });
 
-    it('throws when the certificate SN does not match the expected RNC', () => {
-      // testP12 has RNC 00000000000; ask for a different one
-      expect(() =>
-        service.extractFromP12(
-          testP12.p12Buffer,
-          testP12.passphrase,
-          '99999999999',
-        ),
-      ).toThrow(/RNC esperado/);
-    });
-
-    it('succeeds when the certificate SN matches the expected RNC', () => {
-      const { certificate } = service.extractFromP12(
-        testP12.p12Buffer,
-        testP12.passphrase,
-        testP12.rnc,
+    it('accepts cert with SERIALNUMBER=IDCDO-00114985880 (cédula, not RNC) when valid', () => {
+      // DGII delegate model: cert belongs to the signer person, not the company
+      const fixture = buildTestP12({ serialNumber: 'IDCDO-00114985880' });
+      const { certificate, signerInfo } = service.extractFromP12(
+        fixture.p12Buffer,
+        fixture.passphrase,
       );
       expect(certificate).toContain('BEGIN CERTIFICATE');
+      expect(signerInfo.signerId).toBe('00114985880');
     });
 
-    it('rejects a signed XML made with the wrong emitter certificate at the SN==RNC check', () => {
-      // Sign an XML with `otherP12` keys, but assume emitter RNC is testP12.rnc
-      const xml = buildE31Xml();
-      const signed = service.signXml(
-        xml,
-        otherP12.privateKeyPem,
-        otherP12.certificatePem,
-      );
-      // Verification should still pass (cert chains to its own key)...
-      service.verifySignedXml(signed.signedXml);
-      // ...but extractFromP12 for the emitter would reject
+    it('rejects an expired certificate with a clear error', () => {
+      const twoYearsAgo = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000);
+      const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+      const expired = buildTestP12({ notBefore: twoYearsAgo, notAfter: oneYearAgo });
       expect(() =>
-        service.extractFromP12(otherP12.p12Buffer, otherP12.passphrase, testP12.rnc),
-      ).toThrow();
+        service.extractFromP12(expired.p12Buffer, expired.passphrase),
+      ).toThrow(/vencido/i);
+    });
+
+    it('rejects a not-yet-valid certificate with a clear error', () => {
+      const oneYearFromNow = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+      const twoYearsFromNow = new Date(Date.now() + 2 * 365 * 24 * 60 * 60 * 1000);
+      const future = buildTestP12({ notBefore: oneYearFromNow, notAfter: twoYearsFromNow });
+      expect(() =>
+        service.extractFromP12(future.p12Buffer, future.passphrase),
+      ).toThrow(/no es válido/i);
+    });
+
+    it('passes cert with non-cédula SERIALNUMBER (warns but does not throw)', () => {
+      // Foreign signer with passport number — valid identifier, not IDCDO-XXXXXXXXXXX
+      const fixture = buildTestP12({ serialNumber: 'PASSPORT-AB123456' });
+      expect(() =>
+        service.extractFromP12(fixture.p12Buffer, fixture.passphrase),
+      ).not.toThrow();
     });
   });
 });

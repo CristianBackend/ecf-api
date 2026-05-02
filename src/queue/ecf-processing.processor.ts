@@ -86,8 +86,8 @@ export class EcfProcessingProcessor extends WorkerHost {
         tenantId, companyId,
       );
 
-      // 3. Sign XML (validate certificate SN matches RNC per DGII p.60)
-      const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase, invoice.company.rnc);
+      // 3. Sign XML
+      const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase);
       const { signedXml, securityCode, signTime } = this.signingService.signXml(
         invoice.xmlUnsigned, privateKey, certificate,
       );

@@ -162,7 +162,7 @@ export class ContingencyService {
       const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(
         testInvoice.tenantId, testInvoice.companyId,
       );
-      const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase, testInvoice.company.rnc);
+      const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase);
       await this.dgiiService.getToken(
         testInvoice.tenantId, testInvoice.companyId,
         privateKey, certificate, testInvoice.company.dgiiEnv,
@@ -200,7 +200,7 @@ export class ContingencyService {
         const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(
           invoice.tenantId, invoice.companyId,
         );
-        const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase, invoice.company.rnc);
+        const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase);
 
         // 2. Sign the stored unsigned XML
         if (!invoice.xmlUnsigned) {

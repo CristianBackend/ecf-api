@@ -203,14 +203,16 @@ export class SigningService {
   /**
    * Extract private key and certificate from a PKCS#12 (.p12) buffer.
    *
-   * When `expectedRnc` is provided, validates that the certificate's Subject Name
-   * contains the issuer RNC per DGII Descripción Técnica p.60.
+   * Always validates the certificate's validity period and extracts signer
+   * identity from the Subject SERIALNUMBER field (IDCDO-XXXXXXXXXXX format
+   * per DGII delegate model). The RNC of the issuing company is NOT expected
+   * in the certificate — DGII verifies the signer↔company link server-side
+   * via the OFV registry.
    */
   extractFromP12(
     p12Buffer: Buffer,
     passphrase: string,
-    expectedRnc?: string,
-  ): { privateKey: string; certificate: string } {
+  ): { privateKey: string; certificate: string; signerInfo: CertificateSignerInfo } {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const forge = require('node-forge');
 
@@ -232,12 +234,13 @@ export class SigningService {
     const cert = certBag[0].cert;
     const certificate = forge.pki.certificateToPem(cert);
 
-    if (expectedRnc) {
-      this.validateCertificateRnc(cert, expectedRnc);
-    }
+    const signerInfo = this.validateCertificate(cert);
 
-    this.logger.debug('P12 extracted successfully: key + certificate');
-    return { privateKey, certificate };
+    this.logger.debug(
+      { signerName: signerInfo.signerName, signerId: signerInfo.signerId },
+      'P12 extracted successfully',
+    );
+    return { privateKey, certificate, signerInfo };
   }
 
   // ============================================================
@@ -281,39 +284,60 @@ export class SigningService {
   }
 
   /**
-   * Validate that a certificate's Subject Name contains the expected RNC.
-   * Per DGII Descripción Técnica p.60: SN = RNC/Cédula/Pasaporte del propietario.
+   * Validate a certificate's validity period and extract signer identity.
+   *
+   * Per DGII delegate model: the cert is issued to a natural person (the
+   * authorized signer), whose cédula appears as IDCDO-XXXXXXXXXXX in the
+   * Subject SERIALNUMBER field. The company RNC is NOT in the cert —
+   * DGII resolves that link via the OFV signer registry.
+   *
+   * Throws on expired or not-yet-valid cert. Logs a warning (no throw)
+   * when SERIALNUMBER doesn't match the IDCDO-XXXXXXXXXXX pattern, to
+   * accommodate foreign signers with passports or other valid identifiers.
+   *
+   * TODO: validate CA against INDOTEL-authorized list (Viafirma,
+   * DigiFirma/CamarDom, Avansi, etc.) — list changes, not hardcoded here.
    */
-  private validateCertificateRnc(cert: any, expectedRnc: string): void {
-    const subject = cert.subject;
-    if (!subject) {
-      this.logger.warn('Certificate has no subject — cannot validate RNC');
-      return;
-    }
+  private validateCertificate(cert: any): CertificateSignerInfo {
+    const now = new Date();
+    const notBefore: Date = cert.validity.notBefore;
+    const notAfter: Date = cert.validity.notAfter;
 
-    const subjectStr = subject.attributes
-      .map((attr: any) => `${attr.shortName || attr.name}=${attr.value}`)
-      .join(', ');
-
-    const snAttr = subject.getField('serialName') || subject.getField('SN');
-    const cnAttr = subject.getField('CN');
-    const snValue = snAttr?.value || '';
-    const cnValue = cnAttr?.value || '';
-
-    const rncNormalized = expectedRnc.replace(/[-\s]/g, '');
-    const containsRnc =
-      snValue.replace(/[-\s]/g, '').includes(rncNormalized) ||
-      cnValue.replace(/[-\s]/g, '').includes(rncNormalized) ||
-      subjectStr.replace(/[-\s]/g, '').includes(rncNormalized);
-
-    if (!containsRnc) {
+    if (now < notBefore) {
       throw new Error(
-        `Certificado no corresponde al emisor. RNC esperado: ${expectedRnc}, ` +
-          `Subject del certificado: ${subjectStr}. ` +
-          `DGII rechazará e-CF firmados con certificado de otro contribuyente.`,
+        `Certificado aún no es válido. Válido desde: ${notBefore.toISOString()}, ` +
+          `fecha actual: ${now.toISOString()}`,
       );
     }
-    this.logger.debug(`Certificate RNC validated: ${expectedRnc}`);
+    if (now > notAfter) {
+      throw new Error(
+        `Certificado vencido. Fecha de vencimiento: ${notAfter.toISOString()}, ` +
+          `fecha actual: ${now.toISOString()}`,
+      );
+    }
+
+    const snAttr = cert.subject.attributes.find(
+      (a: any) => a.shortName === 'serialName' || a.type === '2.5.4.5',
+    );
+    const snValue: string = snAttr?.value ?? '';
+
+    const CEDULA_RE = /^IDCDO-\d{11}$/;
+    if (snValue && !CEDULA_RE.test(snValue)) {
+      this.logger.warn(
+        { serialNumber: snValue },
+        'Certificate SERIALNUMBER does not match IDCDO-XXXXXXXXXXX format; ' +
+          'may be a foreign passport or other valid identifier — proceeding',
+      );
+    }
+
+    const cnAttr = cert.subject.attributes.find((a: any) => a.shortName === 'CN');
+    const signerName: string = cnAttr?.value ?? '';
+    const signerId: string = snValue.startsWith('IDCDO-') ? snValue.slice(6) : snValue;
+
+    const issuerCnAttr = cert.issuer.attributes.find((a: any) => a.shortName === 'CN');
+    const issuerName: string = issuerCnAttr?.value ?? '';
+
+    return { signerName, signerId, issuerName, notBefore, notAfter };
   }
 }
 
@@ -326,6 +350,14 @@ export interface SigningResult {
   securityCode: string;
   signatureValue: string;
   signTime: Date;
+}
+
+export interface CertificateSignerInfo {
+  signerName: string;
+  signerId: string;
+  issuerName: string;
+  notBefore: Date;
+  notAfter: Date;
 }
 
 // ============================================================
