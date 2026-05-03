@@ -1,20 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import * as QRCode from 'qrcode';
 import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
 import { ECF_TYPE_NAMES, FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-types';
+import { fmtDateGmt4, fmtDateTimeGmt4 } from '../common/utils/date-format.util';
 
-/**
- * PDF / RI generation service.
- *
- * Generates Representación Impresa per DGII Informe Técnico:
- * - QR Code con URL exacta DGII (estándar o FC < 250K)
- * - Código de Seguridad (primeros 6 hex del hash del SignatureValue)
- * - FechaHoraFirma digital
- * - Campos completos según tipo de e-CF
- *
- * Updated: Correct QR URL, security code, NC/ND reference display
- */
 @Injectable()
 export class PdfService {
   constructor(
@@ -38,13 +29,11 @@ export class PdfService {
     const typeCode = parseInt(invoice.ecfType.replace('E', ''), 10);
     const ecfTypeName = ECF_TYPE_NAMES[typeCode] || invoice.ecfType;
 
-    // Determine if this is a fiscally valid document
     const isAccepted = invoice.status === 'ACCEPTED';
-    const isDraft = invoice.status === 'DRAFT';
     const statusLabel = this.getStatusLabel(invoice.status);
 
-    // QR URL per DGII spec
-    const isFcUnder250k = invoice.ecfType === 'E32' &&
+    const isFcUnder250k =
+      invoice.ecfType === 'E32' &&
       Number(invoice.totalAmount) < FC_FULL_SUBMISSION_THRESHOLD;
 
     const qrUrl = this.signingService.buildQrUrl({
@@ -59,30 +48,46 @@ export class PdfService {
       dgiiEnv: invoice.company.dgiiEnv,
     });
 
+    // Generate QR as embedded data URL — no external network dependency
+    const qrDataUrl = await QRCode.toDataURL(qrUrl, {
+      width: 130,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+    });
+
     const securityCode = invoice.securityCode || 'N/A';
     const signDate = invoice.signedAt
-      ? this.fmtDateTime(new Date(invoice.signedAt))
+      ? fmtDateTimeGmt4(new Date(invoice.signedAt))
       : 'No firmado';
 
-    // Extract RI-mandatory fields from metadata (stored from original DTO)
-    const meta = typeof invoice.metadata === 'object' && invoice.metadata !== null
-      ? (invoice.metadata as any)
-      : {};
+    const meta =
+      typeof invoice.metadata === 'object' && invoice.metadata !== null
+        ? (invoice.metadata as Record<string, any>)
+        : {};
     const originalDto = meta._originalDto || {};
     const fechaVencSecuencia = originalDto.sequenceExpiresAt
-      ? this.fmtDate(new Date(originalDto.sequenceExpiresAt))
+      ? fmtDateGmt4(new Date(originalDto.sequenceExpiresAt))
       : '';
     const indicadorMontoGravado = originalDto.indicadorMontoGravado ?? 0;
     const tipoIngresos = originalDto.items?.[0]?.incomeType || 1;
 
-    // Reference info for NC/ND
     const isNcNd = typeCode === 33 || typeCode === 34;
-    const refInfo = isNcNd && invoice.referenceEncf
-      ? `<div class="ref-banner">
-           <strong>${typeCode === 34 ? 'NOTA DE CRÉDITO' : 'NOTA DE DÉBITO'}</strong><br>
-           NCF Modificado: <strong>${this.esc(invoice.referenceEncf)}</strong><br>
-           ${invoice.referenceDate ? `Fecha Original: ${this.fmtDate(new Date(invoice.referenceDate))}` : ''}
-         </div>`
+    const refInfo = isNcNd ? this.buildRefInfo(typeCode, invoice) : '';
+
+    const hasIscLines = invoice.lines.some((l: any) => Number(l.iscAmount) > 0);
+    const fiscalLegend = this.getFiscalLegend(invoice.ecfType);
+
+    const isE41 = typeCode === 41;
+    const isE46 = typeCode === 46;
+
+    const buyerOrVendorSection = isE41
+      ? this.buildVendorSection(invoice, originalDto)
+      : this.buildBuyerSection(invoice);
+
+    const exportSections = isE46 ? this.buildExportSections(originalDto) : '';
+
+    const paymentDateHtml = invoice.paymentDate
+      ? `<p><span class="label">Fecha Pago:</span> <span class="value">${fmtDateGmt4(invoice.paymentDate)}</span></p>`
       : '';
 
     const html = `<!DOCTYPE html>
@@ -127,18 +132,29 @@ export class PdfService {
     .status-accepted { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
     .status-warning { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
     .status-error { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    .export-section { background: #f0f4ff; border: 1px solid #c7d2fe; border-radius: 6px; padding: 12px; margin: 15px 0; }
+    .export-section h3 { font-size: 11px; font-weight: bold; color: #3730a3; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .export-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+    .export-field { font-size: 11px; padding: 2px 0; }
     @media print { body { padding: 0; } .watermark { position: fixed; } }
   </style>
 </head>
 <body>
-  <!-- WATERMARK for non-accepted invoices -->
   ${!isAccepted ? '<div class="watermark">SIN VALIDEZ FISCAL</div>' : ''}
 
-  <!-- STATUS BANNER -->
-  ${isAccepted
-    ? '<div class="status-banner status-accepted">✅ DOCUMENTO FISCAL VÁLIDO — Aceptado por DGII</div>'
-    : `<div class="status-banner ${invoice.status === 'ERROR' || invoice.status === 'REJECTED' ? 'status-error' : 'status-warning'}">⚠️ ${statusLabel} — Este documento NO tiene validez fiscal</div>`
-  }
+  <div class="status-banner ${
+    isAccepted
+      ? 'status-accepted'
+      : invoice.status === 'ERROR' || invoice.status === 'REJECTED'
+      ? 'status-error'
+      : 'status-warning'
+  }">
+    ${
+      isAccepted
+        ? '&#x2705; DOCUMENTO FISCAL V&Aacute;LIDO &mdash; Aceptado por DGII'
+        : `&#x26A0;&#xFE0F; ${statusLabel} &mdash; Este documento NO tiene validez fiscal`
+    }
+  </div>
 
   <!-- ENCABEZADO EMISOR -->
   <div class="header">
@@ -158,21 +174,17 @@ export class PdfService {
 
   ${refInfo}
 
-  <!-- INFO COMPRADOR / DOCUMENTO -->
+  <!-- INFO COMPRADOR/VENDEDOR y DOCUMENTO -->
   <div class="info-grid">
-    <div class="info-box">
-      <h3>Comprador</h3>
-      ${invoice.buyerRnc ? `<p><span class="label">RNC:</span> <span class="value">${invoice.buyerRnc}</span></p>` : ''}
-      <p><span class="label">Nombre:</span> <span class="value">${this.esc(invoice.buyerName || 'CONSUMIDOR FINAL')}</span></p>
-      ${invoice.buyerEmail ? `<p><span class="label">Email:</span> <span class="value">${invoice.buyerEmail}</span></p>` : ''}
-    </div>
+    ${buyerOrVendorSection}
     <div class="info-box">
       <h3>Documento</h3>
-      <p><span class="label">Fecha Emisión:</span> <span class="value">${this.fmtDate(invoice.createdAt)}</span></p>
+      <p><span class="label">Fecha Emisi&oacute;n:</span> <span class="value">${fmtDateGmt4(invoice.createdAt)}</span></p>
       ${fechaVencSecuencia ? `<p><span class="label">Venc. Secuencia:</span> <span class="value">${fechaVencSecuencia}</span></p>` : ''}
       <p><span class="label">Tipo Ingreso:</span> <span class="value">${this.getIncomeTypeName(tipoIngresos)}</span></p>
       <p><span class="label">Moneda:</span> <span class="value">${invoice.currency}${invoice.exchangeRate ? ` (TC: ${Number(invoice.exchangeRate).toFixed(4)})` : ''}</span></p>
       <p><span class="label">Forma Pago:</span> <span class="value">${this.getPaymentName(invoice.paymentType)}</span></p>
+      ${paymentDateHtml}
       <p><span class="label">Monto Gravado:</span> <span class="value">${indicadorMontoGravado === 1 ? 'Incluye ITBIS' : 'No incluye ITBIS'}</span></p>
       ${invoice.trackId ? `<p><span class="label">Track ID:</span> <span class="value">${invoice.trackId}</span></p>` : ''}
     </div>
@@ -183,23 +195,31 @@ export class PdfService {
     <thead>
       <tr>
         <th>#</th>
-        <th>Descripción</th>
+        <th>Descripci&oacute;n</th>
         <th class="text-right">Cant.</th>
         <th class="text-right">Precio</th>
+        <th class="text-right">Descuento</th>
         <th class="text-right">ITBIS</th>
+        ${hasIscLines ? '<th class="text-right">ISC</th>' : ''}
         <th class="text-right">Subtotal</th>
       </tr>
     </thead>
     <tbody>
-      ${invoice.lines.map((line: any) => `
+      ${invoice.lines
+        .map(
+          (line: any) => `
         <tr>
           <td>${line.lineNumber}</td>
           <td>${this.esc(line.description)}</td>
           <td class="text-right">${Number(line.quantity).toLocaleString('es-DO')}</td>
           <td class="text-right">${this.fmtMoney(line.unitPrice)}</td>
+          <td class="text-right">${Number(line.discount) > 0 ? this.fmtMoney(line.discount) : '&mdash;'}</td>
           <td class="text-right">${Number(line.itbisRate) === 0 ? '<span style="color:#888">E</span>' : this.fmtMoney(line.itbisAmount)}</td>
+          ${hasIscLines ? `<td class="text-right">${Number(line.iscAmount) > 0 ? this.fmtMoney(line.iscAmount) : '&mdash;'}</td>` : ''}
           <td class="text-right">${this.fmtMoney(line.subtotal)}</td>
-        </tr>`).join('\n')}
+        </tr>`,
+        )
+        .join('\n')}
     </tbody>
   </table>
 
@@ -208,8 +228,11 @@ export class PdfService {
     <div class="row"><span>Subtotal:</span><span>${this.fmtMoney(invoice.subtotal)}</span></div>
     ${Number(invoice.totalDiscount) > 0 ? `<div class="row"><span>Descuento:</span><span>-${this.fmtMoney(invoice.totalDiscount)}</span></div>` : ''}
     <div class="row"><span>ITBIS:</span><span>${this.fmtMoney(invoice.totalItbis)}</span></div>
+    ${Number(invoice.totalIsc) > 0 ? `<div class="row"><span>ISC:</span><span>${this.fmtMoney(invoice.totalIsc)}</span></div>` : ''}
     <div class="row total"><span>TOTAL ${invoice.currency}:</span><span>${this.fmtMoney(invoice.totalAmount)}</span></div>
   </div>
+
+  ${exportSections}
 
   <!-- PIE: QR + CÓDIGO SEGURIDAD + FIRMA -->
   <div class="footer">
@@ -220,21 +243,23 @@ export class PdfService {
       ${invoice.trackId ? `<p>TrackId: ${invoice.trackId}</p>` : ''}
       <p style="margin-top: 8px; font-size: 10px; color: #666;">
         Documento firmado digitalmente<br>
-        conforme Ley 32-23 de Facturación Electrónica
+        conforme Ley 32-23 de Facturaci&oacute;n Electr&oacute;nica
       </p>
     </div>
     <div class="qr-section">
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=130x130&qzone=1&ecc=M&data=${encodeURIComponent(qrUrl)}" alt="QR DGII">
-      <p class="code-label">Código de Seguridad</p>
+      <img src="${qrDataUrl}" alt="QR DGII" width="130" height="130">
+      <p class="code-label">C&oacute;digo de Seguridad</p>
       <p class="security-code">${securityCode}</p>
       <p class="code-label" style="margin-top: 4px;">Verificar en dgii.gov.do</p>
     </div>
   </div>
 
   <div class="legal">
-    ${isAccepted
-      ? '<p>Representación Impresa de Comprobante Fiscal Electrónico (e-CF)</p><p>Documento firmado digitalmente conforme Ley 32-23 | Conservar por 10 años</p>'
-      : '<p>⚠️ BORRADOR — Este documento NO es un comprobante fiscal válido</p><p>No tiene firma digital ni ha sido aceptado por la DGII</p>'
+    <p class="fiscal-legend"><strong>${this.esc(fiscalLegend)}</strong></p>
+    ${
+      isAccepted
+        ? '<p>Representaci&oacute;n Impresa de Comprobante Fiscal Electr&oacute;nico (e-CF)</p><p>Documento firmado digitalmente conforme Ley 32-23 | Conservar por 10 a&ntilde;os</p>'
+        : '<p>&#x26A0;&#xFE0F; BORRADOR &mdash; Este documento NO es un comprobante fiscal v&aacute;lido</p><p>No tiene firma digital ni ha sido aceptado por la DGII</p>'
     }
   </div>
 </body>
@@ -251,10 +276,8 @@ export class PdfService {
   async generatePrintableHtml(tenantId: string, invoiceId: string): Promise<string> {
     const html = await this.generateHtml(tenantId, invoiceId);
 
-    // Wrap the existing HTML in a print-ready page with auto-print
     const printHtml = html
       .replace('</style>', `
-    /* Print-specific overrides */
     @media print {
       body { padding: 0; margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .header { border-bottom-color: #1a56db !important; }
@@ -262,7 +285,7 @@ export class PdfService {
       .ecf-section .type { background: #1a56db !important; color: white !important; }
       .no-print { display: none !important; }
     }
-    .print-bar { 
+    .print-bar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
       background: #1a56db; color: white; padding: 10px 20px;
       display: flex; justify-content: space-between; align-items: center;
@@ -279,19 +302,13 @@ export class PdfService {
     </style>`)
       .replace('<body>', `<body>
     <div class="print-bar no-print">
-      <span>📄 Representación Impresa — Guardar como PDF con Ctrl+P / ⌘P</span>
-      <button onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
+      <span>&#x1F4C4; Representaci&oacute;n Impresa &mdash; Guardar como PDF con Ctrl+P / &#x2318;P</span>
+      <button onclick="window.print()">&#x1F5A8;&#xFE0F; Imprimir / Guardar PDF</button>
     </div>`)
       .replace('</body>', `
     <script>
-      // Auto-trigger print dialog after QR loads
       window.addEventListener('load', function() {
-        const img = document.querySelector('.qr-section img');
-        if (img && !img.complete) {
-          img.onload = function() { setTimeout(function() { window.print(); }, 300); };
-        } else {
-          setTimeout(function() { window.print(); }, 500);
-        }
+        setTimeout(function() { window.print(); }, 500);
       });
     </script>
   </body>`);
@@ -300,22 +317,163 @@ export class PdfService {
   }
 
   // ============================================================
+  // HTML SECTION BUILDERS
+  // ============================================================
+
+  private buildRefInfo(typeCode: number, invoice: any): string {
+    if (!invoice.referenceEncf) return '';
+
+    const modCodeHtml =
+      invoice.referenceModCode != null
+        ? `<br>C&oacute;digo Modificaci&oacute;n: <strong>${this.esc(this.getModCodeName(invoice.referenceModCode))}</strong>`
+        : '<br><span style="color:#c0392b">&#x26A0; C&oacute;digo de modificaci&oacute;n no especificado</span>';
+
+    return `<div class="ref-banner">
+      <strong>${typeCode === 34 ? 'NOTA DE CR&Eacute;DITO' : 'NOTA DE D&Eacute;BITO'}</strong><br>
+      NCF Modificado: <strong>${this.esc(invoice.referenceEncf)}</strong><br>
+      ${invoice.referenceDate ? `Fecha Original: ${fmtDateGmt4(new Date(invoice.referenceDate))}` : ''}
+      ${modCodeHtml}
+    </div>`;
+  }
+
+  private buildBuyerSection(invoice: any): string {
+    return `<div class="info-box">
+      <h3>Comprador</h3>
+      ${invoice.buyerRnc ? `<p><span class="label">RNC:</span> <span class="value">${invoice.buyerRnc}</span></p>` : ''}
+      <p><span class="label">Nombre:</span> <span class="value">${this.esc(invoice.buyerName || 'CONSUMIDOR FINAL')}</span></p>
+      ${invoice.buyerEmail ? `<p><span class="label">Email:</span> <span class="value">${invoice.buyerEmail}</span></p>` : ''}
+    </div>`;
+  }
+
+  /**
+   * For E41 (Comprobante Compras), the relevant party is the vendor/supplier.
+   * The buyer columns in the DB store the vendor's data for this type.
+   * Checks metadata._originalDto.vendedor first for an explicit override.
+   */
+  private buildVendorSection(invoice: any, originalDto: any): string {
+    const vendedor = originalDto.vendedor || null;
+    const vendorRnc = vendedor?.rnc || invoice.buyerRnc || null;
+    const vendorName = vendedor?.name || invoice.buyerName || null;
+
+    if (!vendorRnc && !vendorName) {
+      return `<div class="info-box">
+        <h3>Vendedor / Proveedor</h3>
+        <p><span class="value" style="color:#888">Vendedor / Proveedor: informaci&oacute;n no disponible</span></p>
+      </div>`;
+    }
+
+    return `<div class="info-box">
+      <h3>Vendedor / Proveedor</h3>
+      ${vendorRnc ? `<p><span class="label">RNC:</span> <span class="value">${vendorRnc}</span></p>` : ''}
+      ${vendorName ? `<p><span class="label">Nombre:</span> <span class="value">${this.esc(vendorName)}</span></p>` : ''}
+    </div>`;
+  }
+
+  /**
+   * E46 transport and export info sections.
+   * Data sourced from metadata._originalDto.transport and .additionalInfo.
+   * TODO: if fields are absent the RI shows [no especificado]. A future migration
+   * should promote these fields to dedicated Invoice columns for reliability.
+   */
+  private buildExportSections(originalDto: any): string {
+    const transport = (originalDto.transport as Record<string, any>) || {};
+    const addInfo = (originalDto.additionalInfo as Record<string, any>) || {};
+
+    const noSpec = '[no especificado]';
+
+    const viaNames: Record<number, string> = { 1: 'Terrestre', 2: 'Mar&iacute;timo', 3: 'A&eacute;rea' };
+    const via = transport.viaTransporte
+      ? (viaNames[transport.viaTransporte as number] || String(transport.viaTransporte))
+      : noSpec;
+
+    const transportSection = `<div class="export-section">
+      <h3>Transporte</h3>
+      <div class="export-grid">
+        <div class="export-field"><span class="label">Transportista:</span> <span class="value">${this.esc(String(transport.carrierName ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">RNC Transportista:</span> <span class="value">${transport.carrierRnc ?? noSpec}</span></div>
+        <div class="export-field"><span class="label">V&iacute;a de Transporte:</span> <span class="value">${via}</span></div>
+        <div class="export-field"><span class="label">N&uacute;mero de Viaje:</span> <span class="value">${transport.tripNumber ?? noSpec}</span></div>
+        <div class="export-field"><span class="label">Pa&iacute;s de Origen:</span> <span class="value">${transport.countryOrigin ?? noSpec}</span></div>
+        <div class="export-field"><span class="label">Pa&iacute;s de Destino:</span> <span class="value">${transport.countryDestination ?? noSpec}</span></div>
+        <div class="export-field"><span class="label">Direcci&oacute;n de Destino:</span> <span class="value">${this.esc(String(transport.destinationAddress ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">Peso Bruto:</span> <span class="value">${addInfo.grossWeight != null ? addInfo.grossWeight : noSpec}</span></div>
+        <div class="export-field"><span class="label">Peso Neto:</span> <span class="value">${addInfo.netWeight != null ? addInfo.netWeight : noSpec}</span></div>
+        <div class="export-field"><span class="label">Volumen:</span> <span class="value">${addInfo.packageVolume != null ? addInfo.packageVolume : noSpec}</span></div>
+      </div>
+    </div>`;
+
+    const exportInfoSection = `<div class="export-section">
+      <h3>Informaci&oacute;n de Exportaci&oacute;n</h3>
+      <div class="export-grid">
+        <div class="export-field"><span class="label">INCOTERM:</span> <span class="value">${this.esc(String(addInfo.deliveryConditions ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">R&eacute;gimen Aduanero:</span> <span class="value">${this.esc(String(addInfo.customsRegime ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">Puerto de Embarque:</span> <span class="value">${this.esc(String(addInfo.portOfShipment ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">Puerto de Salida:</span> <span class="value">${this.esc(String(addInfo.departurePort ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">Puerto de Desembarque:</span> <span class="value">${this.esc(String(addInfo.arrivalPort ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">Total FOB:</span> <span class="value">${addInfo.totalFob != null ? this.fmtMoney(addInfo.totalFob) : noSpec}</span></div>
+        <div class="export-field"><span class="label">Seguro:</span> <span class="value">${addInfo.insurance != null ? this.fmtMoney(addInfo.insurance) : noSpec}</span></div>
+        <div class="export-field"><span class="label">Flete:</span> <span class="value">${addInfo.freight != null ? this.fmtMoney(addInfo.freight) : noSpec}</span></div>
+        <div class="export-field"><span class="label">Total CIF:</span> <span class="value">${addInfo.totalCif != null ? this.fmtMoney(addInfo.totalCif) : noSpec}</span></div>
+        <div class="export-field"><span class="label">Referencia:</span> <span class="value">${this.esc(String(addInfo.referenceNumber ?? noSpec))}</span></div>
+      </div>
+    </div>`;
+
+    return transportSection + exportInfoSection;
+  }
+
+  // ============================================================
   // HELPERS
   // ============================================================
 
+  getFiscalLegend(ecfType: string): string {
+    const legends: Record<string, string> = {
+      E31: 'El ITBIS facturado forma parte de su crédito fiscal',
+      E32: 'No aplica como crédito fiscal ni sustento de costos y gastos',
+      E33: 'Nota de Débito que modifica el NCF indicado',
+      E34: 'Nota de Crédito que modifica el NCF indicado',
+      E41: 'El ITBIS facturado es un gasto sujeto a proporcionalidad',
+      E43: 'Comprobante de gasto menor — no aplica como crédito fiscal',
+      E44: 'Régimen especial de tributación',
+      E45: 'Documento gubernamental — exento de ITBIS',
+      E46: 'Exportación libre de ITBIS conforme Art. 343 Cód. Tributario',
+      E47: 'Pago al exterior sujeto a retención',
+    };
+    return legends[ecfType] || '';
+  }
+
+  private getModCodeName(code: number): string {
+    const names: Record<number, string> = {
+      1: 'Anula Comprobante Fiscal Electrónico',
+      2: 'Corrección de Texto del Comprobante Fiscal Electrónico',
+      3: 'Corrección de Montos del Comprobante Fiscal Electrónico',
+      4: 'Comprobante emitido en Contingencia',
+    };
+    return names[code] || `Código ${code}`;
+  }
+
   private getIncomeTypeName(type: number): string {
     const names: Record<number, string> = {
-      1: 'Operacional', 2: 'Financieros', 3: 'Extraordinarios',
-      4: 'Arrendamientos', 5: 'Venta Activos', 6: 'Otros',
+      1: 'Operacional',
+      2: 'Financieros',
+      3: 'Extraordinarios',
+      4: 'Arrendamientos',
+      5: 'Venta Activos',
+      6: 'Otros',
     };
     return names[type] || `${type}`;
   }
 
   private getPaymentName(type: number | null): string {
     const names: Record<number, string> = {
-      1: 'Efectivo', 2: 'Cheque/Transferencia', 3: 'Tarjeta',
-      4: 'Crédito', 5: 'Bonos', 6: 'Permuta',
-      7: 'Nota de Crédito', 8: 'Mixto', 9: 'Otro',
+      1: 'Efectivo',
+      2: 'Cheque/Transferencia',
+      3: 'Tarjeta',
+      4: 'Crédito',
+      5: 'Bonos',
+      6: 'Permuta',
+      7: 'Nota de Crédito',
+      8: 'Mixto',
+      9: 'Otro',
     };
     return type ? names[type] || 'N/A' : 'N/A';
   }
@@ -335,26 +493,11 @@ export class PdfService {
     return labels[status] || status;
   }
 
-  private fmtDate(date: Date | string): string {
-    const d = new Date(date);
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const yyyy = d.getFullYear();
-    return `${dd}/${mm}/${yyyy}`;
-  }
-
-  private fmtDateTime(date: Date): string {
-    const dd = String(date.getDate()).padStart(2, '0');
-    const mm = String(date.getMonth() + 1).padStart(2, '0');
-    const yyyy = date.getFullYear();
-    const hh = String(date.getHours()).padStart(2, '0');
-    const mi = String(date.getMinutes()).padStart(2, '0');
-    const ss = String(date.getSeconds()).padStart(2, '0');
-    return `${dd}-${mm}-${yyyy} ${hh}:${mi}:${ss}`;
-  }
-
   private fmtMoney(amount: any): string {
-    return `RD$${Number(amount).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return `RD$${Number(amount).toLocaleString('es-DO', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
   }
 
   private esc(str: string): string {
