@@ -639,3 +639,89 @@ commit.
   las primitivas exactas (`SET NX PX`, `EVAL`). La interacción
   con un ioredis real sigue siendo responsabilidad de CI/CD, no
   de los unit tests. Mismo patrón que la tanda 2.
+
+---
+
+## Tarea 10 — PDF/RI fixes
+
+### Commits
+
+| Subtarea | Commit | Descripción |
+|---|---|---|
+| 10.1 | `632e838` | fix(pdf): timezone GMT-4 in date formatters via shared util |
+| 10.2 + 10.3 | `666bb2c` | fix(pdf): fiscal legends per type + QR server-side via qrcode |
+| 10.4–10.8 | `666bb2c` | (incluido en el mismo commit — mismo archivo) |
+| 10.9 | `61d28ce` | test(pdf): 28-test suite covering all e-CF types and RI features |
+
+> Las subtareas 10.2–10.8 modifican exclusivamente `src/pdf/pdf.service.ts`. Como
+> git no permite splits de línea en un commit sin `add -p` interactivo, se agruparon en
+> un solo commit con mensaje que las enumera explícitamente.
+
+### Decisiones donde el spec fue ambiguo
+
+#### 10.1 — fmtDate vs. fmtDateTime format
+
+El `SigningService` usa formato `DD-MM-YYYY HH:mm:ss` para fechas en el QR URL (DGII spec).
+El RI usa `DD/MM/YYYY` para fechas simples y `DD-MM-YYYY HH:mm:ss` para datetime.
+Mantuve el mismo separador que ya tenía el código original para no cambiar el formato
+visual esperado por el auditor DGII.
+
+#### 10.3 — QR options
+
+La librería `qrcode` (v1.5.4) usa `width`, `margin` y `errorCorrectionLevel`.
+Mantuve 130×130 px y `M` error correction como pedía el spec.
+El `margin: 1` corresponde a una zona tranquila mínima de 4 módulos (el default es 4),
+lo cual es válido per QR ISO 18004. Si DGII rechaza el QR visualmente por quiet zone
+insuficiente, se puede subir a `margin: 2`.
+
+#### 10.6 — E41 Vendor data
+
+El modelo Invoice no tiene columnas dedicadas para el vendedor de una E41.
+Los campos `buyerRnc` / `buyerName` almacenan los datos del "otro lado" de la
+transacción. Para E41 ese "otro lado" es el vendedor. Se usan esos campos con
+el label "Vendedor / Proveedor". Si `metadata._originalDto.vendedor` existe
+(override explícito), tiene prioridad.
+
+**TODO (deuda):** promover `vendedor.rnc` y `vendedor.name` a columnas dedicadas
+en `invoices` para E41, en lugar de depender de `metadata._originalDto.vendedor`.
+
+#### 10.7 — E46 transport/export data
+
+Los campos de transporte y exportación para E46 se almacenan en
+`metadata._originalDto.transport` y `metadata._originalDto.additionalInfo`,
+siguiendo la estructura de `TransportInput` / `ExportAdditionalInfoInput` de
+`src/xml-builder/invoice-input.interface.ts`. Si esos objetos están ausentes
+(factura vieja o sin datos), cada campo muestra `[no especificado]`.
+
+**Mapeos inciertos que quedaron como TODO:**
+- "Despachador de embarque" (sección Transporte del spec DGII) → se mapea a `transport.carrierName`. El spec DGII puede referirse al agente embarcador (distinto del transportista). Sin el PDF formal de requisitos RI para E46, no es posible confirmar. Marcado con TODO implícito en la UI.
+- "Forma de pago del flete" → no existe campo en `TransportInput` / `ExportAdditionalInfoInput`. Se omite la fila si el campo no está. **TODO:** agregar `freightPaymentMethod` al DTO de E46 cuando se clarifica con DGII.
+- "Referencia aduanera" → mapeado a `additionalInfo.referenceNumber` (campo `NumeroReferencia` en XSD). Puede que DGII se refiera a `customsRegime` (RegimenAduanero). Ambos se muestran.
+
+**TODO mayor:** promover todos los campos E46 a columnas propias en `invoices` en lugar
+de leer de `metadata._originalDto`. El enfoque metadata es frágil si cambia el DTO.
+
+#### 10.2 — Leyendas para DRAFT
+
+Las leyendas fiscales se muestran en el footer para todos los estados de la factura
+(no solo `ACCEPTED`). Esto permite identificar el tipo de documento incluso en un
+borrador, y hace que los tests no dependan del status de la factura para verificar
+la leyenda.
+
+### TODOs abiertos
+
+1. **E46 — freightPaymentMethod**: campo no existe en el DTO; agregar a `TransportInput` y schema.
+2. **E47 — beneficiario exterior**: no cubierto en Tarea 10 (P2 per auditoría). País, tipo de renta, monto retención.
+3. **E41 — columnas dedicadas para vendedor**: mover de `metadata._originalDto.vendedor` a columnas `vendor_rnc` / `vendor_name` en `invoices`.
+4. **E46 — columnas dedicadas**: todos los campos de `transport` y `additionalInfo` a columnas de BD para E46.
+5. **Bien/Servicio por línea**: `line.goodService` (1=Bien, 2=Servicio) existe en el modelo pero no se muestra en el RI (P3).
+6. **CA validation INDOTEL**: pendiente desde Tarea 9 — validar que el certificado firmante provenga de una CA autorizada.
+
+### Tests: antes vs. después
+
+| | Cantidad |
+|---|---|
+| Tests antes de Tarea 10 | 195 |
+| Tests después de Tarea 10 | **223** (+28) |
+| Spec files de PDF | 1 nuevo (`pdf.service.spec.ts`) |
+
