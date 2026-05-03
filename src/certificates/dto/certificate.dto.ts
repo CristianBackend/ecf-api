@@ -10,7 +10,8 @@ export class UploadCertificateDto {
   companyId: string;
 
   @ApiProperty({
-    description: 'Contenido del archivo .p12 en Base64',
+    description: 'Contenido del archivo .p12 en Base64. Usar: `base64 -i certificado.p12` (macOS/Linux) o `[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.p12"))` (PowerShell)',
+    example: 'MIIKDgIBAzCCCcoGCSqGSIb3DQEHAaCCCbsEggm3MIIJszCCBW8GCSqGSIb3...',
   })
   @IsString()
   p12Base64: string;

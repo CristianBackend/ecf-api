@@ -264,7 +264,7 @@ class CurrencyDto {
 // ============================================================
 
 export class CreateInvoiceDto {
-  @ApiProperty({ description: 'ID de la empresa emisora (UUID)' })
+  @ApiProperty({ description: 'ID de la empresa emisora (UUID)', example: 'clng9x0010000vwc0l5s1234' })
   @IsString({ message: 'companyId es requerido' })
   @MinLength(36, { message: 'companyId inválido' })
   @MaxLength(36, { message: 'companyId inválido' })
@@ -309,16 +309,28 @@ export class CreateInvoiceDto {
   @Type(() => CurrencyDto)
   currency?: CurrencyDto;
 
-  @ApiPropertyOptional({ description: 'Clave de idempotencia para evitar duplicados' })
+  @ApiPropertyOptional({ description: 'Clave de idempotencia para evitar duplicados (max 64 chars, ej: timestamp + requestId)', example: '1746273600000-req-abc123' })
   @IsOptional()
   @IsString()
   @MaxLength(64, { message: 'Clave de idempotencia no puede exceder 64 caracteres' })
   idempotencyKey?: string;
 
-  @ApiPropertyOptional({ description: 'Metadata custom (no se envía a DGII)' })
+  @ApiPropertyOptional({ description: 'Metadata custom (no se envía a DGII, útil para referenciar entidades propias)', example: { orderId: 'ORD-2026-001', customerId: 'CUST-789' } })
   @IsOptional()
   @IsObject({ message: 'Metadata debe ser un objeto JSON' })
   metadata?: Record<string, any>;
+}
+
+export class VoidInvoiceDto {
+  @ApiProperty({
+    description: 'Motivo de la anulación. Solo válido para facturas en DRAFT, ERROR o CONTINGENCY. Para ACCEPTED emitir NC (E34).',
+    example: 'Factura emitida con datos incorrectos del comprador',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 // Export constants for use in service validations

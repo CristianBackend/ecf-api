@@ -5,12 +5,15 @@ import {
   IsInt,
   IsOptional,
   IsDateString,
+  IsArray,
+  ValidateNested,
   Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { EcfType } from '@prisma/client';
 
 export class CreateSequenceDto {
-  @ApiProperty({ description: 'ID de la empresa' })
+  @ApiProperty({ description: 'ID de la empresa (UUID)', example: 'clng9x0010000vwc0l5s1234' })
   @IsString()
   companyId: string;
 
@@ -45,4 +48,26 @@ export class CreateSequenceDto {
   @IsOptional()
   @IsDateString({}, { message: 'Fecha de vencimiento inválida' })
   expiresAt?: string;
+}
+
+class SequenceRangeDto {
+  @ApiProperty({ description: 'eNCF inicial del rango a anular', example: 'E310000000001' })
+  @IsString()
+  encfFrom: string;
+
+  @ApiProperty({ description: 'eNCF final del rango a anular', example: 'E310000000050' })
+  @IsString()
+  encfTo: string;
+}
+
+export class AnnulSequencesDto {
+  @ApiProperty({
+    description: 'Rangos de eNCF no utilizados a anular ante DGII (ANECF)',
+    type: [SequenceRangeDto],
+    example: [{ encfFrom: 'E310000000001', encfTo: 'E310000000050' }],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SequenceRangeDto)
+  ranges: SequenceRangeDto[];
 }
