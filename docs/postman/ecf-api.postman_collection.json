@@ -1,0 +1,838 @@
+{
+  "info": {
+    "_postman_id": "ecf-api-collection-v1",
+    "name": "ECF API — Facturación Electrónica RD",
+    "description": "Colección completa para la API SaaS de facturación electrónica (e-CF) para República Dominicana.\n\n## Primeros pasos\n1. Importar también `ecf-api.postman_environment.json`\n2. Llenar las variables `base_url`, `tenant_email`, `tenant_password`\n3. Ejecutar **Auth > Login** para obtener el token\n4. Ejecutar **Auth > Crear API Key** y guardar en la variable `api_key`\n\n## Autenticación\nTodos los endpoints (salvo Login y Register) requieren el header:\n```\nX-API-Key: {{api_key}}\n```\n\n## Documentación\nSwagger en: `{{base_url}}/docs`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000/api/v1", "type": "string" },
+    { "key": "api_key", "value": "", "type": "string", "description": "API key — llenar después de ejecutar Auth > Crear API Key" },
+    { "key": "tenant_id", "value": "", "type": "string" },
+    { "key": "company_id", "value": "", "type": "string" },
+    { "key": "buyer_id", "value": "", "type": "string" },
+    { "key": "invoice_id", "value": "", "type": "string" },
+    { "key": "webhook_id", "value": "", "type": "string" },
+    { "key": "sequence_id", "value": "", "type": "string" }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-API-Key", "type": "string" },
+      { "key": "value", "value": "{{api_key}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "description": "Autenticación y gestión de API Keys",
+      "item": [
+        {
+          "name": "Registrar Tenant",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/tenants/register", "host": ["{{base_url}}"], "path": ["tenants", "register"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mi Empresa Integradora\",\n  \"email\": \"admin@miempresa.com\",\n  \"password\": \"Password123!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Crea un nuevo tenant (cuenta) en la plataforma. Retorna las API keys iniciales de test y producción."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Has tenant ID', () => {",
+                  "  const data = pm.response.json().data;",
+                  "  pm.expect(data).to.have.property('id');",
+                  "  pm.collectionVariables.set('tenant_id', data.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@miempresa.com\",\n  \"password\": \"Password123!\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Login con email y contraseña. Retorna JWT para el dashboard."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has accessToken', () => {",
+                  "  const data = pm.response.json().data;",
+                  "  pm.expect(data).to.have.property('accessToken');",
+                  "  pm.collectionVariables.set('jwt_token', data.accessToken);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Crear API Key",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/auth/keys", "host": ["{{base_url}}"], "path": ["auth", "keys"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Integración ERP - Producción\",\n  \"isLive\": false,\n  \"scopes\": [\"FULL_ACCESS\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Crea una API key con scopes específicos. El valor completo solo se muestra una vez — cópialo a la variable `api_key`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Has key value', () => {",
+                  "  const data = pm.response.json().data;",
+                  "  pm.expect(data).to.have.property('key');",
+                  "  pm.collectionVariables.set('api_key', data.key);",
+                  "  console.log('API Key creada:', data.key);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar API Keys",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/auth/keys", "host": ["{{base_url}}"], "path": ["auth", "keys"] },
+            "description": "Lista todas las API keys del tenant (muestra solo los últimos 4 caracteres de cada key)."
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Revocar API Key",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/auth/keys/:id", "host": ["{{base_url}}"], "path": ["auth", "keys", ":id"], "variable": [{ "key": "id", "value": "{{key_id_to_revoke}}" }] },
+            "description": "Revoca una API key permanentemente."
+          }
+        },
+        {
+          "name": "Rotar API Key",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/auth/keys/:id/rotate", "host": ["{{base_url}}"], "path": ["auth", "keys", ":id", "rotate"], "variable": [{ "key": "id", "value": "{{key_id_to_rotate}}" }] },
+            "description": "Revoca la key actual y crea una nueva con los mismos scopes."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tenants",
+      "description": "Gestión del tenant (cuenta de la empresa integradora)",
+      "item": [
+        {
+          "name": "Ver Mi Tenant",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/tenants/me", "host": ["{{base_url}}"], "path": ["tenants", "me"] },
+            "description": "Retorna información del tenant actual."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.id) pm.collectionVariables.set('tenant_id', data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Estadísticas del Tenant",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/tenants/me/stats", "host": ["{{base_url}}"], "path": ["tenants", "me", "stats"] },
+            "description": "Retorna estadísticas de uso: facturas emitidas, empresas, webhooks."
+          }
+        },
+        {
+          "name": "Actualizar Tenant",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/tenants/me", "host": ["{{base_url}}"], "path": ["tenants", "me"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Empresa Integradora Actualizada\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Companies",
+      "description": "Empresas emisoras de e-CF",
+      "item": [
+        {
+          "name": "Crear Empresa",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/companies", "host": ["{{base_url}}"], "path": ["companies"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rnc\": \"130000001\",\n  \"businessName\": \"Empresa Ejemplo SRL\",\n  \"tradeName\": \"Empresa Ejemplo\",\n  \"address\": \"Av. Winston Churchill 1099, Santo Domingo\",\n  \"phone\": \"809-555-0100\",\n  \"email\": \"info@empresa.com\",\n  \"dgiiEnv\": \"DEV\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Registra una empresa emisora. El RNC se valida contra DGII. En DEV usa el ambiente de pruebas."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.id) pm.collectionVariables.set('company_id', data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar Empresas",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/companies", "host": ["{{base_url}}"], "path": ["companies"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.length > 0) pm.collectionVariables.set('company_id', data[0].id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ver Empresa",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/companies/{{company_id}}", "host": ["{{base_url}}"], "path": ["companies", "{{company_id}}"] }
+          }
+        },
+        {
+          "name": "Actualizar Empresa",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/companies/{{company_id}}", "host": ["{{base_url}}"], "path": ["companies", "{{company_id}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"809-555-0200\",\n  \"email\": \"nuevo@empresa.com\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Desactivar Empresa",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/companies/{{company_id}}", "host": ["{{base_url}}"], "path": ["companies", "{{company_id}}"] },
+            "description": "Soft-delete: desactiva la empresa pero conserva su historial."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Buyers",
+      "description": "Clientes y compradores (directorio de contribuyentes)",
+      "item": [
+        {
+          "name": "Crear Comprador",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/buyers", "host": ["{{base_url}}"], "path": ["buyers"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rnc\": \"131793916\",\n  \"email\": \"contacto@cliente.com\",\n  \"phone\": \"809-555-0101\",\n  \"contactPerson\": \"Juan Pérez\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Crea un comprador. Si provees RNC, los datos se auto-completan desde DGII."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.id) pm.collectionVariables.set('buyer_id', data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar Compradores",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/buyers?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["buyers"],
+              "query": [
+                { "key": "search", "value": "", "disabled": true },
+                { "key": "buyerType", "value": "", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ver Comprador",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/buyers/{{buyer_id}}", "host": ["{{base_url}}"], "path": ["buyers", "{{buyer_id}}"] }
+          }
+        },
+        {
+          "name": "Actualizar Comprador",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/buyers/{{buyer_id}}", "host": ["{{base_url}}"], "path": ["buyers", "{{buyer_id}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nuevo@cliente.com\",\n  \"phone\": \"809-555-0202\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Refresh DGII",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/buyers/{{buyer_id}}/refresh-dgii", "host": ["{{base_url}}"], "path": ["buyers", "{{buyer_id}}", "refresh-dgii"] },
+            "description": "Vuelve a consultar DGII y actualiza razón social y estado del comprador."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Certificates",
+      "description": "Certificados digitales .p12 para firma XMLDSig",
+      "item": [
+        {
+          "name": "Subir Certificado",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/companies/{{company_id}}/certificates",
+              "host": ["{{base_url}}"],
+              "path": ["companies", "{{company_id}}", "certificates"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"p12Base64\": \"MIIKDgIBAzCCCcoGCSqGSIb3DQEHAa...\",\n  \"passphrase\": \"mi-password-del-certificado\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Sube el .p12 en Base64. Convierte: `base64 -i cert.p12` (macOS/Linux) o `[Convert]::ToBase64String([IO.File]::ReadAllBytes(\"cert.p12\"))` (PowerShell)."
+          },
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["// Asegúrate de que p12Base64 tenga el contenido real del .p12 en Base64"] } },
+            { "listen": "test", "script": { "exec": ["pm.test('Status 201', () => pm.response.to.have.status(201));"] } }
+          ]
+        },
+        {
+          "name": "Listar Certificados",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/companies/{{company_id}}/certificates",
+              "host": ["{{base_url}}"],
+              "path": ["companies", "{{company_id}}", "certificates"]
+            }
+          }
+        },
+        {
+          "name": "Ver Certificado Activo",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/companies/{{company_id}}/certificates/active",
+              "host": ["{{base_url}}"],
+              "path": ["companies", "{{company_id}}", "certificates", "active"]
+            },
+            "description": "Retorna el certificado activo actual. 404 si no hay ninguno activo."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sequences",
+      "description": "Secuencias de eNCF autorizadas por DGII",
+      "item": [
+        {
+          "name": "Crear Secuencia",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/sequences", "host": ["{{base_url}}"], "path": ["sequences"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E31\",\n  \"startNumber\": 1,\n  \"endNumber\": 10000,\n  \"expiresAt\": \"2027-12-31T23:59:59.000Z\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Registra un rango de eNCF autorizado por DGII. Necesitas la autorización de la DGII (OFV) primero."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.id) pm.collectionVariables.set('sequence_id', data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ver Secuencias de Empresa",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/sequences/{{company_id}}", "host": ["{{base_url}}"], "path": ["sequences", "{{company_id}}"] }
+          }
+        },
+        {
+          "name": "Verificar Disponibilidad",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/sequences/{{company_id}}/available?type=E31",
+              "host": ["{{base_url}}"],
+              "path": ["sequences", "{{company_id}}", "available"],
+              "query": [{ "key": "type", "value": "E31" }]
+            },
+            "description": "Verifica si hay eNCF disponibles para el tipo de comprobante solicitado."
+          }
+        },
+        {
+          "name": "Anular Secuencias (ANECF)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/sequences/{{company_id}}/annul", "host": ["{{base_url}}"], "path": ["sequences", "{{company_id}}", "annul"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ranges\": [\n    { \"encfFrom\": \"E310000000151\", \"encfTo\": \"E310000010000\" }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Anula eNCF no utilizados ante DGII mediante documento ANECF."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invoices",
+      "description": "Emisión y gestión de facturas electrónicas e-CF",
+      "item": [
+        {
+          "name": "E31 — Factura con Valor Fiscal",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E31\",\n  \"buyer\": {\n    \"rnc\": \"131793916\",\n    \"name\": \"EMPRESA COMPRADORA SRL\",\n    \"type\": 1\n  },\n  \"items\": [\n    {\n      \"description\": \"Servicio de consultoría tecnológica\",\n      \"quantity\": 1,\n      \"unitPrice\": 10000,\n      \"itbisRate\": 18\n    }\n  ],\n  \"payment\": {\n    \"type\": 1,\n    \"method\": 2\n  },\n  \"idempotencyKey\": \"{{$timestamp}}-E31-001\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E31: Factura con Valor Fiscal para contribuyentes registrados. RNC del comprador es obligatorio."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generar idempotency key único por request",
+                  "pm.variables.set('timestamp', Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 202 (encolado)', () => pm.response.to.have.status(202));",
+                  "pm.test('Status QUEUED', () => {",
+                  "  const data = pm.response.json().data;",
+                  "  pm.expect(data.status).to.equal('QUEUED');",
+                  "  pm.collectionVariables.set('invoice_id', data.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E32 — Consumidor Final",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E32\",\n  \"buyer\": {\n    \"name\": \"Consumidor Final\",\n    \"type\": 2\n  },\n  \"items\": [\n    {\n      \"description\": \"Producto para consumidor final\",\n      \"quantity\": 2,\n      \"unitPrice\": 500,\n      \"itbisRate\": 18\n    }\n  ],\n  \"payment\": {\n    \"type\": 1,\n    \"method\": 1\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E32: Consumidor Final. NO requiere RNC. Monto total < RD$250,000 para ser válido."
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('Status 202', () => pm.response.to.have.status(202));"] } }
+          ]
+        },
+        {
+          "name": "E33 — Nota de Débito",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E33\",\n  \"buyer\": {\n    \"rnc\": \"131793916\",\n    \"name\": \"EMPRESA COMPRADORA SRL\",\n    \"type\": 1\n  },\n  \"items\": [\n    {\n      \"description\": \"Ajuste por diferencia de precio\",\n      \"quantity\": 1,\n      \"unitPrice\": 2000,\n      \"itbisRate\": 18\n    }\n  ],\n  \"payment\": { \"type\": 1 },\n  \"reference\": {\n    \"encf\": \"E310000000001\",\n    \"date\": \"01-05-2026\",\n    \"modificationCode\": 3,\n    \"reason\": \"Corrección de monto factura original\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E33: Nota de Débito. Requiere `reference` con el eNCF de la factura original."
+          }
+        },
+        {
+          "name": "E34 — Nota de Crédito",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E34\",\n  \"buyer\": {\n    \"rnc\": \"131793916\",\n    \"name\": \"EMPRESA COMPRADORA SRL\",\n    \"type\": 1\n  },\n  \"items\": [\n    {\n      \"description\": \"Devolución parcial de servicio\",\n      \"quantity\": 1,\n      \"unitPrice\": 5000,\n      \"itbisRate\": 18\n    }\n  ],\n  \"payment\": { \"type\": 1 },\n  \"reference\": {\n    \"encf\": \"E310000000001\",\n    \"date\": \"01-05-2026\",\n    \"modificationCode\": 1,\n    \"reason\": \"Devolución de mercancía defectuosa\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E34: Nota de Crédito. Requiere `reference`. Usar para anular/corregir facturas ACCEPTED."
+          }
+        },
+        {
+          "name": "E41 — Gastos Menores",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E41\",\n  \"buyer\": {\n    \"rnc\": \"40212345678\",\n    \"name\": \"Juan Vendedor\",\n    \"type\": 2\n  },\n  \"items\": [\n    {\n      \"description\": \"Materiales de oficina\",\n      \"quantity\": 1,\n      \"unitPrice\": 500,\n      \"itbisRate\": 18\n    }\n  ],\n  \"payment\": { \"type\": 1, \"method\": 1 }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E41: Registro de Gastos Menores. El comprador es el vendedor (persona física o jurídica)."
+          }
+        },
+        {
+          "name": "E43 — Regímenes Especiales",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E43\",\n  \"buyer\": {\n    \"name\": \"Régimen Especial\"\n  },\n  \"items\": [\n    {\n      \"description\": \"Venta régimen especial\",\n      \"quantity\": 1,\n      \"unitPrice\": 1000,\n      \"itbisRate\": 0\n    }\n  ],\n  \"payment\": { \"type\": 1 }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E43: Regímenes Especiales de Tributación."
+          }
+        },
+        {
+          "name": "E44 — Gubernamental",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E44\",\n  \"buyer\": {\n    \"name\": \"Ministerio de Hacienda\"\n  },\n  \"items\": [\n    {\n      \"description\": \"Servicio al gobierno\",\n      \"quantity\": 1,\n      \"unitPrice\": 50000,\n      \"itbisRate\": 18\n    }\n  ],\n  \"payment\": { \"type\": 2, \"termDays\": 30 }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E44: Comprobante Gubernamental. Para ventas a entidades del gobierno."
+          }
+        },
+        {
+          "name": "E45 — Comprobante de Compras",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E45\",\n  \"buyer\": {\n    \"rnc\": \"131793916\",\n    \"name\": \"EMPRESA COMPRADORA SRL\",\n    \"type\": 1\n  },\n  \"items\": [\n    {\n      \"description\": \"Compra de materia prima\",\n      \"quantity\": 100,\n      \"unitPrice\": 150,\n      \"itbisRate\": 18\n    }\n  ],\n  \"payment\": { \"type\": 1 }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E45: Comprobante de Compras. RNC del vendedor obligatorio."
+          }
+        },
+        {
+          "name": "E46 — Exportación",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E46\",\n  \"buyer\": {\n    \"name\": \"Foreign Client LLC\",\n    \"type\": 3\n  },\n  \"items\": [\n    {\n      \"description\": \"Producto de exportación\",\n      \"quantity\": 50,\n      \"unitPrice\": 200,\n      \"itbisRate\": 0,\n      \"goodService\": 1\n    }\n  ],\n  \"payment\": { \"type\": 1 },\n  \"currency\": {\n    \"code\": \"USD\",\n    \"exchangeRate\": 57.50\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E46: Exportación. Comprador tipo 3 (Extranjero). ITBIS 0%. Moneda extranjera con tasa de cambio."
+          }
+        },
+        {
+          "name": "E47 — Pagos al Exterior",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices", "host": ["{{base_url}}"], "path": ["invoices"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{company_id}}\",\n  \"ecfType\": \"E47\",\n  \"buyer\": {\n    \"name\": \"Foreign Supplier Inc.\",\n    \"type\": 3\n  },\n  \"items\": [\n    {\n      \"description\": \"Licencia de software anual\",\n      \"quantity\": 1,\n      \"unitPrice\": 1200,\n      \"itbisRate\": 0,\n      \"goodService\": 2\n    }\n  ],\n  \"payment\": { \"type\": 1 },\n  \"currency\": {\n    \"code\": \"USD\",\n    \"exchangeRate\": 57.50\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "E47: Pagos al Exterior. Para compras de servicios fuera de RD."
+          }
+        },
+        {
+          "name": "Listar Facturas",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/invoices?companyId={{company_id}}&page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["invoices"],
+              "query": [
+                { "key": "companyId", "value": "{{company_id}}" },
+                { "key": "ecfType", "value": "", "disabled": true },
+                { "key": "status", "value": "", "disabled": true },
+                { "key": "dateFrom", "value": "", "disabled": true },
+                { "key": "dateTo", "value": "", "disabled": true },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Ver Factura",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/invoices/{{invoice_id}}", "host": ["{{base_url}}"], "path": ["invoices", "{{invoice_id}}"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Tiene status', () => {",
+                  "  const data = pm.response.json().data;",
+                  "  pm.expect(data).to.have.property('status');",
+                  "  console.log('Estado factura:', data.status);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Poll Estado DGII",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/invoices/{{invoice_id}}/poll", "host": ["{{base_url}}"], "path": ["invoices", "{{invoice_id}}", "poll"] },
+            "description": "Consulta el estado en DGII manualmente (si el webhook no llegó)."
+          }
+        },
+        {
+          "name": "Descargar XML (API autenticada)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/invoices/{{invoice_id}}/xml", "host": ["{{base_url}}"], "path": ["invoices", "{{invoice_id}}", "xml"] },
+            "description": "Descarga el XML firmado. Para descargas desde browser, usar el flujo download-token."
+          }
+        },
+        {
+          "name": "Emitir Token de Descarga (browser)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{base_url}}/invoices/{{invoice_id}}/download-token", "host": ["{{base_url}}"], "path": ["invoices", "{{invoice_id}}", "download-token"] },
+            "description": "Emite un token de 60s para descarga del XML desde el browser sin exponer la API key."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.token) pm.collectionVariables.set('download_token', data.token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Anular Factura",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/invoices/{{invoice_id}}/void", "host": ["{{base_url}}"], "path": ["invoices", "{{invoice_id}}", "void"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Factura emitida con datos incorrectos\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Anula una factura en DRAFT, ERROR o CONTINGENCY. Para ACCEPTED usar NC (E34)."
+          }
+        },
+        {
+          "name": "Vista Previa HTML (RI)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/invoices/{{invoice_id}}/preview", "host": ["{{base_url}}"], "path": ["invoices", "{{invoice_id}}", "preview"] },
+            "description": "Retorna HTML de la Representación Impresa (RI) de la factura."
+          }
+        },
+        {
+          "name": "Descargar PDF (RI)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/invoices/{{invoice_id}}/pdf", "host": ["{{base_url}}"], "path": ["invoices", "{{invoice_id}}", "pdf"] },
+            "description": "Retorna HTML que abre el diálogo de impresión del browser para generar PDF."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "description": "Suscripciones para notificaciones de eventos en tiempo real",
+      "item": [
+        {
+          "name": "Crear Webhook",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/webhooks", "host": ["{{base_url}}"], "path": ["webhooks"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://mi-sistema.com/webhooks/ecf\",\n  \"events\": [\"invoice.accepted\", \"invoice.rejected\", \"invoice.contingency\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Crea un webhook. El `secret` en la respuesta solo se muestra una vez — úsalo para verificar HMAC."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data;",
+                  "if (data && data.id) {",
+                  "  pm.collectionVariables.set('webhook_id', data.id);",
+                  "  console.log('Webhook secret (guardar):', data.secret);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar Webhooks",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/webhooks", "host": ["{{base_url}}"], "path": ["webhooks"] }
+          }
+        },
+        {
+          "name": "Ver Webhook con Historial",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/webhooks/{{webhook_id}}", "host": ["{{base_url}}"], "path": ["webhooks", "{{webhook_id}}"] }
+          }
+        },
+        {
+          "name": "Actualizar Webhook",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/webhooks/{{webhook_id}}", "host": ["{{base_url}}"], "path": ["webhooks", "{{webhook_id}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\"invoice.accepted\", \"invoice.rejected\"],\n  \"isActive\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Eliminar Webhook",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/webhooks/{{webhook_id}}", "host": ["{{base_url}}"], "path": ["webhooks", "{{webhook_id}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "description": "Administración de colas BullMQ (requiere scope ADMIN)",
+      "item": [
+        {
+          "name": "Stats de Colas",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/admin/queues/stats", "host": ["{{base_url}}"], "path": ["admin", "queues", "stats"] },
+            "description": "Retorna conteos de jobs: waiting, active, completed, failed, delayed."
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] } }
+          ]
+        }
+      ]
+    }
+  ]
+}
