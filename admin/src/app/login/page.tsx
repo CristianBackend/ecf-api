@@ -35,8 +35,9 @@ export default function LoginPage() {
     setServerError(null);
     try {
       const res = await login(data.email, data.password);
-      setAuth(res.token, res.tenant);
-      router.push('/dashboard');
+      setAuth(res.token, res.tenant, res.meta);
+      // Super-admins land on the global dashboard; normal tenants go to their home
+      router.push(res.meta.isSuperAdmin ? '/dashboard' : '/home');
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { error?: { message?: string } } } })
