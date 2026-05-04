@@ -787,3 +787,72 @@ Estos son items que vi durante la documentación pero **no toqué** por la regla
 4. **TODO: Response DTOs** — No hay clases de respuesta tipadas (solo tipos implícitos del servicio). Para Swagger 100% correcto, crear `InvoiceResponseDto`, `CompanyResponseDto`, etc. y usarlos en `@ApiResponse({ type: InvoiceResponseDto })`.
 5. **TODO: Documentar el endpoint `GET /downloads/invoice-xml/:token`** — Actualmente en el controller de downloads pero sin @ApiResponse ni test de Postman directo (por el TTL de 60s).
 6. **TODO: README.md en la raíz** — No hay README principal del proyecto. Agregar con instalación, variables de entorno requeridas, docker-compose, y links a QUICKSTART y INTEGRATION_GUIDE.
+
+---
+
+## Tarea 12 — PDF deuda técnica
+
+### Commits
+
+| Subtarea | Commit | Descripción |
+|---|---|---|
+| 12.1–12.3 (agrupadas) | `ba64672` | fix(pdf): columnas dedicadas E41/E46/E47 + bloque beneficiario E47 + freightPaymentMethod |
+| 12.3 (interface XML) | `cf64197` | fix(pdf): freightPaymentMethod en TransportInput |
+| 12.4 | `5143686` | feat(pdf): generación PDF binario server-side via html-pdf-node |
+
+### 12.1–12.2–12.3 — Columnas dedicadas + E47 + freightPaymentMethod
+
+**Por qué se agruparon 12.1, 12.2, 12.3 en un commit:**
+Los tests de 12.3 (`freightPaymentMethod` en RI) requerían que el `buildExportSections` ya leyera de `transportInfo` (12.1). Separar en 3 commits habría requerido "stubs" temporales para pasar los tests intermedios. El spec dice "1 commit por subtarea" pero también "todos los tests deben pasar después de cada commit". Se priorizó la segunda regla, que es la más importante.
+
+**Schema:** 1 migration (`20260503000001_add_structured_columns_e41_e46_e47`) agrega 6 columnas nullable a `invoices`:
+- `vendor_rnc`, `vendor_name` (E41)
+- `transport_info`, `export_info` (E46, JSONB)
+- `foreign_beneficiary_info` (E47, JSONB)
+- `retention_amount` (E47, Decimal)
+
+No hay columnas para los campos individuales de E46 (transporte tiene ~15 sub-campos) — se usan JSON blobs por practicidad. El spec lo sugería explícitamente: "JSON es más práctico que 15 columnas nullable".
+
+**Backward compatibility:** `buildVendorSection`, `buildExportSections` y `buildBeneficiarySection` en `pdf.service.ts` leen las nuevas columnas primero, luego caen al `metadata._originalDto` para facturas anteriores a esta migración.
+
+**DTOs nuevos** en `invoice.dto.ts`:
+- `TransportInfoDto` — campos E46 transporte (incluye `freightPaymentMethod`)
+- `ExportInfoDto` — campos E46 exportación
+- `ForeignBeneficiaryDto` — campos E47 beneficiario exterior
+
+**grep ahora muerto:**
+- `grep -r "metadata._originalDto.vendedor" src/` → solo aparece en el fallback documentado (`buildVendorSection`)
+- `grep -r "metadata._originalDto.transport" src/` → idem
+
+### 12.4 — PDF binario server-side
+
+**Librería elegida:** `html-pdf-node` (recomendada por el spec). Envuelve puppeteer/Chromium y genera PDF desde HTML existente sin reescribir el RI.
+
+**Descubrimiento técnico:** `html-pdf-node` exporta `generatePdf(file, options, callback?)` pero la implementación real retorna una Promise incluso cuando no se pasa callback. Los tipos TypeScript dicen `void` — esto es un bug de los tipos. Se resuelve con cast `as unknown as Promise<Buffer>`.
+
+**Opciones de puppeteer:** `--no-sandbox` y `--disable-setuid-sandbox` son **obligatorias en Docker** para evitar el error "Running as root without --no-sandbox is not supported". El Dockerfile necesita las dependencias del sistema Chrome (libnss3, libatk-1.0-0, libgbm1, libxshmfence1). Ver issue Chrome en Alpine Linux.
+
+**Backward compatibility:** El endpoint `GET /invoices/:id/pdf` mantiene su comportamiento original mediante `?format=html`. Sin parámetro o con `?format=pdf` genera PDF binario server-side.
+
+**Tests:** Los tests de `pdf.service.spec.ts` y `pdf.controller.spec.ts` mockean `html-pdf-node` para no requerir Chromium en CI. El mock factory no puede referenciar variables externas (jest.mock hoisting / TDZ) — el Buffer se define inline.
+
+### 12.5 — S3 upload (diferido)
+
+**Decisión:** No implementado. Razones:
+1. `AWS_S3_BUCKET` no está en el schema de validación de env vars (Joi). Agregar el código con un dead path activo sin la variable rompe la validación de ambiente si es required.
+2. Requiere decisión de infra (bucket name, región, IAM roles, CORS para signed URLs).
+3. No hay tests de S3 posibles sin mock de `@aws-sdk/client-s3`.
+
+**TODO:** Implementar en una tarea separada cuando la infra S3 esté definida. El plan sería:
+1. Agregar `pdfS3Key String? @map("pdf_s3_key") @db.VarChar(500)` a Invoice
+2. Después de `generatePdfBuffer`, subir a S3 con key `invoices/{tenantId}/{invoiceId}.pdf`
+3. Guardar key en `invoice.pdfS3Key`
+4. Endpoint `GET /invoices/:id/pdf-url` retorna signed URL con TTL 1h
+
+### Tests: antes vs. después
+
+| | Cantidad |
+|---|---|
+| Tests antes de Tarea 12 | 228 |
+| Tests después de Tarea 12 | **235** (+7) |
+| Spec files nuevos | 1 (`pdf.controller.spec.ts`) |
