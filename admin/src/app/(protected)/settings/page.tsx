@@ -201,7 +201,7 @@ export default function SettingsPage() {
                 <Key className="h-4 w-4" /> API Keys
               </CardTitle>
               <CardDescription>
-                Tus claves de acceso. Gestionalas desde el panel de Tenants.
+                Tus claves de acceso. Gestioná tus API keys desde <a href="/api-keys" className="underline">Mis API Keys</a>.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
