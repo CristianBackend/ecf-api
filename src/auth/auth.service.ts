@@ -202,6 +202,54 @@ export class AuthService {
   }
 
   /**
+   * GET /auth/me — tenant profile + aggregated scopes across all active API keys.
+   * mustChangePassword is included but defaults to false until the DB column is added (17.4).
+   */
+  async getMe(tenantId: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        plan: true,
+        isActive: true,
+        apiKeys: {
+          where: { isActive: true },
+          select: { scopes: true },
+        },
+      },
+    });
+
+    if (!tenant) {
+      throw new UnauthorizedException('Tenant not found');
+    }
+
+    const scopeSet = new Set<ApiKeyScope>();
+    for (const key of tenant.apiKeys) {
+      for (const scope of key.scopes) {
+        scopeSet.add(scope);
+      }
+    }
+
+    const scopes = [...scopeSet];
+    const isSuperAdmin = scopes.includes(ApiKeyScope.ADMIN);
+
+    return {
+      tenant: {
+        id: tenant.id,
+        name: tenant.name,
+        email: tenant.email,
+        plan: tenant.plan,
+        isActive: tenant.isActive,
+      },
+      scopes,
+      isSuperAdmin,
+      mustChangePassword: false, // replaced in 17.4 with real DB value
+    };
+  }
+
+  /**
    * Rotate an API key: revoke old one and create new one with same config
    */
   async rotateApiKey(tenantId: string, apiKeyId: string): Promise<GeneratedApiKey> {

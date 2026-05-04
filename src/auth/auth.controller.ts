@@ -29,6 +29,34 @@ const KEY_ID_PARAM = ApiParam({
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @Get('me')
+  @UseGuards(ApiKeyGuard)
+  @ApiBearerAuth('api-key')
+  @ApiOperation({
+    summary: 'Perfil del tenant autenticado + scopes derivados',
+    description:
+      'Retorna información del tenant actual, la unión de todos los scopes de sus API keys activas, y el flag isSuperAdmin. ' +
+      'Funciona con JWT (dashboard) y con API keys.',
+  })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: {
+        success: true,
+        data: {
+          tenant: { id: 'uuid...', name: 'Mi Empresa', email: 'admin@x.com', plan: 'STARTER', isActive: true },
+          scopes: ['FULL_ACCESS'],
+          isSuperAdmin: false,
+          mustChangePassword: false,
+        },
+      },
+    },
+  })
+  @ApiReadErrors()
+  async getMe(@CurrentTenant() tenant: RequestTenant) {
+    return this.authService.getMe(tenant.id);
+  }
+
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
