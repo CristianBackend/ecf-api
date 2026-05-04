@@ -163,6 +163,29 @@ export interface WebhookSubscription {
   isActive: boolean;
   createdAt: string;
   _count?: { deliveries: number };
+  deliveryStats?: { success: number; failed: number; pending: number };
+}
+
+/** Returned once on POST /webhooks — secret not stored after creation. */
+export interface WebhookCreated extends WebhookSubscription {
+  secret: string;
+}
+
+// ============================================================
+// Sequences
+// ============================================================
+
+export interface Sequence {
+  id: string;
+  companyId: string;
+  ecfType: EcfType;
+  prefix: string;
+  startNumber: number;
+  endNumber: number;
+  currentNumber: number;
+  expiresAt?: string;
+  isActive: boolean;
+  createdAt: string;
 }
 
 export interface WebhookDelivery {
