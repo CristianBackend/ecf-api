@@ -24,7 +24,6 @@ import { RncModule } from './common/services/rnc.module';
 import { EncryptionModule } from './common/services/encryption.module';
 import { DistributedLockModule } from './common/services/distributed-lock.module';
 import { DownloadTokenModule } from './common/services/download-token.module';
-import { LoggerModule } from './common/logger/logger.module';
 import { DownloadsModule } from './downloads/downloads.module';
 import { BuyersModule } from './buyers/buyers.module';
 import { QueueModule } from './queue/queue.module';
@@ -32,6 +31,13 @@ import { SchedulerModule } from './scheduler/scheduler.module';
 import configuration from './config/configuration';
 import { envValidationSchema } from './config/env.validation';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+// LoggerModule MUST be the last local import: nestjs-pino calls
+// createProvidersForDecorated() at module-definition time (inside @Module
+// decorator). Every @InjectPinoLogger(ClassName) registers its context in a
+// global Set. If LoggerModule loads before a feature module, that module's
+// context is not captured and its PinoLogger:<Name> token is never created.
+// Importing LoggerModule last guarantees all decorators have run first.
+import { LoggerModule } from './common/logger/logger.module';
 
 @Module({
   imports: [

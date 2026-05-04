@@ -24,8 +24,6 @@ import {
           host: config.get<string>('REDIS_HOST', 'localhost'),
           port: config.get<number>('REDIS_PORT', 6379),
           password: config.get<string>('REDIS_PASSWORD') || undefined,
-          // Keep the client from spamming retries against a down Redis —
-          // schedulers will just fail to acquire and try again next tick.
           maxRetriesPerRequest: 1,
           lazyConnect: false,
         }),

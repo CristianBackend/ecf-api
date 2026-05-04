@@ -18,15 +18,11 @@ export { QUEUES } from './queue.constants';
 
 @Module({
   imports: [
-    // The three queues the processors in this module consume. The
-    // WEBHOOK_DELIVERY queue is registered in WebhooksModule because its
-    // processor and producer both live there.
     BullModule.registerQueue(
       { name: QUEUES.ECF_PROCESSING },
       { name: QUEUES.ECF_STATUS_POLL },
       { name: QUEUES.CERTIFICATE_CHECK },
     ),
-
     PrismaModule,
     XmlBuilderModule,
     SigningModule,
