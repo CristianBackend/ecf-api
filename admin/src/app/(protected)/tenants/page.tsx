@@ -7,11 +7,12 @@ import { Search, Plus, ChevronRight } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { fmtDate, fmtNumber } from '@/lib/utils';
 import type { Tenant, Paginated } from '@/types/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { CreateTenantDialog } from '@/components/tenants/create-tenant-dialog';
 
 async function fetchTenants(page: number, limit: number, search: string, plan: string, isActive: string) {
   const params = new URLSearchParams({ page: String(page), limit: String(limit) });
@@ -33,6 +34,7 @@ export default function TenantsPage() {
   const [plan, setPlan] = useState('');
   const [isActive, setIsActive] = useState('');
   const [page, setPage] = useState(1);
+  const [createOpen, setCreateOpen] = useState(false);
   const limit = 20;
 
   // Debounce
@@ -59,9 +61,10 @@ export default function TenantsPage() {
             {data ? `${fmtNumber(data.total)} tenants registrados` : 'Cargando…'}
           </p>
         </div>
-        <Button className="gap-2" disabled title="Crear tenant próximamente">
+        <Button className="gap-2" onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4" /> Nuevo Tenant
         </Button>
+        <CreateTenantDialog open={createOpen} onOpenChange={setCreateOpen} />
       </div>
 
       {/* Filters */}
