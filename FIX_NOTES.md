@@ -1,4 +1,4 @@
-# FIX_NOTES — Implementación de Tareas 1–6
+# FIX_NOTES — Implementación de Tareas 1–11
 
 Decisiones y matices que difieren de la consigna o que agregué por necesidad
 técnica. Formato: qué se pidió vs. qué hice vs. por qué.
@@ -725,3 +725,65 @@ la leyenda.
 | Tests después de Tarea 10 | **223** (+28) |
 | Spec files de PDF | 1 nuevo (`pdf.service.spec.ts`) |
 
+---
+
+## Tarea 11 — Documentación profesional de la API
+
+### 11.1 — Auditoría Swagger
+
+- **SWAGGER_AUDIT.md** generado en la raíz con análisis completo de los 48 endpoints y 93 propiedades de DTO.
+- Score estimado inicial: ~30% vs benchmarks Stripe/Twilio.
+- Problema crítico identificado: 0% de @ApiResponse en 44/48 endpoints.
+- 7 tags de módulos sin registrar en DocumentBuilder.
+
+### 11.2 — Mejoras Swagger
+
+**Qué se hizo vs qué se pidió:**
+
+La consigna pedía solo los 7 controllers principales. Se actualizaron los 7 más los DTOs relacionados.
+
+**Helper compartido** (`src/common/swagger/api-errors.ts`):
+En vez de repetir 4-5 `@ApiResponse` idénticos en 44 endpoints (≈220 líneas duplicadas), creé `ApiStandardErrors()`, `ApiReadErrors()` y `ApiNotFoundError()` usando `applyDecorators`. Esto no es abstracción prematura: es la misma solución que recomienda la documentación oficial de NestJS Swagger para error responses reutilizables.
+
+**DTOs nuevos creados (no estaban):**
+- `VoidInvoiceDto` — el body de `POST /invoices/:id/void` era un objeto inline `{ reason?: string }` que no generaba schema Swagger. Ahora es un DTO proper.
+- `AnnulSequencesDto` + `SequenceRangeDto` — mismo problema en `POST /sequences/:companyId/annul`.
+
+**Tags registrados en main.ts:** Se agregaron `buyers`, `webhooks`, `admin`, `rnc`, `contingency`, `reception`, `downloads`, `pdf` (antes no aparecían con descripción en Swagger).
+
+**Score estimado post-11.2:** ~75% (de 30% a 75%, principal salto por @ApiResponse coverage).
+
+### 11.3 — Colección Postman
+
+- `docs/postman/ecf-api.postman_collection.json` — Colección con 45+ requests en 8 folders.
+- Incluye los 10 tipos de e-CF (E31-E47) con bodies realistas y pre-request scripts para idempotency keys.
+- Tests automáticos en cada request: status code + extracción de IDs en variables de colección.
+- `ecf-api.postman_environment.json` — Entorno con 12 variables (base_url, api_key, company_id, etc.).
+- `docs/postman/README.md` — Instrucciones de importación, conversión de .p12 y flujo recomendado.
+
+**Nota sobre el folder "Downloads":** No incluido en la colección porque el endpoint `GET /downloads/invoice-xml/:token` requiere un token de Redis activo (TTL 60s). El flujo correcto está en Invoices > Emitir Token de Descarga → usar la URL del response en el browser.
+
+### 11.4 — Manual del Integrador
+
+- `docs/INTEGRATION_GUIDE.md` — 566 líneas con las 10 secciones solicitadas.
+- Incluye código de verificación HMAC en JavaScript, Python y PHP.
+- Tabla completa de 10 tipos e-CF con reglas específicas.
+- Diagrama ASCII del flujo emisión → DGII → webhook.
+- Diagrama de estados de factura (QUEUED → ACCEPTED/REJECTED/CONTINGENCY).
+
+### 11.5 — Quickstart de 5 minutos
+
+- `docs/QUICKSTART.md` — Flujo guiado completo con `curl` desde cero hasta XML descargado.
+- Cubre: registro, empresa, certificado (.p12 → base64), secuencia, primera factura, verificación de estado, descarga XML y preview RI.
+- Sección de troubleshooting para los 5 errores más frecuentes.
+
+### TODOs detectados (no documentación — código)
+
+Estos son items que vi durante la documentación pero **no toqué** por la regla "cero código de negocio":
+
+1. **TODO: Rate limiting por plan** — La sección 9 del INTEGRATION_GUIDE dice "60 req/min por defecto" pero no hay middleware de rate limiting implementado. Agregar `@nestjs/throttler` en el futuro.
+2. **TODO: Swagger Swagger URL inconsistente** — La guía dice `/docs` pero el README podría decir `/api/v1/docs` (el prefix `api/v1` aplica a la API pero no al Swagger endpoint). Aclarar en README.
+3. **TODO: `@ApiExtraModels` para nested DTOs de invoices** — `BuyerDto`, `InvoiceItemDto`, `PaymentDto`, `ReferenceDto`, `CurrencyDto` no están exportadas. Aunque Swagger las inlinea correctamente via `@ApiProperty({ type: BuyerDto })`, no aparecen en el panel de Schemas de Swagger UI para reutilización. Exportarlas y registrarlas con `@ApiExtraModels` en el módulo.
+4. **TODO: Response DTOs** — No hay clases de respuesta tipadas (solo tipos implícitos del servicio). Para Swagger 100% correcto, crear `InvoiceResponseDto`, `CompanyResponseDto`, etc. y usarlos en `@ApiResponse({ type: InvoiceResponseDto })`.
+5. **TODO: Documentar el endpoint `GET /downloads/invoice-xml/:token`** — Actualmente en el controller de downloads pero sin @ApiResponse ni test de Postman directo (por el TTL de 60s).
+6. **TODO: README.md en la raíz** — No hay README principal del proyecto. Agregar con instalación, variables de entorno requeridas, docker-compose, y links a QUICKSTART y INTEGRATION_GUIDE.
