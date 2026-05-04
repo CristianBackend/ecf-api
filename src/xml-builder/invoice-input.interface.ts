@@ -127,6 +127,8 @@ export interface TransportInput {
   carrierRnc?: string;              // RNCIdentificacionCompaniaTransportista
   carrierName?: string;             // NombreCompaniaTransportista
   tripNumber?: string;              // NumeroViaje
+  /** Forma de pago del flete (ej: "Contado", "Crédito") — shown in RI Transporte section */
+  freightPaymentMethod?: string;
 }
 
 /** Buyer/Receptor information */
