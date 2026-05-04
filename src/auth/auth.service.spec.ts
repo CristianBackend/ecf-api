@@ -69,12 +69,13 @@ describe('AuthService.getMe()', () => {
     await expect(svc.getMe('tid')).rejects.toThrow(UnauthorizedException);
   });
 
-  it('17.3-6: mustChangePassword defaults to false (pre-17.4)', async () => {
+  it('17.3-6: mustChangePassword reflects DB value (17.4)', async () => {
     const svc = makeService({
       id: 'tid', name: 'T', email: 'e@x.com', plan: 'STARTER', isActive: true,
+      mustChangePassword: true,
       apiKeys: [],
     });
     const result = await svc.getMe('tid');
-    expect(result.mustChangePassword).toBe(false);
+    expect(result.mustChangePassword).toBe(true);
   });
 });

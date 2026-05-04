@@ -214,6 +214,7 @@ export class AuthService {
         email: true,
         plan: true,
         isActive: true,
+        mustChangePassword: true,
         apiKeys: {
           where: { isActive: true },
           select: { scopes: true },
@@ -245,7 +246,7 @@ export class AuthService {
       },
       scopes,
       isSuperAdmin,
-      mustChangePassword: false, // replaced in 17.4 with real DB value
+      mustChangePassword: tenant.mustChangePassword,
     };
   }
 

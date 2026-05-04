@@ -106,7 +106,8 @@ model Tenant {
   email        String   @unique @db.VarChar(320)
   passwordHash String?  @map("password_hash") @db.VarChar(255)
   plan         Plan     @default(STARTER)
-  isActive     Boolean  @default(true) @map("is_active")
+  isActive           Boolean  @default(true) @map("is_active")
+  mustChangePassword Boolean  @default(false) @map("must_change_password")
   metadata     Json?    @db.JsonB
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
