@@ -17,6 +17,8 @@ interface CertificateUploadDialogProps {
   onOpenChange: (open: boolean) => void;
   companies: Company[];
   tenantId: string;
+  /** If provided, called instead of the default admin query invalidation. */
+  onSuccess?: () => void;
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -37,7 +39,7 @@ async function uploadCertificate(companyId: string, p12Base64: string, passphras
   return res.data;
 }
 
-export function CertificateUploadDialog({ open, onOpenChange, companies, tenantId }: CertificateUploadDialogProps) {
+export function CertificateUploadDialog({ open, onOpenChange, companies, tenantId, onSuccess }: CertificateUploadDialogProps) {
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -58,7 +60,11 @@ export function CertificateUploadDialog({ open, onOpenChange, companies, tenantI
       onOpenChange(false);
       setSelectedFile(null);
       setPassphrase('');
-      void queryClient.invalidateQueries({ queryKey: ['admin', 'tenants', tenantId] });
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ['admin', 'tenants', tenantId] });
+      }
     },
     onError: (err: unknown) => {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Error al subir el certificado';

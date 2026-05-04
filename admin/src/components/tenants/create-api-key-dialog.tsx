@@ -16,17 +16,22 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { ApiKeyRevealModal } from './api-key-reveal-modal';
 
-const ALL_SCOPES = [
+const ALL_SCOPES_WITH_ADMIN = [
   'INVOICES_READ', 'INVOICES_WRITE', 'COMPANIES_READ', 'COMPANIES_WRITE',
   'CERTIFICATES_WRITE', 'SEQUENCES_READ', 'WEBHOOKS_MANAGE', 'ADMIN', 'FULL_ACCESS',
 ] as const;
 
-type Scope = typeof ALL_SCOPES[number];
+const ALL_SCOPES_NO_ADMIN = [
+  'INVOICES_READ', 'INVOICES_WRITE', 'COMPANIES_READ', 'COMPANIES_WRITE',
+  'CERTIFICATES_WRITE', 'SEQUENCES_READ', 'WEBHOOKS_MANAGE', 'FULL_ACCESS',
+] as const;
+
+type Scope = typeof ALL_SCOPES_WITH_ADMIN[number];
 
 const schema = z.object({
   name:    z.string().min(2, 'Mínimo 2 caracteres'),
   isLive:  z.boolean(),
-  scopes:  z.array(z.enum(ALL_SCOPES)).min(1, 'Seleccioná al menos un scope'),
+  scopes:  z.array(z.enum(ALL_SCOPES_WITH_ADMIN)).min(1, 'Seleccioná al menos un scope'),
 });
 
 type FormData = z.infer<typeof schema>;
@@ -48,9 +53,12 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated?: () => void;
+  /** When false (default for tenant-normal users), ADMIN scope is hidden. */
+  allowAdminScope?: boolean;
 }
 
-export function CreateApiKeyDialog({ open, onOpenChange, onCreated }: Props) {
+export function CreateApiKeyDialog({ open, onOpenChange, onCreated, allowAdminScope = true }: Props) {
+  const SCOPES = allowAdminScope ? ALL_SCOPES_WITH_ADMIN : ALL_SCOPES_NO_ADMIN;
   const [revealKey, setRevealKey] = useState<string | null>(null);
 
   const {
@@ -125,7 +133,7 @@ export function CreateApiKeyDialog({ open, onOpenChange, onCreated }: Props) {
             <div className="space-y-2">
               <Label>Scopes *</Label>
               <div className="flex flex-wrap gap-2 rounded-lg border p-3">
-                {ALL_SCOPES.map((scope) => {
+                {SCOPES.map((scope) => {
                   const active = selectedScopes.includes(scope);
                   return (
                     <button
