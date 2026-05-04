@@ -1041,3 +1041,61 @@ Next.js 16.2.4 (App Router) Â· TypeScript estricto Â· Tailwind CSS Â· TanS
 La migración 20260504000001_add_must_change_password debe aplicarse en producción con:
   npx prisma migrate deploy
 Retrocompatible: todos los tenants existentes quedan con must_change_password = false.
+
+
+---
+
+## Tarea 18 — Multi-role frontend
+
+### Subtareas completadas (18.1 – 18.4a)
+
+| Subtarea | Commit | Descripción |
+|---|---|---|
+| 18.1 | `651842b` | auth store: scopes + isSuperAdmin + mustChangePassword; useAuth hook |
+| 18.2 | `0af9e63` | force password change modal (non-dismissible) |
+| 18.3 | `c054cdd` | role-based sidebar (admin vs tenant); route guard for admin paths |
+| 18.4a | — | /home, /companies, /api-keys, /certificates para tenant-normal |
+
+### Decisiones técnicas
+
+**18.1 — Login flow**
+- login() en lib/auth.ts llama POST /auth/login y luego GET /auth/me con el token recién obtenido. El token se pasa en el header de la segunda request para no depender del interceptor de axios (que lee de localStorage, que aún no tiene el token nuevo).
+- isSuperAdmin y scopes se persisten en localStorage junto con el token.
+
+**18.2 — Modal forzado**
+- Usa div fixed z-[100] en lugar de Radix Dialog para garantía total de no-dismissible.
+- onKeyDown captura Escape en el overlay. Cierre de ventana: no tratable en frontend; al reabrir el dashboard, mustChangePassword sigue true en el store y reaparece el modal.
+
+**18.3 — Route guard**
+- ADMIN_ONLY_PREFIXES = ['/dashboard', '/tenants', '/audit-logs', '/health'].
+- /invoices y /webhooks comparten URL entre roles (admin ve global, tenant ve sus datos).
+- La redirección a /home + toast ocurre en el useEffect del layout, no en middleware, para mantener todo client-side.
+
+**18.3 — /invoices compartida**
+- La URL /invoices se usa para ambos roles. Para admin, el query va a /admin/invoices (datos globales). Para tenant-normal, va a /invoices (filtrado por tenantId en el backend). La página existente en /invoices llama a /admin/invoices — esto se corregirá en 18.4b cuando se cree la vista tenant de /invoices.
+
+**18.4a — /home KPIs**
+- GET /tenants/me/stats devuelve: { totalInvoices, totalCompanies, invoicesThisMonth }.
+- TODO (backend): agregar invoicesToday y activeCertificatesCount a /tenants/me/stats.
+- TODO (backend): no hay endpoint que liste todos los certificados de un tenant en un solo call; /certificates hace N+1 paralelo (GET /companies + GET /companies/:id/certificates por cada una). Aceptable para volumes pequeños; en producción con muchas empresas agregar endpoint /companies/all-certificates.
+
+**18.4a — CertificateUploadDialog**
+- Agregado prop onSuccess?: () => void. Si se provee, se usa en lugar de la invalidación hardcoded de ['admin', 'tenants', tenantId]. Retrocompatible (admin tenant detail no pasa onSuccess, usa la invalidación original).
+
+**18.4a — CreateApiKeyDialog**
+- Agregado prop allowAdminScope?: boolean (default: true para compatibilidad con admin tenant detail). Para /api-keys de tenant-normal se pasa allowAdminScope={false}, excluyendo ADMIN del listado de scopes.
+
+### TODOs pendientes (backend)
+
+- [ ] GET /tenants/me/stats: agregar invoicesToday (facturas del día corriente) y activeCertificates (certs con validTo > now y isActive = true)
+- [ ] GET /companies/all-certificates: endpoint que retorne todos los certs del tenant en un solo query (para /certificates sin N+1)
+- [ ] Revisar si GET /invoices acepta búsqueda por buyerName o buyerRnc (para filtros en /invoices tenant)
+
+### TODOs frontend pendientes (18.4b)
+
+- [ ] /companies/:id — 4 tabs: Datos, Certificados, Secuencias, Facturas
+- [ ] /invoices — vista tenant con filtros (companyId, status, ecfType, dateFrom, dateTo) + drawer detalle
+- [ ] /webhooks — CRUD completo (crear, editar, eliminar suscripciones)
+- [ ] /settings — agregar tab "Seguridad" con cambio de password (reusar ForceChangePasswordModal o crear variante)
+- [ ] 18.5 — /admin/tenants/new
+- [ ] 18.6 — useRequireScope hook
