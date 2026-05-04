@@ -63,7 +63,7 @@ export interface Tenant {
 }
 
 export interface TenantDetail extends Tenant {
-  companies: Company[];
+  companies: (Company & { certificates?: Certificate[] })[];
   apiKeys: ApiKey[];
   webhooks: WebhookSubscription[];
   metrics: { invoiceTotal: number; invoiceThisMonth: number };
