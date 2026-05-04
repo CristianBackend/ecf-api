@@ -32,6 +32,6 @@ import {
     },
     DistributedLockService,
   ],
-  exports: [DistributedLockService],
+  exports: [DistributedLockService, LOCK_REDIS_CLIENT],
 })
 export class DistributedLockModule {}

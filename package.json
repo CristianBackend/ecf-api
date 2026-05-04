@@ -102,6 +102,10 @@
     "testEnvironment": "node",
     "moduleNameMapper": {
       "^@/(.*)$": "<rootDir>/$1"
-    }
+    },
+    "setupFiles": [
+      "<rootDir>/test/env-setup.ts"
+    ],
+    "forceExit": true
   }
 }
