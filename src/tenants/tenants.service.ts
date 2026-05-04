@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,10 +21,21 @@ export class TenantsService {
   ) {}
 
   /**
-   * Register a new tenant and generate initial API keys.
-   * Returns the tenant with a test and live API key.
+   * Public bootstrap registration — DEPRECATED.
+   * Only allowed when zero tenants exist (first-time setup).
+   * All subsequent tenants must be created via POST /admin/tenants.
+   *
+   * @deprecated Use POST /admin/tenants for all tenant creation after bootstrap.
    */
   async create(dto: CreateTenantDto) {
+    // Bootstrap guard: only allowed when the system has no tenants yet.
+    const count = await this.prisma.tenant.count();
+    if (count > 0) {
+      throw new ForbiddenException(
+        'Public registration is disabled. Contact administrator.',
+      );
+    }
+
     // Check if email already exists
     const existing = await this.prisma.tenant.findUnique({
       where: { email: dto.email },

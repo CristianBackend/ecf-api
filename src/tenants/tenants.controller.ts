@@ -21,12 +21,17 @@ export class TenantsController {
    * Public endpoint - no auth required.
    * Creates a new tenant and returns initial API keys.
    */
+  // DEPRECATED: use POST /admin/tenants for all tenant creation after initial bootstrap.
   @Post('register')
-  @ApiOperation({ summary: 'Registrar nuevo tenant (público)' })
-  @ApiResponse({
-    status: 201,
-    description: 'Tenant creado con API keys iniciales (test + live)',
+  @ApiOperation({
+    summary: 'Bootstrap: registrar primer tenant (DEPRECATED)',
+    description:
+      '⚠️ DEPRECATED — Solo funciona cuando no existe ningún tenant en el sistema (bootstrap inicial). ' +
+      'Para crear tenants adicionales usar POST /admin/tenants con scope ADMIN.',
+    deprecated: true,
   })
+  @ApiResponse({ status: 201, description: 'Primer tenant creado (bootstrap)' })
+  @ApiResponse({ status: 403, description: 'Ya existe al menos un tenant — registro público deshabilitado' })
   async register(@Body() dto: CreateTenantDto) {
     return this.tenantsService.create(dto);
   }
