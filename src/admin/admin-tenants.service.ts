@@ -1,5 +1,25 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthService } from '../auth/auth.service';
+import { Plan, ApiKeyScope } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
+
+/** Scopes granted to admin-created tenant keys (never includes ADMIN). */
+const TENANT_DEFAULT_SCOPES: ApiKeyScope[] = [
+  ApiKeyScope.INVOICES_READ,
+  ApiKeyScope.INVOICES_WRITE,
+  ApiKeyScope.COMPANIES_READ,
+  ApiKeyScope.COMPANIES_WRITE,
+  ApiKeyScope.CERTIFICATES_WRITE,
+  ApiKeyScope.SEQUENCES_READ,
+  ApiKeyScope.WEBHOOKS_MANAGE,
+  ApiKeyScope.FULL_ACCESS,
+];
+
+/** Character set for temp passwords — excludes ambiguous chars 0/O/1/l/I. */
+const PASSWORD_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
 
 export interface AdminTenantsFilter {
   page?: number;
@@ -9,9 +29,71 @@ export interface AdminTenantsFilter {
   isActive?: boolean;
 }
 
+export interface AdminCreateTenantDto {
+  name: string;
+  email: string;
+  plan?: Plan;
+}
+
 @Injectable()
 export class AdminTenantsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly authService: AuthService,
+    @InjectPinoLogger(AdminTenantsService.name)
+    private readonly logger: PinoLogger,
+  ) {}
+
+  async createTenant(dto: AdminCreateTenantDto) {
+    const existing = await this.prisma.tenant.findUnique({ where: { email: dto.email } });
+    if (existing) throw new ConflictException('Email already registered');
+
+    // Generate readable 12-char temporary password from unambiguous charset
+    const randomBytes = crypto.randomBytes(24);
+    let tempPassword = '';
+    for (let i = 0; i < 12; i++) {
+      tempPassword += PASSWORD_CHARS[randomBytes[i] % PASSWORD_CHARS.length];
+    }
+
+    const passwordHash = await bcrypt.hash(tempPassword, 12);
+
+    const tenant = await this.prisma.tenant.create({
+      data: {
+        name: dto.name,
+        email: dto.email,
+        passwordHash,
+        plan: dto.plan ?? Plan.STARTER,
+        mustChangePassword: true,
+      },
+    });
+
+    const [testKey, liveKey] = await Promise.all([
+      this.authService.generateApiKey(tenant.id, 'Default Test Key', false, TENANT_DEFAULT_SCOPES),
+      this.authService.generateApiKey(tenant.id, 'Default Live Key', true, TENANT_DEFAULT_SCOPES),
+    ]);
+
+    this.logger.info(`Admin created tenant: ${tenant.id} (${tenant.email})`);
+
+    return {
+      tenant: {
+        id: tenant.id,
+        name: tenant.name,
+        email: tenant.email,
+        plan: tenant.plan,
+        isActive: tenant.isActive,
+        mustChangePassword: tenant.mustChangePassword,
+        createdAt: tenant.createdAt,
+      },
+      credentials: {
+        email: tenant.email,
+        temporaryPassword: tempPassword,
+      },
+      apiKeys: {
+        test: { key: testKey.key, prefix: testKey.keyPrefix, scopes: testKey.scopes },
+        live: { key: liveKey.key, prefix: liveKey.keyPrefix, scopes: liveKey.scopes },
+      },
+    };
+  }
 
   async findAll(filter: AdminTenantsFilter) {
     const page = Math.max(1, filter.page ?? 1);
