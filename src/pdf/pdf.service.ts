@@ -79,12 +79,14 @@ export class PdfService {
 
     const isE41 = typeCode === 41;
     const isE46 = typeCode === 46;
+    const isE47 = typeCode === 47;
 
     const buyerOrVendorSection = isE41
       ? this.buildVendorSection(invoice, originalDto)
       : this.buildBuyerSection(invoice);
 
-    const exportSections = isE46 ? this.buildExportSections(originalDto) : '';
+    const exportSections = isE46 ? this.buildExportSections(invoice, originalDto) : '';
+    const beneficiarySection = isE47 ? this.buildBeneficiarySection(invoice, originalDto) : '';
 
     const paymentDateHtml = invoice.paymentDate
       ? `<p><span class="label">Fecha Pago:</span> <span class="value">${fmtDateGmt4(invoice.paymentDate)}</span></p>`
@@ -233,6 +235,7 @@ export class PdfService {
   </div>
 
   ${exportSections}
+  ${beneficiarySection}
 
   <!-- PIE: QR + CÓDIGO SEGURIDAD + FIRMA -->
   <div class="footer">
@@ -347,13 +350,13 @@ export class PdfService {
 
   /**
    * For E41 (Comprobante Compras), the relevant party is the vendor/supplier.
-   * The buyer columns in the DB store the vendor's data for this type.
-   * Checks metadata._originalDto.vendedor first for an explicit override.
+   * Priority: dedicated columns (vendorRnc/vendorName) → metadata fallback → buyerRnc/buyerName.
+   * The metadata fallback supports old invoices created before the dedicated columns existed.
    */
   private buildVendorSection(invoice: any, originalDto: any): string {
     const vendedor = originalDto.vendedor || null;
-    const vendorRnc = vendedor?.rnc || invoice.buyerRnc || null;
-    const vendorName = vendedor?.name || invoice.buyerName || null;
+    const vendorRnc = invoice.vendorRnc || vendedor?.rnc || invoice.buyerRnc || null;
+    const vendorName = invoice.vendorName || vendedor?.name || invoice.buyerName || null;
 
     if (!vendorRnc && !vendorName) {
       return `<div class="info-box">
@@ -371,13 +374,14 @@ export class PdfService {
 
   /**
    * E46 transport and export info sections.
-   * Data sourced from metadata._originalDto.transport and .additionalInfo.
-   * TODO: if fields are absent the RI shows [no especificado]. A future migration
-   * should promote these fields to dedicated Invoice columns for reliability.
+   * Priority: dedicated JSON columns (transportInfo/exportInfo) → metadata fallback.
+   * The metadata fallback supports old invoices created before the dedicated columns existed.
    */
-  private buildExportSections(originalDto: any): string {
-    const transport = (originalDto.transport as Record<string, any>) || {};
-    const addInfo = (originalDto.additionalInfo as Record<string, any>) || {};
+  private buildExportSections(invoice: any, originalDto: any): string {
+    const transport = (invoice.transportInfo as Record<string, any>) ||
+                      (originalDto.transport as Record<string, any>) || {};
+    const addInfo = (invoice.exportInfo as Record<string, any>) ||
+                    (originalDto.additionalInfo as Record<string, any>) || {};
 
     const noSpec = '[no especificado]';
 
@@ -396,6 +400,7 @@ export class PdfService {
         <div class="export-field"><span class="label">Pa&iacute;s de Origen:</span> <span class="value">${transport.countryOrigin ?? noSpec}</span></div>
         <div class="export-field"><span class="label">Pa&iacute;s de Destino:</span> <span class="value">${transport.countryDestination ?? noSpec}</span></div>
         <div class="export-field"><span class="label">Direcci&oacute;n de Destino:</span> <span class="value">${this.esc(String(transport.destinationAddress ?? noSpec))}</span></div>
+        ${transport.freightPaymentMethod != null ? `<div class="export-field"><span class="label">Forma de Pago Flete:</span> <span class="value">${this.esc(String(transport.freightPaymentMethod))}</span></div>` : ''}
         <div class="export-field"><span class="label">Peso Bruto:</span> <span class="value">${addInfo.grossWeight != null ? addInfo.grossWeight : noSpec}</span></div>
         <div class="export-field"><span class="label">Peso Neto:</span> <span class="value">${addInfo.netWeight != null ? addInfo.netWeight : noSpec}</span></div>
         <div class="export-field"><span class="label">Volumen:</span> <span class="value">${addInfo.packageVolume != null ? addInfo.packageVolume : noSpec}</span></div>
@@ -419,6 +424,47 @@ export class PdfService {
     </div>`;
 
     return transportSection + exportInfoSection;
+  }
+
+  /**
+   * E47 foreign beneficiary section.
+   * Priority: dedicated foreignBeneficiaryInfo column → metadata._originalDto.foreignBeneficiary.
+   */
+  private buildBeneficiarySection(invoice: any, originalDto: any): string {
+    const info = (invoice.foreignBeneficiaryInfo as Record<string, any>) ||
+                 (originalDto.foreignBeneficiary as Record<string, any>) || null;
+
+    if (!info) {
+      return `<div class="export-section">
+        <h3>Beneficiario en el Exterior (E47)</h3>
+        <p style="font-size:11px;color:#888;">Información de beneficiario no especificada</p>
+      </div>`;
+    }
+
+    const noSpec = '[no especificado]';
+    const incomeTypeNames: Record<number, string> = {
+      1: 'Dividendos', 2: 'Intereses', 3: 'Regalías', 4: 'Honorarios', 5: 'Otros',
+    };
+    const incomeLabel = info.incomeType
+      ? (incomeTypeNames[info.incomeType as number] || `Código ${info.incomeType}`)
+      : noSpec;
+
+    const retentionAmt = invoice.retentionAmount != null
+      ? this.fmtMoney(invoice.retentionAmount)
+      : (info.retentionAmount != null ? this.fmtMoney(info.retentionAmount) : noSpec);
+
+    return `<div class="export-section">
+      <h3>Beneficiario en el Exterior (E47)</h3>
+      <div class="export-grid">
+        <div class="export-field"><span class="label">Nombre:</span> <span class="value">${this.esc(String(info.name ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">Tax ID:</span> <span class="value">${this.esc(String(info.taxId ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">Pa&iacute;s:</span> <span class="value">${this.esc(String(info.country ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">Tipo de Renta:</span> <span class="value">${incomeLabel}</span></div>
+        <div class="export-field"><span class="label">Concepto:</span> <span class="value">${this.esc(String(info.concept ?? noSpec))}</span></div>
+        <div class="export-field"><span class="label">Monto Retenci&oacute;n:</span> <span class="value">${retentionAmt}</span></div>
+        ${info.address ? `<div class="export-field" style="grid-column:1/-1"><span class="label">Direcci&oacute;n:</span> <span class="value">${this.esc(String(info.address))}</span></div>` : ''}
+      </div>
+    </div>`;
   }
 
   // ============================================================

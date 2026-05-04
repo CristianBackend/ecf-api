@@ -307,6 +307,18 @@ model Invoice {
   // Idempotency
   idempotencyKey  String?       @unique @map("idempotency_key") @db.VarChar(64)
 
+  // E41: dedicated vendor columns (avoids metadata._originalDto dependency)
+  vendorRnc       String?       @map("vendor_rnc") @db.VarChar(11)
+  vendorName      String?       @map("vendor_name") @db.VarChar(250)
+
+  // E46: transport + export info as JSON blobs (avoids metadata._originalDto dependency)
+  transportInfo   Json?         @map("transport_info") @db.JsonB
+  exportInfo      Json?         @map("export_info") @db.JsonB
+
+  // E47: foreign beneficiary info + retention amount
+  foreignBeneficiaryInfo Json?  @map("foreign_beneficiary_info") @db.JsonB
+  retentionAmount Decimal?      @map("retention_amount") @db.Decimal(18, 2)
+
   // Metadata
   metadata        Json?         @db.JsonB
   createdAt       DateTime      @default(now()) @map("created_at")

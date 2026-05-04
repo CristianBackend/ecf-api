@@ -366,4 +366,102 @@ describe('PdfService', () => {
   it('getFiscalLegend returns empty string for unknown type', () => {
     expect(service.getFiscalLegend('E99')).toBe('');
   });
+
+  // ── 29. E41 reads from dedicated vendorRnc/vendorName columns ─
+
+  it('E41 reads from vendorRnc/vendorName columns (12.1 dedicated path)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({
+        ecfType: 'E41',
+        vendorRnc: '444555666',
+        vendorName: 'Proveedor Columna SRL',
+        buyerRnc: 'SHOULD_NOT_APPEAR',
+        buyerName: 'SHOULD_NOT_APPEAR',
+        metadata: null,
+      }),
+    );
+    const html = await service.generateHtml('t1', 'inv-001');
+    expect(html).toContain('Proveedor Columna SRL');
+    expect(html).toContain('444555666');
+    expect(html).not.toContain('SHOULD_NOT_APPEAR');
+  });
+
+  // ── 30. E46 reads from transportInfo/exportInfo columns ───────
+
+  it('E46 reads from transportInfo/exportInfo dedicated columns (12.1 dedicated path)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({
+        ecfType: 'E46',
+        transportInfo: {
+          carrierName: 'Naviera Columna SRL',
+          viaTransporte: 2,
+          countryDestination: 'US',
+        },
+        exportInfo: {
+          deliveryConditions: 'CIF',
+          totalFob: 75000,
+          portOfShipment: 'Puerto Haina',
+        },
+        metadata: null,
+      }),
+    );
+    const html = await service.generateHtml('t1', 'inv-001');
+    expect(html).toContain('Naviera Columna SRL');
+    expect(html).toContain('CIF');
+    expect(html).toContain('Puerto Haina');
+  });
+
+  // ── 31. E47 with foreignBeneficiaryInfo shows beneficiary block
+
+  it('E47 with foreignBeneficiaryInfo shows beneficiary section (12.2)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({
+        ecfType: 'E47',
+        foreignBeneficiaryInfo: {
+          name: 'Foreign Supplier Inc.',
+          country: 'US',
+          taxId: 'EIN-12-3456789',
+          incomeType: 4,
+          concept: 'Licencias de software',
+        },
+        retentionAmount: '180.00',
+      }),
+    );
+    const html = await service.generateHtml('t1', 'inv-001');
+    expect(html).toContain('Foreign Supplier Inc.');
+    expect(html).toContain('EIN-12-3456789');
+    expect(html).toContain('Honorarios');
+    expect(html).toContain('Licencias de software');
+    expect(html).toContain('Beneficiario en el Exterior');
+  });
+
+  // ── 32. E47 without beneficiary shows placeholder ─────────────
+
+  it('E47 without foreignBeneficiaryInfo shows placeholder text (12.2)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ ecfType: 'E47', foreignBeneficiaryInfo: null }),
+    );
+    const html = await service.generateHtml('t1', 'inv-001');
+    expect(html).toContain('Beneficiario en el Exterior');
+    expect(html).toContain('no especificada');
+  });
+
+  // ── 33. E46 freightPaymentMethod in transportInfo (12.3) ───────
+
+  it('E46 shows freightPaymentMethod when present in transportInfo (12.3)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({
+        ecfType: 'E46',
+        transportInfo: {
+          carrierName: 'Naviera DR',
+          freightPaymentMethod: 'Contado',
+        },
+        exportInfo: {},
+        metadata: null,
+      }),
+    );
+    const html = await service.generateHtml('t1', 'inv-001');
+    expect(html).toContain('Contado');
+    expect(html).toContain('Forma de Pago Flete');
+  });
 });

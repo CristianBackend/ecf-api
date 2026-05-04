@@ -192,6 +192,13 @@ export class InvoicesService {
         exchangeRate: dto.currency?.exchangeRate,
         xmlUnsigned: unsignedXml,
         idempotencyKey: dto.idempotencyKey,
+        // Dedicated structured columns (avoid fragile metadata._originalDto reads in pdf.service)
+        vendorRnc: ecfType === EcfType.E41 ? (dto.buyer.rnc || null) : null,
+        vendorName: ecfType === EcfType.E41 ? (dto.buyer.name || null) : null,
+        transportInfo: ecfType === EcfType.E46 && dto.transport ? dto.transport as any : null,
+        exportInfo: ecfType === EcfType.E46 && dto.additionalInfo ? dto.additionalInfo as any : null,
+        foreignBeneficiaryInfo: ecfType === EcfType.E47 && dto.foreignBeneficiary ? dto.foreignBeneficiary as any : null,
+        retentionAmount: dto.retentionAmount ?? null,
         metadata: { ...dto.metadata, _originalDto: dto } as any,
       },
     });

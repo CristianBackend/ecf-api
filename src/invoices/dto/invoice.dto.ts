@@ -260,6 +260,124 @@ class CurrencyDto {
 }
 
 // ============================================================
+// E46 TRANSPORT / EXPORT DTOs
+// ============================================================
+
+export class TransportInfoDto {
+  @ApiPropertyOptional({ description: '1=Terrestre, 2=Marítimo, 3=Aérea', example: 2 })
+  @IsOptional() @IsInt()
+  viaTransporte?: number;
+
+  @ApiPropertyOptional({ description: 'País de origen (código ISO2)', example: 'DO' })
+  @IsOptional() @IsString()
+  countryOrigin?: string;
+
+  @ApiPropertyOptional({ description: 'País de destino (código ISO2)', example: 'US' })
+  @IsOptional() @IsString()
+  countryDestination?: string;
+
+  @ApiPropertyOptional({ description: 'Dirección de destino', example: '123 Ocean Dr, Miami, FL' })
+  @IsOptional() @IsString()
+  destinationAddress?: string;
+
+  @ApiPropertyOptional({ description: 'RNC de la compañía transportista', example: '987654321' })
+  @IsOptional() @IsString()
+  carrierRnc?: string;
+
+  @ApiPropertyOptional({ description: 'Nombre de la compañía transportista', example: 'Naviera DR SRL' })
+  @IsOptional() @IsString()
+  carrierName?: string;
+
+  @ApiPropertyOptional({ description: 'Número de viaje', example: 'V-2026-001' })
+  @IsOptional() @IsString()
+  tripNumber?: string;
+}
+
+export class ExportInfoDto {
+  @ApiPropertyOptional({ description: 'INCOTERM (CIF, FOB, CFR, etc.)', example: 'FOB' })
+  @IsOptional() @IsString()
+  deliveryConditions?: string;
+
+  @ApiPropertyOptional({ description: 'Régimen aduanero', example: '10' })
+  @IsOptional() @IsString()
+  customsRegime?: string;
+
+  @ApiPropertyOptional({ description: 'Puerto de embarque', example: 'Puerto Caucedo' })
+  @IsOptional() @IsString()
+  portOfShipment?: string;
+
+  @ApiPropertyOptional({ description: 'Puerto de salida', example: 'Puerto Caucedo' })
+  @IsOptional() @IsString()
+  departurePort?: string;
+
+  @ApiPropertyOptional({ description: 'Puerto de desembarque', example: 'Port of Miami' })
+  @IsOptional() @IsString()
+  arrivalPort?: string;
+
+  @ApiPropertyOptional({ description: 'Total FOB en DOP', example: 50000 })
+  @IsOptional() @IsNumber()
+  totalFob?: number;
+
+  @ApiPropertyOptional({ description: 'Seguro en DOP', example: 500 })
+  @IsOptional() @IsNumber()
+  insurance?: number;
+
+  @ApiPropertyOptional({ description: 'Flete en DOP', example: 1500 })
+  @IsOptional() @IsNumber()
+  freight?: number;
+
+  @ApiPropertyOptional({ description: 'Total CIF en DOP', example: 52000 })
+  @IsOptional() @IsNumber()
+  totalCif?: number;
+
+  @ApiPropertyOptional({ description: 'Peso bruto (kg)', example: 100 })
+  @IsOptional() @IsNumber()
+  grossWeight?: number;
+
+  @ApiPropertyOptional({ description: 'Peso neto (kg)', example: 90 })
+  @IsOptional() @IsNumber()
+  netWeight?: number;
+
+  @ApiPropertyOptional({ description: 'Volumen del bulto', example: 2.5 })
+  @IsOptional() @IsNumber()
+  packageVolume?: number;
+
+  @ApiPropertyOptional({ description: 'Número de referencia aduanera', example: 'REF-2026-001' })
+  @IsOptional() @IsString()
+  referenceNumber?: string;
+}
+
+// ============================================================
+// E47 FOREIGN BENEFICIARY DTO
+// ============================================================
+
+export class ForeignBeneficiaryDto {
+  @ApiProperty({ description: 'Nombre del beneficiario en el exterior', example: 'Foreign Supplier Inc.' })
+  @IsString()
+  name: string;
+
+  @ApiPropertyOptional({ description: 'Tax ID / RNC del beneficiario (EIN, NIF, etc.)', example: 'EIN-12-3456789' })
+  @IsOptional() @IsString()
+  taxId?: string;
+
+  @ApiPropertyOptional({ description: 'Dirección del beneficiario', example: '123 Business Ave, New York, NY 10001' })
+  @IsOptional() @IsString()
+  address?: string;
+
+  @ApiProperty({ description: 'País del beneficiario (código ISO2)', example: 'US' })
+  @IsString()
+  country: string;
+
+  @ApiPropertyOptional({ description: 'Tipo de renta: 1=Dividendos, 2=Intereses, 3=Regalías, 4=Honorarios, 5=Otros', example: 4 })
+  @IsOptional() @IsInt()
+  incomeType?: number;
+
+  @ApiPropertyOptional({ description: 'Concepto del pago al exterior', example: 'Licencias de software anuales' })
+  @IsOptional() @IsString()
+  concept?: string;
+}
+
+// ============================================================
 // MAIN DTO
 // ============================================================
 
@@ -308,6 +426,29 @@ export class CreateInvoiceDto {
   @ValidateNested()
   @Type(() => CurrencyDto)
   currency?: CurrencyDto;
+
+  @ApiPropertyOptional({ description: 'Transporte — obligatorio para E46 (Exportaciones)', type: TransportInfoDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TransportInfoDto)
+  transport?: TransportInfoDto;
+
+  @ApiPropertyOptional({ description: 'Información adicional de exportación — para E46', type: ExportInfoDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExportInfoDto)
+  additionalInfo?: ExportInfoDto;
+
+  @ApiPropertyOptional({ description: 'Beneficiario en el exterior — obligatorio para E47 (Pagos al Exterior)', type: ForeignBeneficiaryDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ForeignBeneficiaryDto)
+  foreignBeneficiary?: ForeignBeneficiaryDto;
+
+  @ApiPropertyOptional({ description: 'Monto de retención (E47)', example: 180 })
+  @IsOptional()
+  @IsNumber({}, { message: 'retentionAmount debe ser un número' })
+  retentionAmount?: number;
 
   @ApiPropertyOptional({ description: 'Clave de idempotencia para evitar duplicados (max 64 chars, ej: timestamp + requestId)', example: '1746273600000-req-abc123' })
   @IsOptional()
