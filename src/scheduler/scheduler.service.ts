@@ -31,11 +31,16 @@ import { DistributedLockService } from '../common/services/distributed-lock.serv
  */
 @Injectable()
 export class SchedulerService implements OnModuleInit {
-  // Generous TTLs: bigger than the worst-case job duration we've measured so
-  // a slow run doesn't start releasing its lock under someone else.
   private static readonly CONTINGENCY_LOCK_TTL_MS = 10 * 60 * 1000; // 10min
   private static readonly TOKEN_CLEANUP_LOCK_TTL_MS = 5 * 60 * 1000; // 5min
   private static readonly CERT_CHECK_LOCK_TTL_MS = 30 * 60 * 1000; // 30min
+
+  /** Static: survives DI re-instantiation in tests; readable by AdminHealthService without re-importing the module. */
+  static readonly lastRuns: { contingencyRetry: Date | null; tokenCleanup: Date | null; certificateCheck: Date | null } = {
+    contingencyRetry: null,
+    tokenCleanup: null,
+    certificateCheck: null,
+  };
 
   constructor(
     private readonly prisma: PrismaService,
@@ -65,6 +70,7 @@ export class SchedulerService implements OnModuleInit {
       SchedulerService.CONTINGENCY_LOCK_TTL_MS,
       () => this.processContingency(),
     );
+    SchedulerService.lastRuns.contingencyRetry = new Date();
   }
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'token-cleanup' })
@@ -74,6 +80,7 @@ export class SchedulerService implements OnModuleInit {
       SchedulerService.TOKEN_CLEANUP_LOCK_TTL_MS,
       () => this.cleanupTokens(),
     );
+    SchedulerService.lastRuns.tokenCleanup = new Date();
   }
 
   /**
@@ -87,6 +94,7 @@ export class SchedulerService implements OnModuleInit {
       SchedulerService.CERT_CHECK_LOCK_TTL_MS,
       () => this.scheduleCertificateCheck(),
     );
+    SchedulerService.lastRuns.certificateCheck = new Date();
   }
 
   // ============================================================

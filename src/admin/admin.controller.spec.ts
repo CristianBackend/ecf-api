@@ -9,22 +9,31 @@
  */
 import { AdminController } from './admin.controller';
 import { QueueService } from '../queue/queue.service';
+import { MetricsService } from './metrics.service';
 
 describe('AdminController', () => {
-  it('GET /admin/queues/stats returns the QueueService snapshot as-is', async () => {
+  function makeController() {
     const snapshot = {
       ecfProcessing: { waiting: 1, active: 2, completed: 3, failed: 0, delayed: 0 },
       statusPoll: { waiting: 0, active: 0, completed: 10, failed: 1, delayed: 5 },
       certificateCheck: { waiting: 0, active: 0, completed: 7, failed: 0, delayed: 0 },
     };
-    const queueService = {
-      getQueueStats: jest.fn(async () => snapshot),
-    } as unknown as QueueService;
+    const queueService = { getQueueStats: jest.fn(async () => snapshot) } as unknown as QueueService;
+    const metricsService = { getGlobalMetrics: jest.fn(async () => ({ tenants: { total: 1 } })) } as unknown as MetricsService;
+    return { controller: new AdminController(queueService, metricsService), queueService, metricsService, snapshot };
+  }
 
-    const controller = new AdminController(queueService);
+  it('GET /admin/queues/stats returns the QueueService snapshot as-is', async () => {
+    const { controller, queueService, snapshot } = makeController();
     const result = await controller.queueStats();
-
     expect(result).toEqual(snapshot);
     expect((queueService.getQueueStats as jest.Mock)).toHaveBeenCalledTimes(1);
+  });
+
+  it('GET /admin/metrics delegates to MetricsService', async () => {
+    const { controller, metricsService } = makeController();
+    const result = await controller.globalMetrics() as any;
+    expect(result.tenants.total).toBe(1);
+    expect((metricsService.getGlobalMetrics as jest.Mock)).toHaveBeenCalledTimes(1);
   });
 });

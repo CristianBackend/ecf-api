@@ -872,3 +872,51 @@ Variables de entorno añadidas al Dockerfile:
 | Tests antes de Tarea 12 | 228 |
 | Tests después de Tarea 12 | **236** (+8) |
 | Spec files nuevos | 1 (`pdf.controller.spec.ts`) |
+
+---
+
+## Tarea 14 — Admin endpoints para el dashboard
+
+### Commits
+
+| Subtarea | Descripción |
+|---|---|
+| 14.1–14.6 (único) | feat(admin): 6 endpoints admin para dashboard — métricas, tenants, facturas, webhooks, audit, health |
+
+### Resumen de endpoints nuevos
+
+| Endpoint | Descripción |
+|---|---|
+| `GET /admin/metrics` | Métricas globales (tenants, facturas, certs, webhooks, colas, sistema). Cache 30s. |
+| `GET /admin/tenants` | Listado paginado de todos los tenants con filtros y conteos |
+| `GET /admin/tenants/:id` | Detalle completo: empresas, certificados (sin p12), API keys, webhooks, métricas |
+| `GET /admin/invoices` | Búsqueda global de facturas con 14 filtros + agregaciones (suma monto/ITBIS) |
+| `GET /admin/webhooks/deliveries` | Lista de entregas con filtros (onlyFailed, tenantId, event, etc.) |
+| `GET /admin/webhooks/deliveries/:id` | Detalle de una entrega (payload truncado a 500 chars) |
+| `POST /admin/webhooks/deliveries/:id/retry` | Re-encola delivery en BullMQ (solo si attempts >= maxAttempts) |
+| `GET /admin/audit-logs` | Logs de auditoría con tenant.name resuelto y filtros |
+| `GET /admin/health` | Health detallado (DB + Redis con latencia, colas, scheduler last-runs, memoria) |
+
+Todos requieren scope `ADMIN`. Son cross-tenant — no filtran por el tenant del caller.
+
+### Decisiones técnicas
+
+**14.1 — Caché en memoria:** `MetricsService` usa un simple objeto con timestamp. No se usó Redis para el caché porque las métricas globales son costosas de computar (~12 queries paralelas) y un caché de 30s en proceso evita esa carga. En multi-instancia, cada pod tendrá su propio caché — aceptable para dashboards de operación.
+
+**14.3 — Agregaciones:** `AdminInvoicesService` ejecuta 3 queries en `Promise.all`: `findMany` (items), `count` (total), `aggregate` (suma de montos). Un `groupBy` adicional para `countByStatus`. Las 4 queries usan el mismo `where` garantizando consistencia.
+
+**14.4 — Retry de webhook delivery:** El retry solo está permitido cuando `attempts >= maxAttempts` (BullMQ agotó todos sus reintentos). Si hay intentos pendientes, BullMQ ya está re-intentando con backoff — forzar otro haría duplicados. Al hacer retry: se re-encola con WEBHOOK_MAX_ATTEMPTS fresh y se resetea el delivery record en BD.
+
+**14.6 — Tracking de scheduler:** Se usaron propiedades `static` en `SchedulerService.lastRuns` en vez de importar el módulo en AdminModule (que lo re-instanciaría y duplicaría los crons). Los valores estáticos persisten a lo largo de la vida del proceso y son accesibles desde `AdminHealthService` sin DI adicional. `null` significa "nunca corrió desde último deploy".
+
+**AdminModule imports:** `SchedulerModule` se importa explícitamente en `AdminModule` para resolver las dependencias de `AdminHealthService` (que necesita `PrismaService`, `QueueService`, `ConfigService`, `LOCK_REDIS_CLIENT`). `SchedulerModule` ya existe en AppModule; NestJS no lo re-instancia por ser singleton si fuera @Global(), pero aquí se acepta la re-instancia dado que SchedulerService usa `static` para el tracking de last-runs.
+
+**TODO:** En un deploy multi-instancia (varios pods), el scheduler corre en cada pod pero solo uno adquiere el lock distribuido. El `lastRuns` estático solo refleja el último run del POD actual, no del sistema distribuido. Para dashboards de infra real, guardar timestamps de último run en Redis (`scheduler:lastRun:*` keys).
+
+### Tests: antes vs. después
+
+| | Cantidad |
+|---|---|
+| Tests antes de Tarea 14 | 236 |
+| Tests después de Tarea 14 | **270** (+34) |
+| Spec files nuevos | 5 (metrics, tenants, invoices, webhooks, audit, health services) |
