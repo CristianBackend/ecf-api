@@ -6,24 +6,20 @@ import { useAuthStore } from '@/lib/auth-store';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Topbar } from '@/components/layout/topbar';
 import { MobileSidebar } from '@/components/layout/mobile-sidebar';
+import { ForceChangePasswordModal } from '@/components/auth/force-change-password-modal';
 
 export default function ProtectedLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { isAuthenticated, _hasHydrated } = useAuthStore();
+  const { isAuthenticated, _hasHydrated, mustChangePassword } = useAuthStore();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    // Wait for Zustand persist to read localStorage before checking auth.
-    // Without this guard the layout redirects to /login on every page load
-    // because the store starts with token=null and only hydrates asynchronously.
     if (!_hasHydrated) return;
     if (!isAuthenticated()) {
       router.push('/login');
     }
   }, [_hasHydrated, isAuthenticated, router]);
 
-  // Show a spinner while Zustand hydrates from localStorage to avoid a flash
-  // of unauthenticated content or a premature redirect to /login.
   if (!_hasHydrated) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -36,6 +32,9 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      {/* Force password change blocks all interaction until resolved */}
+      {mustChangePassword && <ForceChangePasswordModal />}
+
       <MobileSidebar open={mobileOpen} onOpenChange={setMobileOpen} />
       <div className="hidden md:flex md:shrink-0">
         <Sidebar />
