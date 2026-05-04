@@ -969,3 +969,25 @@ Next.js 16.2.4 (App Router) · TypeScript estricto · Tailwind CSS · TanStack Q
 5. Mobile sidebar (hamburger menu para < md breakpoint)
 6. Página `/settings` (actualmente disabled en sidebar)
 7. Infinito scroll vs paginación en tablas largas
+
+---
+
+## CORS multi-origin fix
+
+**Por qué se hizo:** El HTTP spec exige que el header `Access-Control-Allow-Origin` contenga EXACTAMENTE UN origen o el literal `*`. El código original hacía `origin: corsOrigin` donde `corsOrigin` era el string completo de la env var. Si se configuraba `CORS_ORIGIN=https://a.com,http://localhost:3000`, NestJS pasaba ese string directamente al header, lo que viola el estándar y browsers modernos lo rechazan.
+
+**Cómo se resolvió:**
+- Se extrae la lógica a `src/config/cors.util.ts` (`parseCorsOrigins` + `buildCorsOriginOption`) para ser testeable unitariamente.
+- `buildCorsOriginOption` retorna un callback dinámico que evalúa el `Origin` del request entrante: si está en la lista, NestJS refleja ESE origen de vuelta (no la lista). Si no está, retorna un error que el browser convierte en "blocked by CORS policy".
+- El wildcard `'*'` se soporta explícitamente en el callback para dev/test.
+
+**Validación Joi actualizada:**
+- En producción: rechaza `'*'` en CUALQUIER posición de la lista (antes solo rechazaba el valor `'*'` como totalidad).
+- En producción: rechaza segmentos vacíos (`a,,b`).
+- Usa `helpers.error('cors.noWildcard')` / `helpers.error('cors.emptySegment')` con mensajes en `.messages()`.
+
+**Para producción:** `CORS_ORIGIN=https://node-a2.newplain.com,http://localhost:3000` funciona correctamente — cada request recibe el origen exacto que envió si está en la lista.
+
+**Tests nuevos:** 18 (+18 de 270 → 288)
+- `cors.util.spec.ts`: 13 tests para `parseCorsOrigins` y `buildCorsOriginOption`
+- `env.validation.spec.ts`: 5 tests nuevos (multi-origen válido, `*` en cualquier posición, segmentos vacíos)

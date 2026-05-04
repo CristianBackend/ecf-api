@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { buildCorsOriginOption } from './config/cors.util';
 
 async function bootstrap() {
   // `bufferLogs: true` so any log emitted during module init is held until
@@ -19,11 +20,17 @@ async function bootstrap() {
 
   // Security
   app.use(helmet());
-  const corsOrigin = configService.get<string>('CORS_ORIGIN', '*');
+  // CORS_ORIGIN is a comma-separated list of allowed origins (e.g.
+  // "https://app.example.com,http://localhost:3000"). The dynamic callback
+  // reflects the caller's exact origin back instead of echoing the whole
+  // list — the HTTP spec requires exactly one origin in that header.
+  const corsRaw = configService.get<string>('CORS_ORIGIN');
   app.enableCors({
-    origin: corsOrigin,
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    origin: buildCorsOriginOption(corsRaw),
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-ECF-Signature', 'X-ECF-Timestamp'],
+    exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
   });
 
   // Global prefix

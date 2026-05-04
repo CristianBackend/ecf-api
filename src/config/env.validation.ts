@@ -17,15 +17,32 @@ export const envValidationSchema = Joi.object({
     .default('development'),
   PORT: Joi.number().integer().min(1).max(65535).default(3000),
   API_PREFIX: Joi.string().default('api/v1'),
+  // CORS_ORIGIN is a comma-separated list of allowed origins.
+  // In production: required, no "*" in any position, no empty segments.
+  // In dev/test: defaults to "*" (allow all).
   CORS_ORIGIN: Joi.string()
     .default('*')
     .when('NODE_ENV', {
       is: 'production',
-      then: Joi.string().invalid('*').required().messages({
-        'any.invalid':
-          'CORS_ORIGIN must be an exact origin (e.g. https://app.example.com) in production; "*" is not allowed.',
-        'any.required': 'CORS_ORIGIN is required in production.',
-      }),
+      then: Joi.string()
+        .required()
+        .custom((value: string, helpers) => {
+          const origins = value.split(',').map((s: string) => s.trim());
+          if (origins.some((o: string) => o === '*')) {
+            return helpers.error('cors.noWildcard');
+          }
+          if (origins.some((o: string) => o.length === 0)) {
+            return helpers.error('cors.emptySegment');
+          }
+          return value;
+        })
+        .messages({
+          // eslint-disable-next-line @typescript-eslint/naming-convention
+          'cors.noWildcard': 'CORS_ORIGIN must not contain "*" in production. Use comma-separated origins.',
+          // eslint-disable-next-line @typescript-eslint/naming-convention
+          'cors.emptySegment': 'CORS_ORIGIN must not have empty segments. Check for double commas.',
+          'any.required': 'CORS_ORIGIN is required in production.',
+        }),
     }),
 
   // Database — required, any valid postgres/postgresql URL.

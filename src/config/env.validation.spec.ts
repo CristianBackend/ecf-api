@@ -101,16 +101,46 @@ describe('envValidationSchema', () => {
         CORS_ORIGIN: '*',
       });
       expect(error?.message).toMatch(/CORS_ORIGIN/);
-      expect(error?.message).toMatch(/production/i);
+      expect(error?.message).toMatch(/\*/);
     });
 
-    it('accepts an explicit origin in production', () => {
+    it('accepts a single explicit origin in production', () => {
       const { error } = validate({
         ...VALID_BASE,
         NODE_ENV: 'production',
         CORS_ORIGIN: 'https://app.example.com',
       });
       expect(error).toBeUndefined();
+    });
+
+    it('accepts multiple comma-separated origins in production', () => {
+      const { error } = validate({
+        ...VALID_BASE,
+        NODE_ENV: 'production',
+        CORS_ORIGIN: 'https://app.example.com,http://localhost:3000',
+      });
+      expect(error).toBeUndefined();
+    });
+
+    it('rejects "*" anywhere in a comma-separated list in production', () => {
+      const wildcardCases = [
+        '*,https://app.example.com',
+        'https://app.example.com,*',
+        'https://a.com,*,https://b.com',
+      ];
+      for (const corsOrigin of wildcardCases) {
+        const { error } = validate({ ...VALID_BASE, NODE_ENV: 'production', CORS_ORIGIN: corsOrigin });
+        expect(error?.message).toMatch(/\*/);
+      }
+    });
+
+    it('rejects empty segments (double commas) in production', () => {
+      const { error } = validate({
+        ...VALID_BASE,
+        NODE_ENV: 'production',
+        CORS_ORIGIN: 'https://app.example.com,,https://other.com',
+      });
+      expect(error?.message).toMatch(/empty segments/i);
     });
 
     it('allows CORS_ORIGIN="*" outside of production (dev/test)', () => {
