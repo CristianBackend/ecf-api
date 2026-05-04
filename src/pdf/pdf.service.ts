@@ -1,14 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleDestroy } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as QRCode from 'qrcode';
-import * as htmlPdf from 'html-pdf-node';
+import * as puppeteer from 'puppeteer';
+import type { Browser } from 'puppeteer';
 import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
 import { ECF_TYPE_NAMES, FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-types';
 import { fmtDateGmt4, fmtDateTimeGmt4 } from '../common/utils/date-format.util';
 
 @Injectable()
-export class PdfService {
+export class PdfService implements OnModuleDestroy {
+  /** Lazy-initialized Chromium instance. Shared across requests — launch overhead is ~300ms. */
+  private browser: Browser | null = null;
   constructor(
     private readonly prisma: PrismaService,
     private readonly signingService: SigningService,
@@ -273,27 +276,59 @@ export class PdfService {
     return html;
   }
 
+  async onModuleDestroy() {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+    }
+  }
+
   /**
-   * Generate a server-side PDF binary buffer.
-   * Uses html-pdf-node (puppeteer under the hood) to render the RI HTML.
-   * Returns a Buffer that starts with %PDF-1. magic bytes.
-   * Requires Chromium (bundled by puppeteer on first install).
-   * Docker: add --no-sandbox via args; ensure libnss3/libatk/libgbm are available.
+   * Returns the shared Chromium instance, launching it on first call.
+   * Reuses the same browser process across requests — avoids the ~300ms
+   * cold-start overhead on every PDF request.
+   * Docker: set PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium and ensure the
+   * chromium + libs (libnss3, libgbm1, etc.) are present in the image.
+   */
+  private async getBrowser(): Promise<Browser> {
+    if (!this.browser || !this.browser.connected) {
+      this.browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage', // write to /tmp instead of /dev/shm (Docker)
+          '--disable-gpu',
+        ],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      });
+    }
+    return this.browser;
+  }
+
+  /**
+   * Generate a server-side PDF binary buffer using Chromium (puppeteer).
+   * Returns a Buffer starting with %PDF-1. magic bytes.
+   * The QR data URL and all CSS (including print-color-adjust) render correctly
+   * because Chromium handles the full layout engine.
    */
   async generatePdfBuffer(tenantId: string, invoiceId: string): Promise<Buffer> {
     const html = await this.generateHtml(tenantId, invoiceId);
-
-    const options: htmlPdf.Options = {
-      format: 'A4',
-      margin: { top: '15mm', right: '15mm', bottom: '15mm', left: '15mm' },
-      printBackground: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    };
-
-    // html-pdf-node returns a Promise despite the TypeScript types declaring void
-    const buffer = await (htmlPdf.generatePdf({ content: html }, options) as unknown as Promise<Buffer>);
-    this.logger.debug(`Generated PDF buffer for invoice ${invoiceId} (${buffer.length} bytes)`);
-    return buffer;
+    const browser = await this.getBrowser();
+    const page = await browser.newPage();
+    try {
+      await page.setContent(html, { waitUntil: 'networkidle0' });
+      const pdfBuffer = await page.pdf({
+        format: 'A4',
+        margin: { top: '15mm', right: '15mm', bottom: '15mm', left: '15mm' },
+        printBackground: true,
+      });
+      const buf = Buffer.from(pdfBuffer);
+      this.logger.debug(`Generated PDF for invoice ${invoiceId} (${buf.length} bytes)`);
+      return buf;
+    } finally {
+      await page.close();
+    }
   }
 
   /**

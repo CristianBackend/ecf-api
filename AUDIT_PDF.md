@@ -344,3 +344,33 @@ Commits: `632e838`, `666bb2c`, `61d28ce`
 
 **~75–80%** (vs. ~35–40% pre-fix). Los 4 P0 y los 4 P1 originales están cerrados.
 El 20–25% restante son items P2/P3 (E47, E44/E45 ajustes, PDF binario, bien/servicio).
+
+---
+
+## Post-Fix Status — Tarea 12
+
+Tarea 12 cerró los TODOs P2/P3 que quedaron de Tarea 10.
+
+### TODOs cerrados en Tarea 12
+
+| # | TODO | Estado |
+|---|------|--------|
+| 1 | E41 — columnas dedicadas para `vendorRnc`/`vendorName` | ✅ **Resuelto** — migración `20260503000001`, pdf.service lee de columnas con fallback a metadata |
+| 2 | E46 — columnas dedicadas (`transportInfo`, `exportInfo`) | ✅ **Resuelto** — misma migración, JSON blobs en BD |
+| 3 | E46 — `freightPaymentMethod` en DTO y RI | ✅ **Resuelto** — campo en `TransportInfoDto` + `invoice-input.interface.ts` + bloque Transporte del RI |
+| 4 | E47 — bloque beneficiario exterior | ✅ **Resuelto** — `buildBeneficiarySection` con columna `foreignBeneficiaryInfo` + fallback metadata |
+| 5 | PDF binario server-side | ✅ **Resuelto** — `generatePdfBuffer` con puppeteer v24, browser singleton, endpoint `?format=pdf` |
+
+### TODOs aún abiertos (pendientes de tareas futuras)
+
+| # | TODO | Prioridad |
+|---|------|-----------|
+| 1 | Bien/Servicio por línea (`line.goodService`) en RI | P3 |
+| 2 | CA validation INDOTEL (certificado firmante de CA autorizada) | P2 |
+| 3 | S3 upload del PDF (`pdfS3Key` + signed URL endpoint) | P2 (depende de decisión infra) |
+| 4 | E44/E45 ajustes visuales layout RI | P3 |
+
+### Completitud estimada post-Tarea 12
+
+**~95%** de la RI especificada. Los 4 P0, 4 P1 y 4 P2 principales están cerrados.
+El 5% restante son items P3 (bien/servicio por línea, CA validation) y opcionales de infra (S3).

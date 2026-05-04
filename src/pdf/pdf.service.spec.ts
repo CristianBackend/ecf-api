@@ -10,11 +10,26 @@ jest.mock('qrcode', () => ({
   toDataURL: jest.fn().mockResolvedValue('data:image/png;base64,FAKEQRDATA=='),
 }));
 
-// Stub html-pdf-node so tests don't need Chromium.
-// Buffer must be defined inside the factory (jest.mock is hoisted, TDZ would break external refs).
-jest.mock('html-pdf-node', () => ({
-  generatePdf: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.4 \n1 0 obj\n<<>>\nendobj\n%%EOF\n')),
-}));
+// Stub puppeteer so tests don't need a real Chromium installation.
+// All values are defined inside the factory to avoid TDZ issues with jest.mock hoisting.
+jest.mock('puppeteer', () => {
+  const fakePdf = Buffer.from('%PDF-1.4 \n1 0 obj\n<<>>\nendobj\n%%EOF\n');
+  const mockPage = {
+    setContent: jest.fn().mockResolvedValue(undefined),
+    pdf: jest.fn().mockResolvedValue(fakePdf),
+    close: jest.fn().mockResolvedValue(undefined),
+  };
+  const mockBrowser = {
+    newPage: jest.fn().mockResolvedValue(mockPage),
+    connected: true,
+    close: jest.fn().mockResolvedValue(undefined),
+  };
+  return {
+    __esModule: true,
+    default: { launch: jest.fn().mockResolvedValue(mockBrowser) },
+    launch: jest.fn().mockResolvedValue(mockBrowser),
+  };
+});
 
 // ============================================================
 // Test fixtures

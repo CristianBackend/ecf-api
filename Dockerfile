@@ -6,6 +6,10 @@
 # --- Stage 1: Dependencies ---
 FROM node:22-slim AS deps
 
+# PUPPETEER_SKIP_CHROMIUM_DOWNLOAD prevents puppeteer from downloading its
+# own Chromium during npm ci. We use the system chromium in production instead.
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -34,7 +38,29 @@ FROM node:22-slim AS production
 
 WORKDIR /app
 
-RUN apt-get update -y && apt-get install -y openssl dumb-init wget libxml2-utils && rm -rf /var/lib/apt/lists/*
+# ⚠️ REBUILD REQUIRED when this layer changes.
+# Chromium + system libs needed by puppeteer for server-side PDF generation.
+# On node:22-slim (Debian Bookworm): chromium binary is at /usr/bin/chromium.
+RUN apt-get update -y && apt-get install -y \
+    openssl dumb-init wget libxml2-utils \
+    chromium \
+    fonts-liberation \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libgbm1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libxkbcommon0 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Tell puppeteer to use the system Chromium instead of downloading its own.
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 RUN groupadd -g 1001 ecfapi && useradd -u 1001 -g ecfapi -m ecfapi
 

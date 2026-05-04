@@ -824,17 +824,33 @@ No hay columnas para los campos individuales de E46 (transporte tiene ~15 sub-ca
 - `grep -r "metadata._originalDto.vendedor" src/` → solo aparece en el fallback documentado (`buildVendorSection`)
 - `grep -r "metadata._originalDto.transport" src/` → idem
 
-### 12.4 — PDF binario server-side
+### 12.4 — PDF binario server-side (migración html-pdf-node → puppeteer)
 
-**Librería elegida:** `html-pdf-node` (recomendada por el spec). Envuelve puppeteer/Chromium y genera PDF desde HTML existente sin reescribir el RI.
+**Librería final: `puppeteer` v24** (sustituyó `html-pdf-node` a pedido del spec final).
 
-**Descubrimiento técnico:** `html-pdf-node` exporta `generatePdf(file, options, callback?)` pero la implementación real retorna una Promise incluso cuando no se pasa callback. Los tipos TypeScript dicen `void` — esto es un bug de los tipos. Se resuelve con cast `as unknown as Promise<Buffer>`.
+**Por qué puppeteer directamente en vez de html-pdf-node:**
+- `html-pdf-node` es esencialmente unmaintained desde 2021 (última versión 1.0.8)
+- `html-pdf-node` usa puppeteer internamente pero su API exporta `void` aunque retorna una Promise — requería un `as unknown as Promise<Buffer>` hack
+- `puppeteer` v24 (Google-maintained) expone la API correctamente tipada, con browser singleton real y lifecycle (`OnModuleDestroy`)
 
-**Opciones de puppeteer:** `--no-sandbox` y `--disable-setuid-sandbox` son **obligatorias en Docker** para evitar el error "Running as root without --no-sandbox is not supported". El Dockerfile necesita las dependencias del sistema Chrome (libnss3, libatk-1.0-0, libgbm1, libxshmfence1). Ver issue Chrome en Alpine Linux.
+**Implementación:**
+- `PdfService` implementa `OnModuleDestroy` para cerrar el browser en shutdown
+- Browser singleton lazy-init (`getBrowser()`) — evita el cold-start de ~300ms en cada request
+- Flags: `--no-sandbox`, `--disable-setuid-sandbox`, `--disable-dev-shm-usage`, `--disable-gpu`
+- `PUPPETEER_EXECUTABLE_PATH` env var para usar Chromium del sistema en Docker
 
-**Backward compatibility:** El endpoint `GET /invoices/:id/pdf` mantiene su comportamiento original mediante `?format=html`. Sin parámetro o con `?format=pdf` genera PDF binario server-side.
+**⚠️ DOCKER — REBUILD REQUERIDO:** El Dockerfile fue actualizado. La imagen base `node:22-slim` necesita un rebuild para incluir:
+```
+chromium fonts-liberation libnss3 libatk-bridge2.0-0 libdrm2 libgbm1
+libxcomposite1 libxdamage1 libxrandr2 libxkbcommon0 libpango-1.0-0 libcairo2 libasound2
+```
+Variables de entorno añadidas al Dockerfile:
+- `PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true` (evita descarga en `npm ci`)
+- `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium` (prod + build stages)
 
-**Tests:** Los tests de `pdf.service.spec.ts` y `pdf.controller.spec.ts` mockean `html-pdf-node` para no requerir Chromium en CI. El mock factory no puede referenciar variables externas (jest.mock hoisting / TDZ) — el Buffer se define inline.
+**Tamaño de imagen:** Chromium agrega ~200MB a la imagen de producción. Alternativas más livianas si es un problema: `@sparticuz/chromium` (Lambda/serverless) o `playwright` con `playwright-chromium` (más moderno pero misma dependencia de sistema).
+
+**Tests:** Unit tests en `pdf.service.spec.ts` y `pdf.controller.spec.ts` mockean `puppeteer` completo (browser + page + pdf()). No requieren Chromium instalado en CI. La mock factory define el Buffer inline (evita TDZ con jest.mock hoisting).
 
 ### 12.5 — S3 upload (diferido)
 
@@ -854,5 +870,5 @@ No hay columnas para los campos individuales de E46 (transporte tiene ~15 sub-ca
 | | Cantidad |
 |---|---|
 | Tests antes de Tarea 12 | 228 |
-| Tests después de Tarea 12 | **235** (+7) |
+| Tests después de Tarea 12 | **236** (+8) |
 | Spec files nuevos | 1 (`pdf.controller.spec.ts`) |
