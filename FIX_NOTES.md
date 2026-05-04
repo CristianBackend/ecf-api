@@ -1099,3 +1099,51 @@ Retrocompatible: todos los tenants existentes quedan con must_change_password = 
 - [ ] /settings — agregar tab "Seguridad" con cambio de password (reusar ForceChangePasswordModal o crear variante)
 - [ ] 18.5 — /admin/tenants/new
 - [ ] 18.6 — useRequireScope hook
+
+
+---
+
+## Tarea 18.4b — Páginas tenant-normal completas
+
+### Commits
+
+| Subtarea | Commit | Descripción |
+|---|---|---|
+| 18.4b.1 | `728294c` | /companies/:id (4 tabs) + InvoiceDetailDrawer + Sheet right-side |
+| 18.4b.2 | `be4014c` | /webhooks CRUD tenant (reescritura completa) |
+| 18.4b.3+4 | `e3a5a73` | /invoices tenant con filtros y drawer; copy fixes |
+
+### Decisiones técnicas
+
+**Sheet right-side**
+- Sheet.tsx extendido con prop `side="left" | "right"`. Left mantiene bg-slate-900 (navegación), right usa bg-background (drawers de contenido). Animación: translate-x inverso según side.
+
+**InvoiceDetailDrawer**
+- Componente compartido entre /companies/:id (tab Facturas) y /invoices.
+- XML: GET /invoices/:id/xml con responseType: 'text'. Cargado lazy al hacer click en tab XML (no en montaje).
+- PDF: iframe apuntando a GET /invoices/:id/pdf con el JWT como Bearer — funciona porque el apiClient interceptor inyecta el token. Si el backend rechaza la request del iframe (cookies en lugar de Bearer), esto fallaría; TODO: implementar token de descarga para PDF también.
+- Download XML: usa POST /invoices/:id/download-token + window.open (token one-use seguro).
+
+**Webhooks**
+- WebhookEvent enum usa SCREAMING_SNAKE_CASE (INVOICE_ACCEPTED, no invoice.accepted). Catálogo hardcodeado en frontend con labels legibles.
+- Secret reveal: Dialog no-dismissible (onInteractOutside + onEscapeKeyDown previenen cierre) con checkbox de confirmación. Mismo patrón que API key reveal modal.
+- PATCH /webhooks/:id acepta url?, events?, isActive? opcionales. El edit dialog envía solo los campos modificados.
+
+**Sequences**
+- GET /sequences/:companyId (no ?companyId=xxx). El companyId va en el path, no en query.
+- POST /sequences requiere companyId en el body. El form de la página /companies/:id lo pasa desde el id del path.
+- expiresAt es opcional en el DTO — el datepicker queda vacío por defecto.
+
+**/invoices — tenant endpoint**
+- Switched from /admin/invoices to /invoices (tenant-scoped, filtrado por tenantId automáticamente).
+- La tenant endpoint NO tiene aggregations (totalAmount, totalItbis, countByStatus). Removido el panel de aggregations. TODO: agregar aggregations al endpoint /invoices del tenant si se necesitan.
+- Filtro companyId funciona (verificado en invoices.controller.ts).
+- Company dropdown se puebla desde GET /companies del mismo tenant.
+
+### TODOs pendientes
+
+- [ ] PDF iframe en InvoiceDetailDrawer: el iframe envía cookies pero no Bearer header. Si el backend solo acepta Bearer, el PDF no carga. Solución: implementar download-token para PDF igual que para XML.
+- [ ] /invoices: agregar aggregations (totalAmount, totalItbis) al endpoint /invoices del tenant.
+- [ ] /companies/:id tab Facturas: click en fila abre InvoiceDetailDrawer pero no cierra el tab (comportamiento correcto). Verificar que el drawer se posiciona correctamente sobre los 4 tabs.
+- [ ] 18.5 — /admin/tenants/new (crear tenant como super-admin)
+- [ ] 18.6 — useRequireScope hook + ocultar ADMIN scope en componentes
