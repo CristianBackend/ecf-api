@@ -2,11 +2,11 @@
 
 import { useRouter } from 'next/navigation';
 import { useTheme } from 'next-themes';
-import { LogOut, Sun, Moon, Monitor, ChevronDown, User } from 'lucide-react';
+import { LogOut, Sun, Moon, Monitor, User, Menu } from 'lucide-react';
 import { useAuthStore } from '@/lib/auth-store';
 import { Button } from '@/components/ui/button';
 
-export function Topbar({ title }: { title?: string }) {
+export function Topbar({ title, onMenuClick }: { title?: string; onMenuClick?: () => void }) {
   const router = useRouter();
   const { tenant, clearAuth } = useAuthStore();
   const { theme, setTheme } = useTheme();
@@ -23,6 +23,15 @@ export function Topbar({ title }: { title?: string }) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4 sm:px-6">
       <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="md:hidden h-8 w-8"
+          onClick={onMenuClick}
+          aria-label="Abrir menú"
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
         {title && <h2 className="font-semibold text-sm sm:text-base truncate">{title}</h2>}
       </div>
 

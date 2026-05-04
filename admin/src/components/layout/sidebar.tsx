@@ -2,22 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  LayoutDashboard, Users, Building2, FileText, Shield, Webhook, ClipboardList,
-  HeartPulse, Settings, ChevronLeft, ChevronRight, FileStack,
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileStack } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
-
-const NAV_ITEMS = [
-  { href: '/dashboard',  label: 'Dashboard',         icon: LayoutDashboard },
-  { href: '/tenants',    label: 'Tenants',            icon: Users },
-  { href: '/invoices',   label: 'Facturas',           icon: FileText },
-  { href: '/webhooks',   label: 'Webhooks',           icon: Webhook },
-  { href: '/audit-logs', label: 'Audit Logs',         icon: ClipboardList },
-  { href: '/health',     label: 'Salud del Sistema',  icon: HeartPulse },
-  { href: '/settings',   label: 'Configuración',      icon: Settings, disabled: true },
-];
+import { NAV_ITEMS } from './nav-items';
 
 export function Sidebar() {
   const pathname = usePathname();
