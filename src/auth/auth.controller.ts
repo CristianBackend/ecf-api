@@ -8,10 +8,11 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Patch,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { CreateApiKeyDto, LoginDto } from './dto/auth.dto';
+import { CreateApiKeyDto, LoginDto, ChangePasswordDto } from './dto/auth.dto';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
 import { ApiKeyScope } from '@prisma/client';
@@ -28,6 +29,24 @@ const KEY_ID_PARAM = ApiParam({
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  @Patch('change-password')
+  @UseGuards(ApiKeyGuard)
+  @ApiBearerAuth('api-key')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Cambiar contraseña',
+    description: 'Cambia la contraseña del tenant autenticado. Limpia el flag mustChangePassword.',
+  })
+  @ApiResponse({ status: 204, description: 'Contraseña cambiada exitosamente' })
+  @ApiResponse({ status: 400, description: 'Contraseña actual incorrecta o nueva contraseña débil' })
+  @ApiReadErrors()
+  async changePassword(
+    @CurrentTenant() tenant: RequestTenant,
+    @Body() dto: ChangePasswordDto,
+  ): Promise<void> {
+    await this.authService.changePassword(tenant.id, dto.currentPassword, dto.newPassword);
+  }
 
   @Get('me')
   @UseGuards(ApiKeyGuard)

@@ -45,6 +45,22 @@ export class CreateApiKeyDto {
   scopes?: ApiKeyScope[];
 }
 
+export class ChangePasswordDto {
+  @ApiProperty({ description: 'Contraseña actual', example: 'OldPass123' })
+  @IsString()
+  @MinLength(1)
+  currentPassword: string;
+
+  @ApiProperty({
+    description: 'Nueva contraseña (min 8 chars, al menos 1 mayúscula, 1 minúscula, 1 número)',
+    example: 'NewPass456!',
+  })
+  @IsString()
+  @MinLength(8)
+  @MaxLength(128)
+  newPassword: string;
+}
+
 export class RevokeApiKeyDto {
   @ApiProperty({ description: 'ID de la API key a revocar' })
   @IsString()

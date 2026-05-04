@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, ConflictException, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
@@ -199,6 +199,55 @@ export class AuthService {
 
     this.logger.info(`API key revoked: ${key.keyPrefix}...`);
     return { message: 'API key revoked successfully' };
+  }
+
+  /**
+   * POST /auth/change-password
+   * Validates currentPassword, enforces strength rules on newPassword, hashes and saves.
+   * Sets must_change_password = false.
+   */
+  async changePassword(tenantId: string, currentPassword: string, newPassword: string): Promise<void> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, passwordHash: true },
+    });
+
+    if (!tenant || !tenant.passwordHash) {
+      throw new UnauthorizedException('Tenant not found');
+    }
+
+    const currentValid = await bcrypt.compare(currentPassword, tenant.passwordHash);
+    if (!currentValid) {
+      throw new BadRequestException('Contraseña actual incorrecta');
+    }
+
+    // newPassword must differ from currentPassword
+    const sameAsOld = await bcrypt.compare(newPassword, tenant.passwordHash);
+    if (sameAsOld) {
+      throw new BadRequestException('La nueva contraseña no puede ser igual a la actual');
+    }
+
+    // Strength: min 8 chars, ≥1 uppercase, ≥1 lowercase, ≥1 digit
+    const strongEnough =
+      newPassword.length >= 8 &&
+      /[A-Z]/.test(newPassword) &&
+      /[a-z]/.test(newPassword) &&
+      /[0-9]/.test(newPassword);
+
+    if (!strongEnough) {
+      throw new BadRequestException(
+        'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula y un número',
+      );
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 12);
+
+    await this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: { passwordHash: newHash, mustChangePassword: false },
+    });
+
+    this.logger.info(`Password changed for tenant ${tenantId}`);
   }
 
   /**
