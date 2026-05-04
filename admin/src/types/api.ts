@@ -39,9 +39,8 @@ export interface Paginated<T> {
 // ============================================================
 
 export interface LoginResponse {
-  accessToken: string;
-  tokenType: string;
-  expiresIn: number;
+  /** Backend returns 'token', not 'accessToken' — match auth.service.ts exactly. */
+  token: string;
   tenant: { id: string; name: string };
 }
 

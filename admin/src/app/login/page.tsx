@@ -35,7 +35,7 @@ export default function LoginPage() {
     setServerError(null);
     try {
       const res = await login(data.email, data.password);
-      setAuth(res.accessToken, res.tenant);
+      setAuth(res.token, res.tenant);
       router.push('/dashboard');
     } catch (err: unknown) {
       const msg =
