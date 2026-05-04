@@ -10,6 +10,12 @@ jest.mock('qrcode', () => ({
   toDataURL: jest.fn().mockResolvedValue('data:image/png;base64,FAKEQRDATA=='),
 }));
 
+// Stub html-pdf-node so tests don't need Chromium.
+// Buffer must be defined inside the factory (jest.mock is hoisted, TDZ would break external refs).
+jest.mock('html-pdf-node', () => ({
+  generatePdf: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.4 \n1 0 obj\n<<>>\nendobj\n%%EOF\n')),
+}));
+
 // ============================================================
 // Test fixtures
 // ============================================================
@@ -365,6 +371,26 @@ describe('PdfService', () => {
 
   it('getFiscalLegend returns empty string for unknown type', () => {
     expect(service.getFiscalLegend('E99')).toBe('');
+  });
+
+  // ── 34–36. generatePdfBuffer (12.4) ──────────────────────────
+
+  it('generatePdfBuffer returns a Buffer (12.4)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+    const buffer = await service.generatePdfBuffer('t1', 'inv-001');
+    expect(Buffer.isBuffer(buffer)).toBe(true);
+  });
+
+  it('generatePdfBuffer buffer is not empty (12.4)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+    const buffer = await service.generatePdfBuffer('t1', 'inv-001');
+    expect(buffer.length).toBeGreaterThan(0);
+  });
+
+  it('generatePdfBuffer buffer starts with %PDF-1. magic bytes (12.4)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+    const buffer = await service.generatePdfBuffer('t1', 'inv-001');
+    expect(buffer.slice(0, 7).toString()).toBe('%PDF-1.');
   });
 
   // ── 29. E41 reads from dedicated vendorRnc/vendorName columns ─
