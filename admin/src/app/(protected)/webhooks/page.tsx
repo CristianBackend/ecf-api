@@ -2,154 +2,429 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw, AlertCircle } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import {
+  Plus, Webhook, Pencil, Trash2, Loader2, CheckCircle2, XCircle, Copy, Check,
+} from 'lucide-react';
+import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
-import { fmtDateTime, fmtNumber } from '@/lib/utils';
-import type { WebhookDelivery, Paginated } from '@/types/api';
-import { Card, CardContent } from '@/components/ui/card';
+import { fmtDateTime } from '@/lib/utils';
+import type { WebhookSubscription, WebhookCreated, WebhookDelivery } from '@/types/api';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from '@/components/ui/dialog';
 
-async function fetchDeliveries(page: number, onlyFailed: boolean) {
-  const params = new URLSearchParams({ page: String(page), limit: '25' });
-  if (onlyFailed) params.set('onlyFailed', 'true');
-  const res = await apiClient.get<{ data: Paginated<WebhookDelivery> }>(`/admin/webhooks/deliveries?${params}`);
+// ── Event catalogue ────────────────────────────────────────────────────────────
+
+const WEBHOOK_EVENTS = [
+  { value: 'INVOICE_ACCEPTED',    label: 'Factura aceptada' },
+  { value: 'INVOICE_REJECTED',    label: 'Factura rechazada' },
+  { value: 'INVOICE_CONDITIONAL', label: 'Factura condicional' },
+  { value: 'INVOICE_CONTINGENCY', label: 'En contingencia' },
+  { value: 'INVOICE_QUEUED',      label: 'Factura encolada' },
+  { value: 'INVOICE_SUBMITTED',   label: 'Enviada a DGII' },
+  { value: 'INVOICE_ERROR',       label: 'Error en factura' },
+  { value: 'INVOICE_VOIDED',      label: 'Factura anulada' },
+  { value: 'INVOICE_CREATED',     label: 'Factura creada' },
+  { value: 'CERTIFICATE_EXPIRING','label': 'Cert. por vencer' },
+  { value: 'SEQUENCE_LOW',        label: 'Secuencia por agotarse' },
+  { value: 'DOCUMENT_RECEIVED',   label: 'Documento recibido' },
+] as const;
+
+type WebhookEventValue = typeof WEBHOOK_EVENTS[number]['value'];
+
+// ── Zod schemas ────────────────────────────────────────────────────────────────
+
+const createSchema = z.object({
+  url: z.string().url('Debe ser una URL válida (incluir https://)'),
+});
+
+const editSchema = z.object({
+  url: z.string().url('URL inválida').optional().or(z.literal('')),
+});
+
+// ── API helpers ────────────────────────────────────────────────────────────────
+
+async function fetchWebhooks(): Promise<WebhookSubscription[]> {
+  const res = await apiClient.get<{ data: WebhookSubscription[] }>('/webhooks');
   return res.data.data;
 }
 
-async function retryDelivery(id: string) {
-  const res = await apiClient.post(`/admin/webhooks/deliveries/${id}/retry`);
-  return res.data;
+async function fetchWebhookDetail(id: string): Promise<WebhookSubscription & { deliveries: WebhookDelivery[] }> {
+  const res = await apiClient.get<{ data: WebhookSubscription & { deliveries: WebhookDelivery[] } }>(`/webhooks/${id}`);
+  return res.data.data;
 }
 
-function statusCodeBadge(code: number | null | undefined) {
-  if (!code) return <Badge variant="secondary">Pending</Badge>;
-  if (code >= 200 && code < 300) return <Badge variant="success">{code}</Badge>;
-  return <Badge variant="destructive">{code}</Badge>;
+// ── EventPicker ────────────────────────────────────────────────────────────────
+
+function EventPicker({ selected, onChange }: { selected: string[]; onChange: (v: string[]) => void }) {
+  function toggle(event: string) {
+    onChange(selected.includes(event) ? selected.filter((e) => e !== event) : [...selected, event]);
+  }
+  return (
+    <div className="flex flex-wrap gap-2 rounded-lg border p-3">
+      {WEBHOOK_EVENTS.map(({ value, label }) => (
+        <button key={value} type="button" onClick={() => toggle(value)} className="focus:outline-none">
+          <Badge
+            variant={selected.includes(value) ? 'default' : 'outline'}
+            className="cursor-pointer hover:opacity-80 text-xs"
+          >
+            {label}
+          </Badge>
+        </button>
+      ))}
+    </div>
+  );
 }
+
+// ── SecretRevealDialog ─────────────────────────────────────────────────────────
+
+function SecretRevealDialog({ secret, onClose }: { secret: string; onClose: () => void }) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open && confirmed) onClose(); }}>
+      <DialogContent
+        className="max-w-md"
+        onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Webhook className="h-5 w-5" /> Webhook creado
+          </DialogTitle>
+          <DialogDescription>
+            Este secret solo se muestra <strong>una vez</strong>. Guardalo para verificar las firmas HMAC en header{' '}
+            <code>X-ECF-Signature</code>.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-lg bg-muted p-3 space-y-1">
+          <p className="text-xs text-muted-foreground">Secret HMAC</p>
+          <div className="flex items-center gap-2">
+            <code className="text-sm font-mono break-all flex-1">{secret}</code>
+            <button
+              type="button"
+              onClick={async () => { await navigator.clipboard.writeText(secret); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+            >
+              {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="rounded" />
+          Confirmé que guardé el secret
+        </label>
+        <DialogFooter>
+          <Button disabled={!confirmed} onClick={onClose}>Cerrar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function WebhooksPage() {
   const queryClient = useQueryClient();
-  const [page, setPage] = useState(1);
-  const [onlyFailed, setOnlyFailed] = useState(false);
-  const [selected, setSelected] = useState<WebhookDelivery | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<WebhookSubscription | null>(null);
+  const [revealSecret, setRevealSecret] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [createEvents, setCreateEvents] = useState<string[]>([]);
+  const [editEvents, setEditEvents] = useState<string[]>([]);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['admin', 'webhook-deliveries', page, onlyFailed],
-    queryFn: () => fetchDeliveries(page, onlyFailed),
+  const { data: webhooks = [], isLoading } = useQuery({
+    queryKey: ['my', 'webhooks'],
+    queryFn: fetchWebhooks,
   });
 
-  const retryMut = useMutation({
-    mutationFn: retryDelivery,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['admin', 'webhook-deliveries'] });
-      setSelected(null);
+  const { data: webhookDetail } = useQuery({
+    queryKey: ['my', 'webhook-detail', expandedId],
+    queryFn: () => fetchWebhookDetail(expandedId!),
+    enabled: !!expandedId,
+  });
+
+  const {
+    register: regCreate,
+    handleSubmit: handleCreate,
+    reset: resetCreate,
+    formState: { errors: createErrors },
+  } = useForm<{ url: string }>({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(createSchema) as any,
+  });
+
+  const {
+    register: regEdit,
+    handleSubmit: handleEdit,
+    formState: { errors: editErrors },
+  } = useForm<{ url?: string }>({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(editSchema) as any,
+  });
+
+  const createMut = useMutation({
+    mutationFn: async (data: { url: string }) => {
+      const res = await apiClient.post<{ data: WebhookCreated }>('/webhooks', {
+        url: data.url,
+        events: createEvents as WebhookEventValue[],
+      });
+      return res.data.data;
+    },
+    onSuccess: (data) => {
+      setCreateOpen(false);
+      resetCreate();
+      setCreateEvents([]);
+      setRevealSecret(data.secret);
+      void queryClient.invalidateQueries({ queryKey: ['my', 'webhooks'] });
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Error al crear el webhook';
+      toast.error(msg);
     },
   });
 
+  const editMut = useMutation({
+    mutationFn: async (data: { url?: string }) => {
+      await apiClient.patch(`/webhooks/${editTarget!.id}`, {
+        ...(data.url ? { url: data.url } : {}),
+        ...(editEvents.length > 0 ? { events: editEvents } : {}),
+      });
+    },
+    onSuccess: () => {
+      toast.success('Webhook actualizado');
+      setEditTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ['my', 'webhooks'] });
+    },
+    onError: () => toast.error('Error al actualizar el webhook'),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => apiClient.delete(`/webhooks/${id}`),
+    onSuccess: () => {
+      toast.success('Webhook eliminado');
+      void queryClient.invalidateQueries({ queryKey: ['my', 'webhooks'] });
+    },
+    onError: () => toast.error('Error al eliminar el webhook'),
+  });
+
+  const toggleMut = useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+      apiClient.patch(`/webhooks/${id}`, { isActive }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['my', 'webhooks'] }),
+    onError: () => toast.error('Error al cambiar estado'),
+  });
+
+  function handleDelete(id: string) {
+    if (!confirm('¿Eliminar este webhook y su historial? Esta acción no se puede deshacer.')) return;
+    deleteMut.mutate(id);
+  }
+
   return (
-    <div className="space-y-6 max-w-7xl">
+    <div className="space-y-6 max-w-5xl">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Webhook Deliveries</h1>
-          <p className="text-sm text-muted-foreground mt-1">{data ? `${fmtNumber(data.total)} entregas` : 'Cargando…'}</p>
+          <h1 className="text-2xl font-bold">Mis Webhooks</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Suscripciones para recibir notificaciones de eventos en tiempo real
+          </p>
         </div>
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" checked={onlyFailed} onChange={(e) => { setOnlyFailed(e.target.checked); setPage(1); }} className="rounded" />
-          Solo fallidas
-        </label>
+        <Button className="gap-2" onClick={() => { setCreateEvents([]); setCreateOpen(true); }}>
+          <Plus className="h-4 w-4" /> Nueva Suscripción
+        </Button>
       </div>
 
       <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Webhook className="h-5 w-5" /> Suscripciones
+          </CardTitle>
+        </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  {['URL', 'Evento', 'Status', 'Intentos', 'Entregado', 'Creado', 'Acciones'].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left font-medium text-muted-foreground">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {isLoading
-                  ? Array.from({ length: 6 }).map((_, i) => (
-                      <tr key={i} className="border-b">
-                        {Array.from({ length: 7 }).map((__, j) => <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td>)}
-                      </tr>
-                    ))
-                  : data?.items.map((d) => (
-                      <tr key={d.id} className="border-b hover:bg-muted/30">
-                        <td className="px-4 py-3 max-w-40 truncate text-xs font-mono">{d.url ?? '—'}</td>
-                        <td className="px-4 py-3"><Badge variant="outline">{d.event}</Badge></td>
-                        <td className="px-4 py-3">{statusCodeBadge(d.statusCode)}</td>
-                        <td className="px-4 py-3 text-center">{d.attempts}/{d.maxAttempts}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{d.deliveredAt ? fmtDateTime(d.deliveredAt) : '—'}</td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{fmtDateTime(d.createdAt)}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex gap-1">
-                            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelected(d)}>Ver</Button>
-                            {d.attempts >= d.maxAttempts && !d.deliveredAt && (
-                              <Button
-                                variant="outline" size="sm" className="h-7 text-xs gap-1"
-                                onClick={() => retryMut.mutate(d.id)}
-                                disabled={retryMut.isPending}
-                              >
-                                <RefreshCw className="h-3 w-3" /> Retry
-                              </Button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-              </tbody>
-            </table>
-          </div>
-          {data && data.totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t">
-              <p className="text-sm text-muted-foreground">Pág. {page} de {data.totalPages}</p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setPage((p) => p - 1)} disabled={page === 1}>Anterior</Button>
-                <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)} disabled={page >= data.totalPages}>Siguiente</Button>
-              </div>
+          {isLoading ? (
+            <div className="divide-y px-4">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div key={i} className="py-4"><Skeleton className="h-14" /></div>
+              ))}
+            </div>
+          ) : webhooks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+              <Webhook className="h-10 w-10 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">No tenés suscripciones configuradas.</p>
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4 mr-1" /> Crear suscripción
+              </Button>
+            </div>
+          ) : (
+            <div className="divide-y">
+              {webhooks.map((wh) => (
+                <div key={wh.id}>
+                  <div className="flex items-start justify-between px-4 py-3 gap-4">
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <code className="text-xs font-mono">{wh.url}</code>
+                        <Badge variant={wh.isActive ? 'success' : 'secondary'}>
+                          {wh.isActive ? 'Activo' : 'Inactivo'}
+                        </Badge>
+                        {wh.deliveryStats && (
+                          <span className="text-xs text-muted-foreground">
+                            <CheckCircle2 className="h-3 w-3 inline mr-0.5 text-green-500" />{wh.deliveryStats.success}
+                            <XCircle className="h-3 w-3 inline mx-1 text-destructive" />{wh.deliveryStats.failed}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {wh.events.slice(0, 5).map((e) => (
+                          <Badge key={e} variant="outline" className="text-[10px]">
+                            {WEBHOOK_EVENTS.find((ev) => ev.value === e)?.label ?? e}
+                          </Badge>
+                        ))}
+                        {wh.events.length > 5 && (
+                          <Badge variant="outline" className="text-[10px]">+{wh.events.length - 5}</Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs"
+                        onClick={() => setExpandedId(expandedId === wh.id ? null : wh.id)}
+                      >
+                        {expandedId === wh.id ? 'Ocultar' : 'Entregas'}
+                      </Button>
+                      <Switch
+                        checked={wh.isActive}
+                        onCheckedChange={(v) => toggleMut.mutate({ id: wh.id, isActive: v })}
+                      />
+                      <Button
+                        size="sm" variant="ghost" className="h-7 w-7 p-0"
+                        onClick={() => { setEditTarget(wh); setEditEvents([...wh.events]); }}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="sm" variant="ghost"
+                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                        onClick={() => handleDelete(wh.id)}
+                        disabled={deleteMut.isPending}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {expandedId === wh.id && (
+                    <div className="bg-muted/30 border-t px-4 py-3">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2">Últimas entregas</p>
+                      {!webhookDetail ? (
+                        <Skeleton className="h-8" />
+                      ) : !webhookDetail.deliveries?.length ? (
+                        <p className="text-xs text-muted-foreground">Sin entregas todavía</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {webhookDetail.deliveries.slice(0, 10).map((d) => (
+                            <div key={d.id} className="flex items-center gap-3 text-xs">
+                              {d.statusCode && d.statusCode >= 200 && d.statusCode < 300
+                                ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                                : <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />}
+                              <span className="text-muted-foreground font-mono">{d.statusCode ?? '—'}</span>
+                              <span className="font-medium">{d.event}</span>
+                              <span className="text-muted-foreground ml-auto">{fmtDateTime(d.createdAt)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Delivery detail modal */}
-      {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setSelected(null)}>
-          <div className="bg-background border rounded-xl shadow-xl max-w-2xl w-full max-h-[80vh] overflow-auto p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="font-bold text-lg">Delivery: {selected.id.slice(0, 8)}…</h2>
-              <Button variant="ghost" size="sm" onClick={() => setSelected(null)}>✕</Button>
+      {/* Create dialog */}
+      <Dialog open={createOpen} onOpenChange={(v) => { setCreateOpen(v); if (!v) resetCreate(); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Webhook className="h-5 w-5" /> Nueva Suscripción
+            </DialogTitle>
+            <DialogDescription>
+              Cada entrega incluye header <code>X-ECF-Signature: sha256=...</code> para verificar la autenticidad.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={handleCreate((d) => {
+              if (createEvents.length === 0) { toast.error('Seleccioná al menos un evento'); return; }
+              createMut.mutate(d);
+            })}
+            className="space-y-4"
+          >
+            <div className="space-y-1.5">
+              <Label>URL *</Label>
+              <Input placeholder="https://mi-sistema.com/webhooks/ecf" {...regCreate('url')} />
+              {createErrors.url && <p className="text-xs text-destructive">{createErrors.url.message}</p>}
             </div>
-            <div className="space-y-3 text-sm">
-              <div><span className="font-medium">Evento:</span> {selected.event}</div>
-              <div><span className="font-medium">URL:</span> <span className="font-mono text-xs">{selected.url}</span></div>
-              <div><span className="font-medium">Status:</span> {selected.statusCode ?? 'Sin respuesta'}</div>
-              <div><span className="font-medium">Intentos:</span> {selected.attempts}/{selected.maxAttempts}</div>
-              <div>
-                <p className="font-medium mb-1">Payload:</p>
-                <pre className="bg-muted rounded p-3 text-xs overflow-auto max-h-40">{selected.payload}</pre>
-              </div>
-              {selected.responseBody && (
-                <div>
-                  <p className="font-medium mb-1">Response:</p>
-                  <pre className="bg-muted rounded p-3 text-xs overflow-auto max-h-32">{selected.responseBody}</pre>
-                </div>
-              )}
-              {selected.attempts >= selected.maxAttempts && !selected.deliveredAt && (
-                <Button onClick={() => retryMut.mutate(selected.id)} disabled={retryMut.isPending} className="w-full gap-2">
-                  <RefreshCw className="h-4 w-4" />
-                  {retryMut.isPending ? 'Re-encolando…' : 'Forzar reintento'}
-                </Button>
-              )}
+            <div className="space-y-1.5">
+              <Label>Eventos *</Label>
+              <EventPicker selected={createEvents} onChange={setCreateEvents} />
+              {createEvents.length === 0 && <p className="text-xs text-muted-foreground">Seleccioná al menos un evento</p>}
             </div>
-          </div>
-        </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
+              <Button type="submit" disabled={createMut.isPending}>
+                {createMut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Crear Suscripción
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit dialog */}
+      <Dialog open={!!editTarget} onOpenChange={(v) => { if (!v) setEditTarget(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Editar Webhook</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleEdit((d) => editMut.mutate(d))} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>URL</Label>
+              <Input defaultValue={editTarget?.url} {...regEdit('url')} />
+              {editErrors.url && <p className="text-xs text-destructive">{editErrors.url.message}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Eventos</Label>
+              <EventPicker selected={editEvents} onChange={setEditEvents} />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditTarget(null)}>Cancelar</Button>
+              <Button type="submit" disabled={editMut.isPending}>
+                {editMut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Guardar cambios
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Secret reveal — copy once */}
+      {revealSecret && (
+        <SecretRevealDialog secret={revealSecret} onClose={() => setRevealSecret(null)} />
       )}
     </div>
   );
