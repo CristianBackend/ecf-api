@@ -920,3 +920,52 @@ Todos requieren scope `ADMIN`. Son cross-tenant — no filtran por el tenant del
 | Tests antes de Tarea 14 | 236 |
 | Tests después de Tarea 14 | **270** (+34) |
 | Spec files nuevos | 5 (metrics, tenants, invoices, webhooks, audit, health services) |
+
+---
+
+## Tarea 15 — Admin Dashboard
+
+### Commits
+
+| Subtarea | Descripción |
+|---|---|
+| 15.1 | feat(admin-ui): setup Next.js 14 project |
+| 15.2–15.9 (único) | feat(admin-ui): auth, layout, dashboard y todas las páginas |
+
+### Stack final
+
+Next.js 16.2.4 (App Router) · TypeScript estricto · Tailwind CSS · TanStack Query · Zustand (persisted) · React Hook Form + Zod · Recharts · Radix UI primitives · date-fns · lucide-react · next-themes
+
+### Decisiones técnicas
+
+**@radix-ui/react-badge no existe** en npm. Se implementó `Badge` como componente custom con CVA (class-variance-authority). Variantes: `default`, `secondary`, `destructive`, `outline`, `success`, `warning`, `info`.
+
+**Zustand auth store** persiste en `localStorage` con key `ecf-admin-auth`. El axios interceptor lee de ahí en cada request. En 401 → limpia store + redirige a /login.
+
+**LoggerModule last-imports** no afecta el dashboard (es frontend, sin NestJS).
+
+**`/admin/(protected)` route group** — todo el contenido protegido usa un layout que verifica `isAuthenticated()` de Zustand. Redirect a /login si no hay token. No hay SSR de datos privados (todo cliente).
+
+**Recharts types** — `Formatter` en Recharts espera `ValueType | undefined`, no `number`. Se usan `(v) => fmtNumber(Number(v))` para evitar errores de TypeScript estricto.
+
+**Turbopack multi-lockfile warning** — el repo tiene `package-lock.json` en la raíz (backend) y en `/admin/` (frontend). Turbopack detecta múltiples lockfiles y muestra warning. Silenciable con `turbopack.root` en `next.config.ts`, pero es solo informativo.
+
+**Páginas completadas:**
+- `/login` — form con RHF+Zod, gradient background, error inline
+- `/(protected)/layout` — sidebar colapsable + topbar con theme switcher + logout
+- `/dashboard` — KPIs, PieChart estados, BarChart tipos e-CF, alertas, queues
+- `/tenants` — tabla paginada con búsqueda/filtros, detalle en `/tenants/:id`
+- `/invoices` — búsqueda avanzada con 7 filtros, agregaciones de monto/ITBIS
+- `/webhooks` — deliveries con filtros, modal detalle, retry forzado
+- `/audit-logs` — tabla con filtros, modal con metadata JSON
+- `/health` — checks DB+Redis con latencia, chart histórico de 60 puntos, queues, scheduler, memoria
+
+### TODOs pendientes (UI)
+
+1. Crear/editar tenant desde la UI (el endpoint backend existe, falta el form completo)
+2. Upload de certificado .p12 desde la UI (convertir a Base64 + form passphrase)
+3. Generar API key y mostrar una sola vez con botón copy
+4. Buscador global en topbar
+5. Mobile sidebar (hamburger menu para < md breakpoint)
+6. Página `/settings` (actualmente disabled en sidebar)
+7. Infinito scroll vs paginación en tablas largas
