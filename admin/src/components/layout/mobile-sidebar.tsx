@@ -5,14 +5,15 @@ import { usePathname } from 'next/navigation';
 import { FileStack } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
-import { NAV_ITEMS } from './nav-items';
+import type { NavItem } from './nav-items';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  items: NavItem[];
 }
 
-export function MobileSidebar({ open, onOpenChange }: Props) {
+export function MobileSidebar({ open, onOpenChange, items }: Props) {
   const pathname = usePathname();
 
   return (
@@ -27,8 +28,8 @@ export function MobileSidebar({ open, onOpenChange }: Props) {
 
         <nav className="flex-1 overflow-y-auto py-4">
           <ul className="space-y-1 px-2">
-            {NAV_ITEMS.map(({ href, label, icon: Icon, disabled }) => {
-              const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href));
+            {items.map(({ href, label, icon: Icon, disabled }) => {
+              const active = pathname === href || (href !== '/dashboard' && href !== '/home' && pathname.startsWith(href));
               return (
                 <li key={href}>
                   <Link
