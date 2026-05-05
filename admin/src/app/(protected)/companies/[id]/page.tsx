@@ -82,9 +82,10 @@ async function fetchSequences(id: string): Promise<Sequence[]> {
   return res.data.data;
 }
 async function fetchInvoices(companyId: string): Promise<Invoice[]> {
-  // Backend returns { data: Invoice[], meta: { ... } } — not Paginated<T>
-  const res = await apiClient.get<{ data: { data: Invoice[] } }>(`/invoices?companyId=${companyId}&limit=50`);
-  return res.data.data.data ?? [];
+  // Backend response body: { success, data: Invoice[], meta: {...} }
+  // res.data = whole body; res.data.data = Invoice[]
+  const res = await apiClient.get<{ success: boolean; data: Invoice[]; meta: unknown }>(`/invoices?companyId=${companyId}&limit=50`);
+  return res.data.data ?? [];
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────

@@ -7,9 +7,11 @@ import { apiClient } from '@/lib/api-client';
 import { fmtDateTime, fmtMoney, fmtNumber } from '@/lib/utils';
 import type { Invoice, InvoiceStatus, EcfType, Company } from '@/types/api';
 
-// The tenant /invoices endpoint returns { data: Invoice[], meta: { total, page, limit, totalPages } }
-// NOT the standard Paginated<T> shape { items: T[], total, ... }
-interface TenantInvoiceList {
+// The tenant /invoices endpoint raw response body:
+//   { success: true, data: Invoice[], meta: { total, page, limit, totalPages } }
+// data and meta are siblings — meta is NOT nested inside data.
+interface TenantInvoiceResponse {
+  success: boolean;
   data: Invoice[];
   meta: { total: number; page: number; limit: number; totalPages: number };
 }
@@ -34,9 +36,10 @@ const LIMITS = [10, 25, 50, 100] as const;
 
 // ── API ────────────────────────────────────────────────────────────────────────
 
-async function fetchInvoices(params: URLSearchParams): Promise<TenantInvoiceList> {
-  const res = await apiClient.get<{ data: TenantInvoiceList }>(`/invoices?${params}`);
-  return res.data.data;
+async function fetchInvoices(params: URLSearchParams): Promise<TenantInvoiceResponse> {
+  // res.data IS { success, data: Invoice[], meta: {...} } — return it whole
+  const res = await apiClient.get<TenantInvoiceResponse>(`/invoices?${params}`);
+  return res.data;
 }
 
 async function fetchCompanies(): Promise<Company[]> {
