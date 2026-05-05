@@ -5,7 +5,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { fmtDateTime, fmtMoney, fmtNumber } from '@/lib/utils';
-import type { Invoice, Paginated, InvoiceStatus, EcfType, Company } from '@/types/api';
+import type { Invoice, InvoiceStatus, EcfType, Company } from '@/types/api';
+
+// The tenant /invoices endpoint returns { data: Invoice[], meta: { total, page, limit, totalPages } }
+// NOT the standard Paginated<T> shape { items: T[], total, ... }
+interface TenantInvoiceList {
+  data: Invoice[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
+}
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,8 +34,8 @@ const LIMITS = [10, 25, 50, 100] as const;
 
 // ── API ────────────────────────────────────────────────────────────────────────
 
-async function fetchInvoices(params: URLSearchParams): Promise<Paginated<Invoice>> {
-  const res = await apiClient.get<{ data: Paginated<Invoice> }>(`/invoices?${params}`);
+async function fetchInvoices(params: URLSearchParams): Promise<TenantInvoiceList> {
+  const res = await apiClient.get<{ data: TenantInvoiceList }>(`/invoices?${params}`);
   return res.data.data;
 }
 
@@ -85,7 +92,7 @@ export default function InvoicesPage() {
       <div>
         <h1 className="text-2xl font-bold">Mis Facturas</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {data ? `${fmtNumber(data.total)} factura${data.total !== 1 ? 's' : ''} encontrada${data.total !== 1 ? 's' : ''}` : 'Cargando…'}
+          {data ? `${fmtNumber(data.meta.total)} factura${data.meta.total !== 1 ? 's' : ''} encontrada${data.meta.total !== 1 ? 's' : ''}` : 'Cargando…'}
         </p>
       </div>
 
@@ -193,14 +200,14 @@ export default function InvoicesPage() {
                         ))}
                       </tr>
                     ))
-                  : data?.items.length === 0 ? (
+                  : data?.data.length === 0 ? (
                       <tr>
                         <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
                           No se encontraron facturas{hasFilters ? ' con los filtros aplicados' : ''}.
                         </td>
                       </tr>
                     )
-                  : data?.items.map((inv) => (
+                  : data?.data.map((inv) => (
                       <tr
                         key={inv.id}
                         className="border-b hover:bg-muted/30 cursor-pointer transition-colors"
@@ -229,16 +236,16 @@ export default function InvoicesPage() {
           </div>
 
           {/* Pagination */}
-          {data && data.totalPages > 1 && (
+          {data && data.meta.totalPages > 1 && (
             <div className="flex items-center justify-between px-4 py-3 border-t">
               <p className="text-sm text-muted-foreground">
-                Pág. {page} de {data.totalPages} · {fmtNumber(data.total)} facturas
+                Pág. {page} de {data.meta.totalPages} · {fmtNumber(data.meta.total)} facturas
               </p>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => setPage((p) => p - 1)} disabled={page === 1}>
                   Anterior
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)} disabled={page >= data.totalPages}>
+                <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)} disabled={page >= data.meta.totalPages}>
                   Siguiente
                 </Button>
               </div>

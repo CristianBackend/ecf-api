@@ -12,7 +12,7 @@ import {
 import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { fmtDate, fmtDateTime, fmtMoney, fmtNumber } from '@/lib/utils';
-import type { Company, Certificate, Sequence, Invoice, Paginated } from '@/types/api';
+import type { Company, Certificate, Sequence, Invoice } from '@/types/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -82,8 +82,9 @@ async function fetchSequences(id: string): Promise<Sequence[]> {
   return res.data.data;
 }
 async function fetchInvoices(companyId: string): Promise<Invoice[]> {
-  const res = await apiClient.get<{ data: Paginated<Invoice> }>(`/invoices?companyId=${companyId}&limit=50`);
-  return res.data.data.items ?? [];
+  // Backend returns { data: Invoice[], meta: { ... } } — not Paginated<T>
+  const res = await apiClient.get<{ data: { data: Invoice[] } }>(`/invoices?companyId=${companyId}&limit=50`);
+  return res.data.data.data ?? [];
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
