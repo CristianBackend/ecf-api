@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, RequestMethod } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from 'nestjs-pino';
@@ -33,9 +33,17 @@ async function bootstrap() {
     exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining', 'X-RateLimit-Reset'],
   });
 
-  // Global prefix
+  // Global prefix — DGII-mandated /fe/* endpoints are excluded so they are
+  // reachable at /fe/... without the /api/v1 prefix, as the spec requires.
   const prefix = configService.get<string>('API_PREFIX', 'api/v1');
-  app.setGlobalPrefix(prefix);
+  app.setGlobalPrefix(prefix, {
+    exclude: [
+      { path: 'fe/autenticacion/api/semilla',            method: RequestMethod.GET },
+      { path: 'fe/autenticacion/api/validacioncertificado', method: RequestMethod.POST },
+      { path: 'fe/recepcion/api/ecf',                    method: RequestMethod.POST },
+      { path: 'fe/aprobacioncomercial/api/ecf',          method: RequestMethod.POST },
+    ],
+  });
 
   // Global pipes
   app.useGlobalPipes(
