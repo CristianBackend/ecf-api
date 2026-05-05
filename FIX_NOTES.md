@@ -1147,3 +1147,49 @@ Retrocompatible: todos los tenants existentes quedan con must_change_password = 
 - [ ] /companies/:id tab Facturas: click en fila abre InvoiceDetailDrawer pero no cierra el tab (comportamiento correcto). Verificar que el drawer se posiciona correctamente sobre los 4 tabs.
 - [ ] 18.5 — /admin/tenants/new (crear tenant como super-admin)
 - [ ] 18.6 — useRequireScope hook + ocultar ADMIN scope en componentes
+
+
+---
+
+## DGII path fix
+
+### Commit: `26b702b`
+
+### Problema
+DGII requiere que los endpoints de comunicación inter-contribuyente estén en:
+- GET  /fe/autenticacion/api/semilla
+- POST /fe/autenticacion/api/validacioncertificado
+- POST /fe/recepcion/api/ecf
+- POST /fe/aprobacioncomercial/api/ecf
+
+El global prefix `api/v1` hacía que esos endpoints quedaran en `/api/v1/fe/...`, rompiendo la integración DGII.
+
+### Solución
+`app.setGlobalPrefix('api/v1', { exclude: [...] })` en `src/main.ts`. Los 4 endpoints DGII están en la lista de exclusión con sus métodos exactos (`RequestMethod.GET` / `RequestMethod.POST`).
+
+El `@Controller('fe')` en `FeReceptorController` NO se modificó — el controller registra sus rutas sin prefix; el prefix exclusion hace que NestJS no les aplique el `api/v1` al resolver el routing.
+
+### Comportamiento resultante
+| Path | Antes | Después |
+|---|---|---|
+| `/api/v1/fe/autenticacion/api/semilla` | 200 | **404** |
+| `/fe/autenticacion/api/semilla` | 404 | **200** |
+| `/api/v1/health` | 200 | 200 (sin cambios) |
+| `/api/v1/companies` | 200 | 200 (sin cambios) |
+
+### Swagger
+Los endpoints `/fe/*` siguen apareciendo en Swagger (/docs). El `DocumentBuilder` los refleja desde los decoradores del controller, no de la config de prefix. Las rutas en la UI de Swagger mostrarán `/fe/...` (sin `/api/v1`).
+
+### Tests
+- 6 tests nuevos en `src/reception/fe-receptor.paths.spec.ts`
+- Patrón: `Test.createTestingModule` + `createNestApplication` + `supertest` (sin DB/Redis real)
+- `supertest` instalado como devDependency (`npm install --save-dev supertest @types/supertest`)
+- 324 → 330 tests, 0 rotos
+
+### Decisión de diseño
+Se eligió `setGlobalPrefix exclude` en lugar de:
+1. `@Controller({ path: 'fe', host: '...' })` — más invasivo, requiere cambios en el controller
+2. Middleware de reescritura de paths — frágil y difícil de mantener
+3. Nginx rewrite rules — no está en alcance de este PR, y el servidor puede no tener Nginx
+
+La solución nativa de NestJS es la más mantenible y es la que recomienda la documentación oficial.
