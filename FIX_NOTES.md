@@ -1222,3 +1222,98 @@ Hardcodeadas en el frontend (STARTER: hasta 1000 facturas/mes, etc.). TODO: si e
 
 **Protección de ruta**
 `useEffect` con `isSuperAdmin === false` redirige a `/home`. El valor viene del Zustand store (persistido). En el primer render del servidor `isSuperAdmin` es `false` hasta la hidratación → puede haber un flash. El layout general ya muestra spinner hasta `_hasHydrated`, así que este efecto solo corre cuando el store ya hidró.
+
+
+---
+
+## Tarea D.1 — Billing manual
+
+### Commits
+
+| Subtarea | Commit | Descripción |
+|---|---|---|
+| D.1.1 | `5fc923c` | feat(billing): BillingPlan, TenantPlan, MonthlyUsage models + seed |
+| D.1.2 | `4e35abd` | feat(billing): BillingService (canEmitInvoice, usage, expireStalePlans) |
+| D.1.3 | `653d998` | feat(billing): ActivePlanGuard + atomic counter in invoice creation |
+| D.1.4 | `732f5b8` | feat(billing): Admin plan management endpoints + billing dashboard |
+| D.1.5 | `c99e9a0` | feat(billing): GET /tenants/me/usage (tenant billing usage endpoint) |
+| D.1.6 | `25d6081` | feat(billing): Hourly cron job to expire stale plans |
+| D.1.7 | `f2aa149` | feat(billing): POST /admin/tenants accepts optional planCode |
+
+### Decisiones técnicas
+
+**D.1.1 — BillingPlan vs Plan (conflicto de nombres)**
+
+La especificación pide `model Plan`, pero el schema ya tiene `enum Plan`
+(STARTER/BUSINESS/ENTERPRISE/PLATFORM). Prisma no permite que un modelo y
+un enum compartan el mismo nombre. Decisión: el nuevo modelo se llama
+`BillingPlan` (@@map("billing_plans")). Todo el código de la app lo referencia
+como `BillingPlan`. El `enum Plan` y el campo `Tenant.plan` quedan marcados
+como `@deprecated` pero intactos — se eliminan en una tarea posterior.
+
+**D.1.2 — Tipo de parámetro tx en incrementInvoiceCount**
+
+Se usa `Prisma.TransactionClient` (exportado por `@prisma/client`) como tipo
+del parámetro opcional `tx`. `PrismaService` extiende `PrismaClient` que es
+un supertipo de `Prisma.TransactionClient`, por lo que `this.prisma` pasa
+type-checking cuando se usa `tx ?? this.prisma`. Sin `any`.
+
+**D.1.3 — Transacción en InvoicesService.create**
+
+Antes el método hacía múltiples writes secuenciales sin transacción. Ahora
+`invoice.create`, `invoiceLine.createMany`, `auditLog.create` y
+`billingService.incrementInvoiceCount(tx)` están todos dentro de un
+`prisma.$transaction`. Si cualquier write falla (ej: constraint de
+`idempotencyKey`), el contador de billing NO se incrementa. Los calls
+externos (BullMQ enqueue, webhook emit) quedan fuera de la transacción.
+
+**D.1.3 — Incremento atómico (no read-then-update)**
+
+`incrementInvoiceCount` usa `monthlyUsage.upsert` con
+`update: { invoicesCount: { increment: 1 } }` para manejar requests
+concurrentes sin race conditions. Si 100 facturas se emiten en paralelo, el
+contador llega exactamente a 100. Cumple el criterio (d) de la consigna.
+
+**D.1.4 — $transaction en activatePlan**
+
+`activatePlan` usa `prisma.$transaction([...])` (batch sequential) para
+hacer el UPDATE del TenantPlan y el CREATE del MonthlyUsage de forma
+atómica. Si la creación del MonthlyUsage falla, el plan no queda ACTIVE sin
+su counter.
+
+**D.1.5 — getTenantUsageSummary en BillingService, no en TenantsService**
+
+La lógica de billing vive en `BillingService`. El `TenantsController` inyecta
+`BillingService` directamente (TenantsModule importa BillingModule). Evita
+duplicar la lógica o hacer que TenantsService dependa de billing.
+
+**D.1.6 — BillingScheduler en BillingModule**
+
+El cron de expiración vive en `BillingModule` (no en `SchedulerModule`) para
+mantener el módulo de billing autónomo. El lock TTL es 5 minutos (la tarea
+debería tardar < 1 segundo en producción normal).
+
+**D.1.7 — Backwards compatible**
+
+El campo `planCode` es opcional. Si está ausente, el comportamiento es
+idéntico al de antes de D.1 — se crea el tenant sin TenantPlan. El response
+solo incluye `tenantPlan` cuando se creó uno.
+
+### Tests: antes vs. después
+
+| | Cantidad |
+|---|---|
+| Tests antes de Tarea D.1 | 330 |
+| Tests después de Tarea D.1 | **377** (+47) |
+| Spec files nuevos | 4 (billing.service, active-plan.guard, admin-plans.service, billing.scheduler) |
+
+### Edge cases cubiertos
+
+1. Plan con `invoicesCount === includedInvoices` (exactamente en el límite) → bloqueado
+2. Plan expirado → `getActivePlan` filtra con `expiresAt > now` → devuelve null → bloqueado
+3. Plan PENDING_PAYMENT → `getActivePlan` filtra por status=ACTIVE → bloqueado
+4. `incrementInvoiceCount` con plan sin MonthlyUsage → upsert crea el registro (no crash)
+5. 100 facturas concurrentes → `{ increment: 1 }` atómico en Postgres → no race condition
+6. Falla en DB dentro de la transacción → billing counter hace rollback automático
+7. `expireStalePlans` sin planes vencidos → updateMany count=0, no log spam
+8. `BillingScheduler` con lock no adquirido → `expireStalePlans` no se llama
