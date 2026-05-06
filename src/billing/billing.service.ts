@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { Prisma, TenantPlanStatus } from '@prisma/client';
+import { ApiKeyScope, Prisma, TenantPlanStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -107,10 +107,31 @@ export class BillingService {
   }
 
   /**
+   * Returns true if the tenant has at least one active API key with the ADMIN
+   * scope. Super-admins are exempt from all billing restrictions.
+   */
+  async isExemptFromBilling(tenantId: string): Promise<boolean> {
+    const adminKey = await this.prisma.apiKey.findFirst({
+      where: {
+        tenantId,
+        isActive: true,
+        scopes: { has: ApiKeyScope.ADMIN },
+      },
+    });
+    return adminKey !== null;
+  }
+
+  /**
    * Returns the full usage summary for the GET /tenants/me/usage endpoint.
+   * Super-admins get { isExemptFromBilling: true } — no plan required.
    * Tenants with no active plan get hasActivePlan=false and status='NO_PLAN'.
    */
   async getTenantUsageSummary(tenantId: string) {
+    const isExempt = await this.isExemptFromBilling(tenantId);
+    if (isExempt) {
+      return { isExemptFromBilling: true };
+    }
+
     // Check the most recent TenantPlan (any status) to give a meaningful status
     const latestPlan = await this.prisma.tenantPlan.findFirst({
       where: { tenantId },

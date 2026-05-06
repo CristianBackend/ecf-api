@@ -1,4 +1,5 @@
 import { Injectable, CanActivate, ExecutionContext, HttpException, HttpStatus } from '@nestjs/common';
+import { ApiKeyScope } from '@prisma/client';
 import { BillingService } from '../billing.service';
 
 /**
@@ -6,7 +7,10 @@ import { BillingService } from '../billing.service';
  * Returns HTTP 402 Payment Required when the tenant has no active billing plan
  * or has exhausted its included-invoices quota for the current period.
  *
- * Must run after ApiKeyGuard (which populates request.tenant).
+ * Super-admins (scope ADMIN on the current request) are exempt — they can
+ * always emit invoices regardless of plan status.
+ *
+ * Must run after ApiKeyGuard (which populates request.tenant with scopes).
  */
 @Injectable()
 export class ActivePlanGuard implements CanActivate {
@@ -14,8 +18,14 @@ export class ActivePlanGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const tenantId: string = request.tenant?.id;
+    const scopes: string[] = request.tenant?.scopes ?? [];
 
+    // Super-admins are exempt from billing restrictions.
+    if (scopes.includes(ApiKeyScope.ADMIN)) {
+      return true;
+    }
+
+    const tenantId: string = request.tenant?.id;
     const { allowed, reason } = await this.billingService.canEmitInvoice(tenantId);
 
     if (!allowed) {

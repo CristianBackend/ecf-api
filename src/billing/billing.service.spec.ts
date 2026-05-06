@@ -43,6 +43,9 @@ function makePrisma() {
       upsert: jest.fn().mockResolvedValue({}),
       update: jest.fn().mockResolvedValue({}),
     },
+    apiKey: {
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
   };
 }
 
@@ -177,9 +180,37 @@ describe('BillingService', () => {
     expect(prisma.monthlyUsage.upsert).not.toHaveBeenCalled(); // main prisma not used
   });
 
+  // ── isExemptFromBilling ─────────────────────────────────────────────────────
+
+  it('isExemptFromBilling returns true when tenant has an active ADMIN key', async () => {
+    prisma.apiKey.findFirst.mockResolvedValue({ id: 'key-1', scopes: ['ADMIN'] });
+    const result = await service.isExemptFromBilling('tenant-admin');
+    expect(result).toBe(true);
+    expect(prisma.apiKey.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ tenantId: 'tenant-admin', isActive: true }),
+      }),
+    );
+  });
+
+  it('isExemptFromBilling returns false when tenant has no ADMIN key', async () => {
+    prisma.apiKey.findFirst.mockResolvedValue(null);
+    const result = await service.isExemptFromBilling('tenant-1');
+    expect(result).toBe(false);
+  });
+
   // ── getTenantUsageSummary ───────────────────────────────────────────────────
 
-  it('getTenantUsageSummary returns full usage when plan is active', async () => {
+  it('getTenantUsageSummary returns { isExemptFromBilling: true } for super-admins', async () => {
+    prisma.apiKey.findFirst.mockResolvedValue({ id: 'key-admin', scopes: ['ADMIN'] });
+    const result = await service.getTenantUsageSummary('admin-tenant');
+    expect(result).toEqual({ isExemptFromBilling: true });
+    // Should not query tenantPlan at all — exempt path short-circuits
+    expect(prisma.tenantPlan.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('getTenantUsageSummary returns full usage when plan is active (non-admin)', async () => {
+    prisma.apiKey.findFirst.mockResolvedValue(null); // not exempt
     const usage = { invoicesCount: 750 };
     const activeTenantPlan = {
       ...ACTIVE_TENANT_PLAN,
@@ -197,6 +228,7 @@ describe('BillingService', () => {
   });
 
   it('getTenantUsageSummary returns NO_PLAN status when tenant has no plans', async () => {
+    prisma.apiKey.findFirst.mockResolvedValue(null);
     prisma.tenantPlan.findFirst.mockResolvedValue(null);
     const result = await service.getTenantUsageSummary('tenant-1');
     expect(result.hasActivePlan).toBe(false);
@@ -206,6 +238,7 @@ describe('BillingService', () => {
   });
 
   it('getTenantUsageSummary returns PENDING_PAYMENT when plan not activated', async () => {
+    prisma.apiKey.findFirst.mockResolvedValue(null);
     prisma.tenantPlan.findFirst.mockResolvedValue({
       ...ACTIVE_TENANT_PLAN,
       status: TenantPlanStatus.PENDING_PAYMENT,
@@ -218,6 +251,7 @@ describe('BillingService', () => {
   });
 
   it('getTenantUsageSummary returns EXPIRED when plan has expired', async () => {
+    prisma.apiKey.findFirst.mockResolvedValue(null);
     prisma.tenantPlan.findFirst.mockResolvedValue({
       ...ACTIVE_TENANT_PLAN,
       status: TenantPlanStatus.EXPIRED,
