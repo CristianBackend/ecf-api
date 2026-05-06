@@ -96,6 +96,13 @@ enum ApiKeyScope {
   FULL_ACCESS
 }
 
+enum TenantPlanStatus {
+  PENDING_PAYMENT
+  ACTIVE
+  EXPIRED
+  CANCELED
+}
+
 // ===========================================
 // CORE TABLES
 // ===========================================
@@ -105,6 +112,7 @@ model Tenant {
   name         String   @db.VarChar(200)
   email        String   @unique @db.VarChar(320)
   passwordHash String?  @map("password_hash") @db.VarChar(255)
+  /// @deprecated — use TenantPlan instead
   plan         Plan     @default(STARTER)
   isActive           Boolean  @default(true) @map("is_active")
   mustChangePassword Boolean  @default(false) @map("must_change_password")
@@ -113,12 +121,14 @@ model Tenant {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   // Relations
-  companies    Company[]
-  buyers       Buyer[]
-  apiKeys      ApiKey[]
-  webhooks     WebhookSubscription[]
-  auditLogs    AuditLog[]
+  companies     Company[]
+  buyers        Buyer[]
+  apiKeys       ApiKey[]
+  webhooks      WebhookSubscription[]
+  auditLogs     AuditLog[]
   receivedDocuments ReceivedDocument[]
+  tenantPlans   TenantPlan[]
+  monthlyUsages MonthlyUsage[]
 
   @@map("tenants")
 }
@@ -573,4 +583,64 @@ model ReceivedDocument {
   @@index([companyId])
   @@unique([companyId, encf])
   @@map("received_documents")
+}
+
+// ===========================================
+// BILLING
+// Model is named BillingPlan (not Plan) to avoid collision with the
+// pre-existing Plan enum (STARTER / BUSINESS / ENTERPRISE / PLATFORM).
+// ===========================================
+
+model BillingPlan {
+  id               String   @id @default(uuid()) @db.Uuid
+  code             String   @unique                      // TIER_1 … TIER_4
+  name             String
+  monthlyFee       Decimal  @map("monthly_fee") @db.Decimal(10, 2)
+  includedInvoices Int      @map("included_invoices")
+  description      String?
+  isActive         Boolean  @default(true) @map("is_active")
+  sortOrder        Int      @default(0) @map("sort_order")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  tenantPlans TenantPlan[]
+
+  @@map("billing_plans")
+}
+
+model TenantPlan {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String           @map("tenant_id") @db.Uuid
+  planId      String           @map("plan_id") @db.Uuid
+  status      TenantPlanStatus
+  activatedAt DateTime?        @map("activated_at")
+  expiresAt   DateTime?        @map("expires_at")
+  notes       String?
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan         BillingPlan  @relation(fields: [planId], references: [id])
+  monthlyUsage MonthlyUsage?
+
+  @@index([tenantId, status])
+  @@index([expiresAt])
+  @@map("tenant_plans")
+}
+
+model MonthlyUsage {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  tenantPlanId  String   @unique @map("tenant_plan_id") @db.Uuid
+  periodStart   DateTime @map("period_start")
+  periodEnd     DateTime @map("period_end")
+  invoicesCount Int      @default(0) @map("invoices_count")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenantPlan TenantPlan @relation(fields: [tenantPlanId], references: [id])
+
+  @@index([tenantId, periodEnd])
+  @@map("monthly_usages")
 }
