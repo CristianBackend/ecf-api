@@ -17,6 +17,8 @@ import { AdminAuditController } from './admin-audit.controller';
 import { AdminAuditService } from './admin-audit.service';
 import { AdminHealthController } from './admin-health.controller';
 import { AdminHealthService } from './admin-health.service';
+import { AdminPlansController } from './admin-plans.controller';
+import { AdminPlansService } from './admin-plans.service';
 
 @Module({
   imports: [
@@ -32,6 +34,7 @@ import { AdminHealthService } from './admin-health.service';
     AdminWebhooksController,
     AdminAuditController,
     AdminHealthController,
+    AdminPlansController,
   ],
   providers: [
     MetricsService,
@@ -40,6 +43,7 @@ import { AdminHealthService } from './admin-health.service';
     AdminWebhooksService,
     AdminAuditService,
     AdminHealthService,
+    AdminPlansService,
   ],
 })
 export class AdminModule {}
