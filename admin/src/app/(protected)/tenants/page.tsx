@@ -12,7 +12,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { CreateTenantDialog } from '@/components/tenants/create-tenant-dialog';
 
 async function fetchTenants(page: number, limit: number, search: string, plan: string, isActive: string) {
   const params = new URLSearchParams({ page: String(page), limit: String(limit) });
@@ -34,7 +33,6 @@ export default function TenantsPage() {
   const [plan, setPlan] = useState('');
   const [isActive, setIsActive] = useState('');
   const [page, setPage] = useState(1);
-  const [createOpen, setCreateOpen] = useState(false);
   const limit = 20;
 
   // Debounce
@@ -61,10 +59,10 @@ export default function TenantsPage() {
             {data ? `${fmtNumber(data.total)} tenants registrados` : 'Cargando…'}
           </p>
         </div>
-        <Button className="gap-2" onClick={() => setCreateOpen(true)}>
+        {/* Navigate to dedicated creation page (POST /admin/tenants, not /tenants/register) */}
+        <Button className="gap-2" onClick={() => router.push('/tenants/new')}>
           <Plus className="h-4 w-4" /> Nuevo Tenant
         </Button>
-        <CreateTenantDialog open={createOpen} onOpenChange={setCreateOpen} />
       </div>
 
       {/* Filters */}
