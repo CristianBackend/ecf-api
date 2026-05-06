@@ -16,6 +16,7 @@ import { XsdValidationService } from '../validation/xsd-validation.service';
 import { RncValidationService } from '../common/services/rnc-validation.service';
 import { QueueService } from '../queue/queue.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { BillingService } from '../billing/billing.service';
 import { CreateInvoiceDto, TYPES_REQUIRING_RNC } from './dto/invoice.dto';
 import { InvoiceStatus, EcfType, WebhookEvent } from '@prisma/client';
 import {
@@ -38,6 +39,7 @@ export class InvoicesService {
     private readonly rncValidation: RncValidationService,
     private readonly queueService: QueueService,
     private readonly webhooksService: WebhooksService,
+    private readonly billingService: BillingService,
     @InjectPinoLogger(InvoicesService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -168,71 +170,84 @@ export class InvoicesService {
 
     const isRfce = typeCode === 32 && totals.totalAmount < FC_FULL_SUBMISSION_THRESHOLD;
 
-    const invoice = await this.prisma.invoice.create({
-      data: {
-        tenantId,
-        companyId: dto.companyId,
-        ecfType,
-        encf,
-        status: InvoiceStatus.QUEUED,
-        buyerRnc: dto.buyer.rnc,
-        buyerName: dto.buyer.name,
-        buyerEmail: dto.buyer.email,
-        subtotal: totals.subtotalBeforeTax,
-        totalDiscount: totals.totalDiscount,
-        totalItbis: totals.totalItbis,
-        totalIsc: totals.totalIsc,
-        totalAmount: totals.totalAmount,
-        paymentType: dto.payment.type,
-        referenceEncf: dto.reference?.encf,
-        referenceDate: dto.reference?.date ? new Date(dto.reference.date) : undefined,
-        referenceModCode: dto.reference?.modificationCode,
-        isRfce,
-        currency: dto.currency?.code || 'DOP',
-        exchangeRate: dto.currency?.exchangeRate,
-        xmlUnsigned: unsignedXml,
-        idempotencyKey: dto.idempotencyKey,
-        // Dedicated structured columns (avoid fragile metadata._originalDto reads in pdf.service)
-        vendorRnc: ecfType === EcfType.E41 ? (dto.buyer.rnc || null) : null,
-        vendorName: ecfType === EcfType.E41 ? (dto.buyer.name || null) : null,
-        transportInfo: ecfType === EcfType.E46 && dto.transport ? dto.transport as any : null,
-        exportInfo: ecfType === EcfType.E46 && dto.additionalInfo ? dto.additionalInfo as any : null,
-        foreignBeneficiaryInfo: ecfType === EcfType.E47 && dto.foreignBeneficiary ? dto.foreignBeneficiary as any : null,
-        retentionAmount: dto.retentionAmount ?? null,
-        metadata: { ...dto.metadata, _originalDto: dto } as any,
-      },
-    });
-
-    await this.prisma.invoiceLine.createMany({
-      data: dto.items.map((item, index) => {
-        const lineSubtotal = item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0);
-        const rate = item.itbisRate ?? 18;
-        const itbisAmount = lineSubtotal * (rate / 100);
-
-        return {
+    // Wrap DB writes + billing counter in a single transaction so the counter
+    // rolls back if any write fails (e.g. DB constraint on idempotency key).
+    const invoice = await this.prisma.$transaction(async (tx) => {
+      const inv = await tx.invoice.create({
+        data: {
           tenantId,
-          invoiceId: invoice.id,
-          lineNumber: index + 1,
-          description: item.description,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          discount: item.discount || 0,
-          itbisRate: rate,
-          itbisAmount: Math.round(itbisAmount * 100) / 100,
-          iscAmount: 0,
-          subtotal: Math.round(lineSubtotal * 100) / 100,
-          additionalTaxCode: item.additionalTaxCode || null,
-          additionalTaxRate: item.additionalTaxRate || null,
-          goodService: item.goodService || 1,
-        };
-      }),
-    });
+          companyId: dto.companyId,
+          ecfType,
+          encf,
+          status: InvoiceStatus.QUEUED,
+          buyerRnc: dto.buyer.rnc,
+          buyerName: dto.buyer.name,
+          buyerEmail: dto.buyer.email,
+          subtotal: totals.subtotalBeforeTax,
+          totalDiscount: totals.totalDiscount,
+          totalItbis: totals.totalItbis,
+          totalIsc: totals.totalIsc,
+          totalAmount: totals.totalAmount,
+          paymentType: dto.payment.type,
+          referenceEncf: dto.reference?.encf,
+          referenceDate: dto.reference?.date ? new Date(dto.reference.date) : undefined,
+          referenceModCode: dto.reference?.modificationCode,
+          isRfce,
+          currency: dto.currency?.code || 'DOP',
+          exchangeRate: dto.currency?.exchangeRate,
+          xmlUnsigned: unsignedXml,
+          idempotencyKey: dto.idempotencyKey,
+          // Dedicated structured columns (avoid fragile metadata._originalDto reads in pdf.service)
+          vendorRnc: ecfType === EcfType.E41 ? (dto.buyer.rnc || null) : null,
+          vendorName: ecfType === EcfType.E41 ? (dto.buyer.name || null) : null,
+          transportInfo: ecfType === EcfType.E46 && dto.transport ? dto.transport as any : null,
+          exportInfo: ecfType === EcfType.E46 && dto.additionalInfo ? dto.additionalInfo as any : null,
+          foreignBeneficiaryInfo: ecfType === EcfType.E47 && dto.foreignBeneficiary ? dto.foreignBeneficiary as any : null,
+          retentionAmount: dto.retentionAmount ?? null,
+          metadata: { ...dto.metadata, _originalDto: dto } as any,
+        },
+      });
 
-    await this.createAuditLog(tenantId, 'invoice', invoice.id, 'queued', {
-      encf,
-      ecfType,
-      isRfce,
-      totalAmount: totals.totalAmount,
+      await tx.invoiceLine.createMany({
+        data: dto.items.map((item, index) => {
+          const lineSubtotal = item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0);
+          const rate = item.itbisRate ?? 18;
+          const itbisAmount = lineSubtotal * (rate / 100);
+
+          return {
+            tenantId,
+            invoiceId: inv.id,
+            lineNumber: index + 1,
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            discount: item.discount || 0,
+            itbisRate: rate,
+            itbisAmount: Math.round(itbisAmount * 100) / 100,
+            iscAmount: 0,
+            subtotal: Math.round(lineSubtotal * 100) / 100,
+            additionalTaxCode: item.additionalTaxCode || null,
+            additionalTaxRate: item.additionalTaxRate || null,
+            goodService: item.goodService || 1,
+          };
+        }),
+      });
+
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          entityType: 'invoice',
+          entityId: inv.id,
+          action: 'queued',
+          actor: 'api',
+          metadata: { encf, ecfType, isRfce, totalAmount: totals.totalAmount },
+        },
+      });
+
+      // Increment billing counter inside the same transaction for atomicity.
+      await this.billingService.incrementInvoiceCount(tenantId, tx);
+
+      return inv;
     });
 
     await this.queueService.enqueueEcfProcessing({

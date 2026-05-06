@@ -59,7 +59,7 @@ function makeCompany() {
 }
 
 function makeMocks() {
-  const prisma = {
+  const prisma: any = {
     invoice: {
       findUnique: jest.fn() as Mock,
       findFirst: jest.fn() as Mock,
@@ -80,7 +80,15 @@ function makeMocks() {
     auditLog: {
       create: jest.fn() as Mock,
     },
+    tenantPlan: {
+      findFirst: jest.fn() as Mock,
+    },
+    monthlyUsage: {
+      upsert: jest.fn() as Mock,
+    },
   };
+  // $transaction executes the callback with prisma itself acting as the tx client
+  prisma.$transaction = jest.fn((fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
 
   const xmlBuilder = {
     buildEcfXml: jest.fn(() => ({
@@ -123,6 +131,10 @@ function makeMocks() {
   const certificatesService: any = {};
   const validationService: any = {};
 
+  const billingService = {
+    incrementInvoiceCount: jest.fn().mockResolvedValue(undefined) as Mock,
+  };
+
   return {
     prisma,
     xmlBuilder,
@@ -135,6 +147,7 @@ function makeMocks() {
     dgiiService,
     certificatesService,
     validationService,
+    billingService,
   };
 }
 
@@ -151,6 +164,7 @@ function buildService(mocks: ReturnType<typeof makeMocks>) {
     mocks.rncValidation as any,
     mocks.queueService as any,
     mocks.webhooksService as any,
+    mocks.billingService as any,
     makeTestLogger(),
   );
 }
@@ -171,10 +185,12 @@ describe('InvoicesService.create — async pipeline', () => {
     }));
     mocks.prisma.invoiceLine.createMany.mockResolvedValue({ count: 1 });
     mocks.prisma.auditLog.create.mockResolvedValue({});
+    mocks.prisma.tenantPlan.findFirst.mockResolvedValue(null); // billing check in tx
+    mocks.prisma.monthlyUsage.upsert.mockResolvedValue({});
     // findOne() at the end
     mocks.prisma.invoice.findFirst.mockImplementation(async ({ where }: any) => ({
-      id: where.id,
-      tenantId: where.tenantId,
+      id: where.id ?? 'invoice-uuid-1',
+      tenantId: where.tenantId ?? 'tenant-1',
       encf: 'E310000000001',
       status: InvoiceStatus.QUEUED,
       ecfType: 'E31',

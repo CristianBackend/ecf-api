@@ -23,6 +23,7 @@ import { Response } from 'express';
 import { InvoicesService } from './invoices.service';
 import { CreateInvoiceDto, VoidInvoiceDto } from './dto/invoice.dto';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
+import { ActivePlanGuard } from '../billing/guards/active-plan.guard';
 import { RequireScopes } from '../common/decorators/scopes.decorator';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
 import { ApiKeyScope } from '@prisma/client';
@@ -47,6 +48,7 @@ export class InvoicesController {
   ) {}
 
   @Post()
+  @UseGuards(ActivePlanGuard)
   @RequireScopes(ApiKeyScope.INVOICES_WRITE)
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({

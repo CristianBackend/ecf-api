@@ -8,6 +8,8 @@ import { CertificatesModule } from '../certificates/certificates.module';
 import { SequencesModule } from '../sequences/sequences.module';
 import { QueueModule } from '../queue/queue.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
+import { BillingModule } from '../billing/billing.module';
+import { ActivePlanGuard } from '../billing/guards/active-plan.guard';
 
 @Module({
   imports: [
@@ -18,9 +20,10 @@ import { WebhooksModule } from '../webhooks/webhooks.module';
     SequencesModule,
     QueueModule,
     WebhooksModule,
+    BillingModule,
   ],
   controllers: [InvoicesController],
-  providers: [InvoicesService],
+  providers: [InvoicesService, ActivePlanGuard],
   exports: [InvoicesService],
 })
 export class InvoicesModule {}
