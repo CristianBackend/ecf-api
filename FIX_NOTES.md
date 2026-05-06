@@ -1193,3 +1193,32 @@ Se eligió `setGlobalPrefix exclude` en lugar de:
 3. Nginx rewrite rules — no está en alcance de este PR, y el servidor puede no tener Nginx
 
 La solución nativa de NestJS es la más mantenible y es la que recomienda la documentación oficial.
+
+
+---
+
+## Tarea 18.5 — Admin tenant creation UI
+
+### Commits
+
+| Subtarea | Commit | Descripción |
+|---|---|---|
+| 18.5.1+18.5.2 | `9919794` | /tenants/new form + credentials copy-once screen |
+| 18.5.3 | `4b50fdd` | tenants list navega a /tenants/new; elimina dialog deprecated |
+
+### Decisiones técnicas
+
+**CreateTenantDialog (Tarea 16.1) — endpoint incorrecto**
+El dialog existente en `components/tenants/create-tenant-dialog.tsx` llamaba a `POST /tenants/register` — el endpoint de bootstrap que Tarea 17.7 restringió a funcionar solo cuando no hay ningún tenant. El dialog ya era inutilizable para crear tenants normales. Se reemplazó por navegación a `/tenants/new` que llama a `POST /admin/tenants` (requiere scope ADMIN, genera password automáticamente). El archivo `create-tenant-dialog.tsx` se conserva en el repositorio (puede usarse para onboarding de demos o ser eliminado más adelante).
+
+**Pantalla de credenciales (18.5.2)**
+- Implementada como estado local en la misma página — cuando `result !== null`, el JSX renderiza `<CredentialsScreen>` en lugar del form.
+- `window.beforeunload` bloquea refresh/cierre accidental del tab mientras las credenciales están visibles.
+- Next.js App Router no emite `beforeunload` para navegación client-side (`router.push`). Para protección completa habría que interceptar el router con un Context que escuche popstate + pushstate. Decisión: no implementar (el usuario puede cerrar el tab por accidente; si lo hace, las credenciales se pierden — documentado en la UI).
+- El checkbox de confirmación es obligatorio antes de poder confirmar y navegar.
+
+**Plan descriptions**
+Hardcodeadas en el frontend (STARTER: hasta 1000 facturas/mes, etc.). TODO: si el backend expone esto en un endpoint de configuración, sincronizar.
+
+**Protección de ruta**
+`useEffect` con `isSuperAdmin === false` redirige a `/home`. El valor viene del Zustand store (persistido). En el primer render del servidor `isSuperAdmin` es `false` hasta la hidratación → puede haber un flash. El layout general ya muestra spinner hasta `_hasHydrated`, así que este efecto solo corre cuando el store ya hidró.
