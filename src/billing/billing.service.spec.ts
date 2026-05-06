@@ -177,6 +177,58 @@ describe('BillingService', () => {
     expect(prisma.monthlyUsage.upsert).not.toHaveBeenCalled(); // main prisma not used
   });
 
+  // ── getTenantUsageSummary ───────────────────────────────────────────────────
+
+  it('getTenantUsageSummary returns full usage when plan is active', async () => {
+    const usage = { invoicesCount: 750 };
+    const activeTenantPlan = {
+      ...ACTIVE_TENANT_PLAN,
+      monthlyUsage: usage,
+    };
+    prisma.tenantPlan.findFirst.mockResolvedValue(activeTenantPlan);
+    const result = await service.getTenantUsageSummary('tenant-1');
+    expect(result.hasActivePlan).toBe(true);
+    expect(result.plan!.code).toBe('TIER_1');
+    expect(result.usage!.current).toBe(750);
+    expect(result.usage!.limit).toBe(1500);
+    expect(result.usage!.percentage).toBe(50);
+    expect(result.usage!.remaining).toBe(750);
+    expect(result.status).toBe(TenantPlanStatus.ACTIVE);
+  });
+
+  it('getTenantUsageSummary returns NO_PLAN status when tenant has no plans', async () => {
+    prisma.tenantPlan.findFirst.mockResolvedValue(null);
+    const result = await service.getTenantUsageSummary('tenant-1');
+    expect(result.hasActivePlan).toBe(false);
+    expect(result.status).toBe('NO_PLAN');
+    expect(result.plan).toBeNull();
+    expect(result.usage).toBeNull();
+  });
+
+  it('getTenantUsageSummary returns PENDING_PAYMENT when plan not activated', async () => {
+    prisma.tenantPlan.findFirst.mockResolvedValue({
+      ...ACTIVE_TENANT_PLAN,
+      status: TenantPlanStatus.PENDING_PAYMENT,
+      expiresAt: null,
+      monthlyUsage: null,
+    });
+    const result = await service.getTenantUsageSummary('tenant-1');
+    expect(result.hasActivePlan).toBe(false);
+    expect(result.status).toBe(TenantPlanStatus.PENDING_PAYMENT);
+  });
+
+  it('getTenantUsageSummary returns EXPIRED when plan has expired', async () => {
+    prisma.tenantPlan.findFirst.mockResolvedValue({
+      ...ACTIVE_TENANT_PLAN,
+      status: TenantPlanStatus.EXPIRED,
+      expiresAt: PAST,
+      monthlyUsage: null,
+    });
+    const result = await service.getTenantUsageSummary('tenant-1');
+    expect(result.hasActivePlan).toBe(false);
+    expect(result.status).toBe(TenantPlanStatus.EXPIRED);
+  });
+
   // ── expireStalePlans ────────────────────────────────────────────────────────
 
   it('expireStalePlans updates expired plans and returns count', async () => {

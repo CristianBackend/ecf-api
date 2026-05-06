@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { TenantsService } from './tenants.service';
+import { BillingService } from '../billing/billing.service';
 import { CreateTenantDto, UpdateTenantDto } from './dto/tenant.dto';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
@@ -15,7 +16,10 @@ import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decora
 @ApiTags('tenants')
 @Controller('tenants')
 export class TenantsController {
-  constructor(private readonly tenantsService: TenantsService) {}
+  constructor(
+    private readonly tenantsService: TenantsService,
+    private readonly billingService: BillingService,
+  ) {}
 
   /**
    * Public endpoint - no auth required.
@@ -61,5 +65,33 @@ export class TenantsController {
   @ApiOperation({ summary: 'Estadísticas de uso del tenant' })
   async getStats(@CurrentTenant() tenant: RequestTenant) {
     return this.tenantsService.getStats(tenant.id);
+  }
+
+  @Get('me/usage')
+  @UseGuards(ApiKeyGuard)
+  @ApiBearerAuth('api-key')
+  @ApiOperation({ summary: 'Uso del plan de facturación del tenant actual' })
+  @ApiResponse({
+    status: 200,
+    description: 'Resumen de uso del plan activo',
+    schema: {
+      example: {
+        success: true,
+        data: {
+          hasActivePlan: true,
+          plan: { code: 'TIER_1', name: 'Tier 1 — Básico', monthlyFee: 60, includedInvoices: 1500 },
+          usage: {
+            current: 300, limit: 1500, percentage: 20, remaining: 1200,
+            periodStart: '2026-05-06T12:00:00.000Z',
+            periodEnd: '2026-06-05T12:00:00.000Z',
+            daysRemaining: 29,
+          },
+          status: 'ACTIVE',
+        },
+      },
+    },
+  })
+  async getUsage(@CurrentTenant() tenant: RequestTenant) {
+    return this.billingService.getTenantUsageSummary(tenant.id);
   }
 }

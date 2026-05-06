@@ -107,6 +107,64 @@ export class BillingService {
   }
 
   /**
+   * Returns the full usage summary for the GET /tenants/me/usage endpoint.
+   * Tenants with no active plan get hasActivePlan=false and status='NO_PLAN'.
+   */
+  async getTenantUsageSummary(tenantId: string) {
+    // Check the most recent TenantPlan (any status) to give a meaningful status
+    const latestPlan = await this.prisma.tenantPlan.findFirst({
+      where: { tenantId },
+      include: { plan: true, monthlyUsage: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const activePlan = latestPlan?.status === TenantPlanStatus.ACTIVE &&
+      latestPlan.expiresAt &&
+      latestPlan.expiresAt > new Date()
+      ? latestPlan
+      : null;
+
+    if (!activePlan) {
+      const status = latestPlan ? latestPlan.status : ('NO_PLAN' as const);
+      return {
+        hasActivePlan: false,
+        plan: null,
+        usage: null,
+        status,
+      };
+    }
+
+    const now = new Date();
+    const count = activePlan.monthlyUsage?.invoicesCount ?? 0;
+    const limit = activePlan.plan.includedInvoices;
+    const percentage = limit > 0 ? Math.min(100, Math.round((count / limit) * 100)) : 0;
+    const daysRemaining = Math.max(
+      0,
+      Math.ceil((activePlan.expiresAt!.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)),
+    );
+
+    return {
+      hasActivePlan: true,
+      plan: {
+        code: activePlan.plan.code,
+        name: activePlan.plan.name,
+        monthlyFee: activePlan.plan.monthlyFee,
+        includedInvoices: activePlan.plan.includedInvoices,
+      },
+      usage: {
+        current: count,
+        limit,
+        percentage,
+        remaining: Math.max(0, limit - count),
+        periodStart: activePlan.activatedAt,
+        periodEnd: activePlan.expiresAt,
+        daysRemaining,
+      },
+      status: activePlan.status,
+    };
+  }
+
+  /**
    * Marks all ACTIVE plans whose expiresAt < now as EXPIRED.
    * Called by the billing scheduler every hour.
    * Returns the number of plans expired.
