@@ -41,6 +41,12 @@ describe('AdminTenantsService', () => {
         groupBy: jest.fn().mockResolvedValue([{ tenantId: 'tenant-1', _count: { tenantId: 5 } }]),
         count: jest.fn().mockResolvedValue(5),
       },
+      billingPlan: {
+        findUnique: jest.fn().mockResolvedValue(null),
+      },
+      tenantPlan: {
+        create: jest.fn().mockResolvedValue({ id: 'tp-1', status: 'PENDING_PAYMENT', planId: 'plan-id' }),
+      },
     };
 
     authService = {
@@ -142,5 +148,35 @@ describe('AdminTenantsService', () => {
     await expect(
       service.createTenant({ name: 'Co', email: 'dup@x.com', plan: 'STARTER' as any }),
     ).rejects.toThrow(ConflictException);
+  });
+
+  // ── D.1.7 — planCode in createTenant ──────────────────────────────────────
+
+  it('D.1.7-1: creates tenant without planCode → no tenantPlan in response', async () => {
+    prisma.tenant.findUnique.mockResolvedValueOnce(null);
+    const result = await service.createTenant({ name: 'Co', email: 'co@x.com' });
+    expect(result.tenantPlan).toBeUndefined();
+    expect(prisma.tenantPlan.create).not.toHaveBeenCalled();
+  });
+
+  it('D.1.7-2: creates tenant with valid planCode → tenantPlan PENDING_PAYMENT in response', async () => {
+    prisma.tenant.findUnique.mockResolvedValueOnce(null);
+    prisma.billingPlan.findUnique.mockResolvedValueOnce({ id: 'plan-id', code: 'TIER_1' });
+    const result = await service.createTenant({ name: 'Co', email: 'co@x.com', planCode: 'TIER_1' });
+    expect(result.tenantPlan).toBeDefined();
+    expect(prisma.tenantPlan.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'PENDING_PAYMENT' }),
+      }),
+    );
+  });
+
+  it('D.1.7-3: creates tenant with invalid planCode → 400 BadRequestException', async () => {
+    prisma.tenant.findUnique.mockResolvedValueOnce(null);
+    prisma.billingPlan.findUnique.mockResolvedValueOnce(null); // code not found
+    const { BadRequestException: Bre } = await import('@nestjs/common');
+    await expect(
+      service.createTenant({ name: 'Co', email: 'co@x.com', planCode: 'INVALID' }),
+    ).rejects.toThrow(Bre);
   });
 });
