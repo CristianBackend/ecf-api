@@ -52,10 +52,12 @@ interface AdminCreateResult {
 
 // ── Form schema ────────────────────────────────────────────────────────────────
 
+// planCode is managed as local state (not a form field) to keep the
+// Radix Select in controlled mode and avoid the hidden-native-select
+// click-intercept bug that occurs in uncontrolled mode.
 const schema = z.object({
-  name:     z.string().min(3, 'Mínimo 3 caracteres').max(200),
-  email:    z.string().email('Email inválido'),
-  planCode: z.string().optional(),
+  name:  z.string().min(3, 'Mínimo 3 caracteres').max(200),
+  email: z.string().email('Email inválido'),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -247,7 +249,7 @@ export default function NewTenantPage() {
   const router = useRouter();
   const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
   const [result, setResult] = useState<AdminCreateResult | null>(null);
-  const [selectedPlanCode, setSelectedPlanCode] = useState<string | undefined>(undefined);
+  const [planCode, setPlanCode] = useState('');   // '' = no plan
   const [emailError, setEmailError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -270,7 +272,6 @@ export default function NewTenantPage() {
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors },
   } = useForm<FormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -280,13 +281,11 @@ export default function NewTenantPage() {
   const mutation = useMutation({
     mutationFn: async (dto: FormData) => {
       const payload: Record<string, string> = { name: dto.name, email: dto.email };
-      if (dto.planCode && dto.planCode !== 'none') payload.planCode = dto.planCode;
+      if (planCode) payload.planCode = planCode;
       const res = await apiClient.post<{ data: AdminCreateResult }>('/admin/tenants', payload);
       return res.data.data;
     },
-    onSuccess: (data, variables) => {
-      const code = variables.planCode !== 'none' ? variables.planCode : undefined;
-      setSelectedPlanCode(code);
+    onSuccess: (data) => {
       setResult(data);
     },
     onError: (err: unknown) => {
@@ -305,7 +304,7 @@ export default function NewTenantPage() {
     router.push('/tenants');
   }
 
-  const selectedPlan = billingPlans?.find((p) => p.code === selectedPlanCode);
+  const selectedPlan = billingPlans?.find((p) => p.code === planCode);
 
   if (result) {
     return (
@@ -363,29 +362,22 @@ export default function NewTenantPage() {
 
             <div className="space-y-1.5">
               <Label>Plan inicial (opcional)</Label>
-              <Select
-                defaultValue="none"
-                onValueChange={(v) => setValue('planCode', v)}
-              >
+              <Select value={planCode} onValueChange={setPlanCode}>
                 <SelectTrigger>
                   <SelectValue placeholder="Sin plan (asignar después)" />
                 </SelectTrigger>
-                <SelectContent position="popper">
-                  <SelectItem value="none">
-                    <span className="text-muted-foreground">Sin plan (asignar después)</span>
-                  </SelectItem>
+                <SelectContent position="popper" className="z-[200]">
+                  <SelectItem value="">Sin plan (asignar después)</SelectItem>
                   {billingPlans?.map((p) => (
                     <SelectItem key={p.code} value={p.code}>
-                      <span className="font-medium">{p.code}</span>
-                      <span className="text-muted-foreground text-xs ml-2">
-                        — {p.name} ({fmtMoney(p.monthlyFee, 'USD')}/mes, {p.includedInvoices.toLocaleString()} facturas)
-                      </span>
+                      {p.code} — {p.name} ({fmtMoney(p.monthlyFee, 'USD')}/mes,{' '}
+                      {p.includedInvoices.toLocaleString()} facturas)
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Si asignás un plan, quedará en estado "Pendiente de pago" hasta que lo activés manualmente.
+                Si asignás un plan, quedará en estado &quot;Pendiente de pago&quot; hasta que lo activés manualmente.
               </p>
             </div>
 

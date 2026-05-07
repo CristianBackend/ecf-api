@@ -106,6 +106,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
   const {
     register,
     handleSubmit,
+    watch,
     setValue,
     formState: { errors },
   } = useForm<EditForm>({
@@ -135,6 +136,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
   const {
     register: regSeq,
     handleSubmit: handleSeq,
+    watch: watchSeq,
     setValue: setSeqVal,
     reset: resetSeq,
     formState: { errors: seqErrors },
@@ -227,11 +229,11 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
                   </Field>
                   <Field label="Ambiente DGII">
                     <Select
-                      defaultValue={company.dgiiEnv}
+                      value={watch('dgiiEnv') ?? company.dgiiEnv}
                       onValueChange={(v) => setValue('dgiiEnv', v as 'DEV' | 'CERT' | 'PROD')}
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent position="popper">
+                      <SelectContent position="popper" className="z-[200]">
                         <SelectItem value="DEV">Desarrollo</SelectItem>
                         <SelectItem value="CERT">Certificación</SelectItem>
                         <SelectItem value="PROD">Producción</SelectItem>
@@ -379,9 +381,9 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
               </DialogHeader>
               <form onSubmit={handleSeq((d) => seqMutation.mutate(d))} className="space-y-4">
                 <Field label="Tipo e-CF *">
-                  <Select defaultValue="E31" onValueChange={(v) => setSeqVal('ecfType', v as typeof ECF_TYPES[number])}>
+                  <Select value={watchSeq('ecfType')} onValueChange={(v) => setSeqVal('ecfType', v as typeof ECF_TYPES[number])}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent position="popper">
+                    <SelectContent position="popper" className="z-[200]">
                       {ECF_TYPES.map((t) => (
                         <SelectItem key={t} value={t}>{ECF_LABELS[t]}</SelectItem>
                       ))}

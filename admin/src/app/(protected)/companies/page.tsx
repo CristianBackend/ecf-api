@@ -59,6 +59,7 @@ export default function CompaniesPage() {
   const {
     register,
     handleSubmit,
+    watch,
     setValue,
     reset,
     formState: { errors },
@@ -190,9 +191,9 @@ export default function CompaniesPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Ambiente DGII</Label>
-              <Select defaultValue="DEV" onValueChange={(v) => setValue('dgiiEnv', v as 'DEV' | 'CERT' | 'PROD')}>
+              <Select value={watch('dgiiEnv')} onValueChange={(v) => setValue('dgiiEnv', v as 'DEV' | 'CERT' | 'PROD')}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent position="popper">
+                <SelectContent position="popper" className="z-[200]">
                   <SelectItem value="DEV">Desarrollo</SelectItem>
                   <SelectItem value="CERT">Certificación</SelectItem>
                   <SelectItem value="PROD">Producción</SelectItem>

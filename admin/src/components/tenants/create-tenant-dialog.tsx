@@ -48,6 +48,7 @@ export function CreateTenantDialog({ open, onOpenChange }: Props) {
   const {
     register,
     handleSubmit,
+    watch,
     setValue,
     reset,
     formState: { errors, isSubmitting },
@@ -109,11 +110,11 @@ export function CreateTenantDialog({ open, onOpenChange }: Props) {
 
             <div className="space-y-1.5">
               <Label>Plan</Label>
-              <Select defaultValue="STARTER" onValueChange={(v) => setValue('plan', v as FormData['plan'])}>
+              <Select value={watch('plan')} onValueChange={(v) => setValue('plan', v as FormData['plan'])}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent position="popper">
+                <SelectContent position="popper" className="z-[200]">
                   {(['STARTER', 'BUSINESS', 'ENTERPRISE', 'PLATFORM'] as const).map((p) => (
                     <SelectItem key={p} value={p}>{p}</SelectItem>
                   ))}
