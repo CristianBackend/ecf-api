@@ -1,7 +1,7 @@
 'use client';
 import * as React from 'react';
 import * as SelectPrimitive from '@radix-ui/react-select';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const Select = SelectPrimitive.Root;
@@ -28,52 +28,80 @@ const SelectTrigger = React.forwardRef<
 ));
 SelectTrigger.displayName = SelectPrimitive.Trigger.displayName;
 
+const SelectScrollUpButton = React.forwardRef<
+  React.ElementRef<typeof SelectPrimitive.ScrollUpButton>,
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.ScrollUpButton>
+>(({ className, ...props }, ref) => (
+  <SelectPrimitive.ScrollUpButton
+    ref={ref}
+    className={cn('flex cursor-default items-center justify-center py-1', className)}
+    {...props}
+  >
+    <ChevronUp className="h-4 w-4" />
+  </SelectPrimitive.ScrollUpButton>
+));
+SelectScrollUpButton.displayName = SelectPrimitive.ScrollUpButton.displayName;
+
+const SelectScrollDownButton = React.forwardRef<
+  React.ElementRef<typeof SelectPrimitive.ScrollDownButton>,
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.ScrollDownButton>
+>(({ className, ...props }, ref) => (
+  <SelectPrimitive.ScrollDownButton
+    ref={ref}
+    className={cn('flex cursor-default items-center justify-center py-1', className)}
+    {...props}
+  >
+    <ChevronDown className="h-4 w-4" />
+  </SelectPrimitive.ScrollDownButton>
+));
+SelectScrollDownButton.displayName = SelectPrimitive.ScrollDownButton.displayName;
+
 /**
- * SelectContent wraps its children in SelectPrimitive.Portal with an explicit
- * `container` prop so Radix bypasses its internal useLayoutEffect mount-check
- * (which can silently fail in React 19 concurrent mode) and renders directly
- * into document.body.
+ * SelectContent — official shadcn/ui implementation with two critical fixes
+ * for Next.js 16 + React 19:
  *
- * Animation classes that depend on tailwindcss-animate are intentionally
- * omitted — that plugin is not installed; without it the Tailwind data-state
- * variants generate broken CSS that can hide the element.
+ * 1. Portal container is resolved inline (synchronously) instead of via
+ *    useState/useEffect. When container is null (previous approach), Radix
+ *    Portal falls back to its own useLayoutEffect mounted-check, which can
+ *    silently return null in React 19 concurrent mode. Passing document.body
+ *    directly bypasses that check entirely.
+ *
+ * 2. tailwindcss-animate classes (animate-in/out, zoom-in-95, fade-in-0,
+ *    slide-in-from-*) are omitted — that plugin is not installed and those
+ *    classes generated broken CSS that could hide the portal content.
  */
 const SelectContent = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Content>
->(({ className, children, position = 'popper', ...props }, ref) => {
-  // Resolve the portal container client-side only so SSR doesn't throw.
-  const [portalContainer, setPortalContainer] = React.useState<HTMLElement | null>(null);
-  React.useEffect(() => {
-    setPortalContainer(document.body);
-  }, []);
-
-  return (
-    <SelectPrimitive.Portal container={portalContainer}>
-      <SelectPrimitive.Content
-        ref={ref}
-        position={position}
+>(({ className, children, position = 'popper', ...props }, ref) => (
+  <SelectPrimitive.Portal
+    container={typeof document !== 'undefined' ? document.body : undefined}
+  >
+    <SelectPrimitive.Content
+      ref={ref}
+      position={position}
+      className={cn(
+        'relative z-[200] max-h-96 min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md',
+        position === 'popper' &&
+          'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
+        className,
+      )}
+      {...props}
+    >
+      <SelectScrollUpButton />
+      <SelectPrimitive.Viewport
         className={cn(
-          'relative z-[200] max-h-96 min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md',
+          'p-1',
           position === 'popper' &&
-            'data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1',
-          className,
+            'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]',
         )}
-        {...props}
       >
-        <SelectPrimitive.Viewport
-          className={cn(
-            'p-1',
-            position === 'popper' &&
-              'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]',
-          )}
-        >
-          {children}
-        </SelectPrimitive.Viewport>
-      </SelectPrimitive.Content>
-    </SelectPrimitive.Portal>
-  );
-});
+        {children}
+      </SelectPrimitive.Viewport>
+      <SelectScrollDownButton />
+    </SelectPrimitive.Content>
+  </SelectPrimitive.Portal>
+));
 SelectContent.displayName = SelectPrimitive.Content.displayName;
 
 const SelectItem = React.forwardRef<
@@ -110,4 +138,14 @@ const SelectLabel = React.forwardRef<
 ));
 SelectLabel.displayName = SelectPrimitive.Label.displayName;
 
-export { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue };
+export {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectScrollDownButton,
+  SelectScrollUpButton,
+  SelectTrigger,
+  SelectValue,
+};

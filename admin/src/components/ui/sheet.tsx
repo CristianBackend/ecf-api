@@ -45,45 +45,34 @@ interface SheetContentProps extends React.ComponentPropsWithoutRef<typeof Dialog
   side?: SheetSide;
 }
 
-/**
- * Same explicit-container fix as Dialog/Select: bypasses Radix's internal
- * useLayoutEffect mounted-check that can silently fail in React 19.
- */
 const SheetContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   SheetContentProps
->(({ className, children, side = 'left', ...props }, ref) => {
-  const [portalContainer, setPortalContainer] = React.useState<HTMLElement | null>(null);
-  React.useEffect(() => {
-    setPortalContainer(document.body);
-  }, []);
-
-  return (
-    <DialogPrimitive.Portal container={portalContainer}>
-      <SheetOverlay />
-      <DialogPrimitive.Content
-        ref={ref}
+>(({ className, children, side = 'left', ...props }, ref) => (
+  <DialogPrimitive.Portal
+    container={typeof document !== 'undefined' ? document.body : undefined}
+  >
+    <SheetOverlay />
+    <DialogPrimitive.Content
+      ref={ref}
+      className={cn(side === 'left' ? 'bg-slate-900' : '', sideStyles[side], className)}
+      {...props}
+    >
+      {children}
+      <SheetClose
         className={cn(
-          side === 'left' ? 'bg-slate-900' : '',
-          sideStyles[side],
-          className,
-        )}
-        {...props}
-      >
-        {children}
-        <SheetClose className={cn(
           'absolute right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2',
           side === 'left'
             ? 'text-slate-400 hover:text-white focus:ring-slate-600'
             : 'text-muted-foreground hover:text-foreground focus:ring-ring',
-        )}>
-          <X className="h-5 w-5" />
-          <span className="sr-only">Cerrar</span>
-        </SheetClose>
-      </DialogPrimitive.Content>
-    </DialogPrimitive.Portal>
-  );
-});
+        )}
+      >
+        <X className="h-5 w-5" />
+        <span className="sr-only">Cerrar</span>
+      </SheetClose>
+    </DialogPrimitive.Content>
+  </DialogPrimitive.Portal>
+));
 SheetContent.displayName = 'SheetContent';
 
 export { Sheet, SheetClose, SheetContent, SheetPortal, SheetTrigger };
