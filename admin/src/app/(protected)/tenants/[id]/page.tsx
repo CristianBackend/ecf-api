@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CertificateUploadDialog } from '@/components/tenants/certificate-upload-dialog';
 import { CreateApiKeyDialog } from '@/components/tenants/create-api-key-dialog';
+import { BillingTab } from '@/components/tenants/billing-tab';
 
 async function fetchTenant(id: string): Promise<TenantDetail> {
   const res = await apiClient.get<{ data: TenantDetail }>('/admin/tenants/' + id);
@@ -104,6 +105,7 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
           <TabsTrigger value="certificates">Certificados</TabsTrigger>
           <TabsTrigger value="apikeys">API Keys</TabsTrigger>
           <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
+          <TabsTrigger value="billing">Plan y Billing</TabsTrigger>
         </TabsList>
 
         <TabsContent value="companies">
@@ -254,6 +256,10 @@ export default function TenantDetailPage({ params }: { params: Promise<{ id: str
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="billing">
+          <BillingTab tenantId={id} />
         </TabsContent>
       </Tabs>
 
