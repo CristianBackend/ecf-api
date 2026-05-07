@@ -16,7 +16,7 @@ const SheetOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      'fixed inset-0 z-50 bg-black/60',
+      'fixed inset-0 z-[100] bg-black/60',
       'transition-opacity duration-300',
       'data-[state=closed]:opacity-0 data-[state=open]:opacity-100',
       className,
@@ -30,12 +30,12 @@ type SheetSide = 'left' | 'right';
 
 const sideStyles: Record<SheetSide, string> = {
   left: cn(
-    'fixed left-0 top-0 z-50 flex h-full w-72 flex-col shadow-2xl',
+    'fixed left-0 top-0 z-[100] flex h-full w-72 flex-col shadow-2xl',
     'transition-transform duration-300 ease-in-out',
     'data-[state=closed]:-translate-x-full data-[state=open]:translate-x-0',
   ),
   right: cn(
-    'fixed right-0 top-0 z-50 flex h-full w-full max-w-xl flex-col shadow-2xl bg-background',
+    'fixed right-0 top-0 z-[100] flex h-full w-full max-w-xl flex-col shadow-2xl bg-background',
     'transition-transform duration-300 ease-in-out',
     'data-[state=closed]:translate-x-full data-[state=open]:translate-x-0',
   ),

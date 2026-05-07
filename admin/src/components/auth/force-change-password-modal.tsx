@@ -69,7 +69,7 @@ export function ForceChangePasswordModal() {
   return (
     // Full-screen overlay — not dismissible (no onInteractOutside, no Escape handler)
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm"
       onKeyDown={(e) => e.key === 'Escape' && e.preventDefault()}
     >
       <div className="w-full max-w-md rounded-2xl border border-border bg-background p-8 shadow-2xl">

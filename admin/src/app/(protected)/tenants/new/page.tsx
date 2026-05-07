@@ -115,7 +115,7 @@ function CredentialsScreen({
   const { tenant, credentials, apiKeys, tenantPlan } = result;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-background/95 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[100] overflow-y-auto bg-background/95 backdrop-blur-sm">
       <div className="min-h-screen flex items-start justify-center p-4 py-8">
         <div className="w-full max-w-xl space-y-6">
 
