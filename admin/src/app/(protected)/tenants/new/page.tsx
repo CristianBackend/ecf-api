@@ -249,7 +249,7 @@ export default function NewTenantPage() {
   const router = useRouter();
   const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
   const [result, setResult] = useState<AdminCreateResult | null>(null);
-  const [planCode, setPlanCode] = useState('');   // '' = no plan
+  const [planCode, setPlanCode] = useState('NONE'); // 'NONE' sentinel = no plan
   const [emailError, setEmailError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -281,7 +281,7 @@ export default function NewTenantPage() {
   const mutation = useMutation({
     mutationFn: async (dto: FormData) => {
       const payload: Record<string, string> = { name: dto.name, email: dto.email };
-      if (planCode) payload.planCode = planCode;
+      if (planCode !== 'NONE') payload.planCode = planCode;
       const res = await apiClient.post<{ data: AdminCreateResult }>('/admin/tenants', payload);
       return res.data.data;
     },
@@ -304,7 +304,9 @@ export default function NewTenantPage() {
     router.push('/tenants');
   }
 
-  const selectedPlan = billingPlans?.find((p) => p.code === planCode);
+  const selectedPlan = planCode !== 'NONE'
+    ? billingPlans?.find((p) => p.code === planCode)
+    : undefined;
 
   if (result) {
     return (
@@ -367,7 +369,7 @@ export default function NewTenantPage() {
                   <SelectValue placeholder="Sin plan (asignar después)" />
                 </SelectTrigger>
                 <SelectContent position="popper" className="z-[200]">
-                  <SelectItem value="">Sin plan (asignar después)</SelectItem>
+                  <SelectItem value="NONE">Sin plan (asignar después)</SelectItem>
                   {billingPlans?.map((p) => (
                     <SelectItem key={p.code} value={p.code}>
                       {p.code} — {p.name} ({fmtMoney(p.monthlyFee, 'USD')}/mes,{' '}
