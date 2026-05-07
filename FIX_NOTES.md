@@ -1317,3 +1317,70 @@ solo incluye `tenantPlan` cuando se creó uno.
 6. Falla en DB dentro de la transacción → billing counter hace rollback automático
 7. `expireStalePlans` sin planes vencidos → updateMany count=0, no log spam
 8. `BillingScheduler` con lock no adquirido → `expireStalePlans` no se llama
+
+
+---
+
+## Tarea D.2 — Billing UI
+
+### Commits
+
+| Subtarea | Commit | Descripción |
+|---|---|---|
+| D.2.1 | `2e8ca98` | selector de plan en /tenants/new |
+| D.2.2 | `5098f44` | tab Plan y Billing en /tenants/:id |
+| D.2.3 | `efe70cc` | /billing dashboard page + sidebar link |
+| D.2.4 | `a7fa19a` | usage card en /home del tenant normal |
+| D.2.5 | `5657b20` | tab Mi Plan en /settings |
+| D.2.6 | `70160df` | interceptor 402 en api-client.ts |
+
+### Decisiones técnicas
+
+**D.2.1 — Plan selector dinámico**
+El selector de plan en /tenants/new ahora carga desde GET /admin/plans
+(catálogo real de TIER_1–4) en lugar de valores hardcodeados. El plan legacy
+(STARTER/BUSINESS/etc) se eliminó del form — el backend usa STARTER por defecto
+si no se manda. El campo planCode es opcional. La pantalla de credenciales
+muestra el bloque "Plan asignado" solo si el resultado incluye tenantPlan.
+
+**D.2.2 — 4 estados del plan sin AlertDialog nativo**
+No existe un componente AlertDialog en las shadcn/ui instaladas. Se creó un
+ConfirmDialog wrapper usando el Dialog existente. Los 4 estados (ACTIVE,
+PENDING_PAYMENT, EXPIRED/CANCELED, sin plan) tienen cards distintas con
+colores y CTAs apropiados. AssignPlanDialog usa el catálogo de plans del
+mismo queryKey que el selector de /tenants/new para reutilizar cache.
+
+**D.2.2 — Progress component**
+Creado src/components/ui/progress.tsx usando @radix-ui/react-progress que ya
+estaba en las dependencias. Acepta indicatorClassName para cambiar el color
+(verde/amber/rojo según el porcentaje de uso).
+
+**D.2.3 — Revenue por plan no disponible desde dashboard**
+El endpoint GET /admin/billing/dashboard no devuelve el count de tenants
+activos por plan individual. La tabla de catálogo muestra el precio y las
+facturas incluidas, pero el revenue por plan requeriría una query adicional.
+Documentado como TODO en FIX_NOTES.
+
+**D.2.5 — useSearchParams para tab initial**
+El tab "Mi Plan" en /settings lee ?tab=plan de la URL para autoseleccionarse
+cuando el usuario llega desde el redirect de 402. Esto funciona sin router
+manipulation — simplemente leyendo el searchParam y pasándolo como defaultValue
+al Tabs component.
+
+**D.2.6 — 402 handler con toast persistente**
+El interceptor usa duration: Infinity para que el toast permanezca hasta que
+el usuario lo descarte o haga click en "Ver mi plan". La redirección a
+/settings?tab=plan aplica solo a tenants normales (verificado con el isSuperAdmin
+del localStorage). Los admins jamás deberían recibir 402 (el guard los exime).
+
+**TODO (backend no disponible en D.2)**
+- GET /tenants/me/plans — historial de planes del tenant logueado.
+  La pestaña Mi Plan solo muestra el estado actual del plan, no el historial.
+  El admin sí puede ver el historial completo desde /tenants/:id.
+- Revenue por plan en GET /admin/billing/dashboard — el endpoint no desglosa
+  el revenue por plan individual, solo el total esperado.
+
+### Tests (frontend)
+No hay test runner configurado en el frontend admin (no hay Jest/Vitest).
+El build Next.js (tsc + bundler) valida los tipos estáticamente.
+npm run build → exitoso en todas las subtareas.
