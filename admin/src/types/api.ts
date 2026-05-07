@@ -222,6 +222,88 @@ export interface AuditLog {
 }
 
 // ============================================================
+// Billing
+// ============================================================
+
+export type TenantPlanStatus = 'PENDING_PAYMENT' | 'ACTIVE' | 'EXPIRED' | 'CANCELED';
+
+export interface BillingPlan {
+  id: string;
+  code: string;         // TIER_1 … TIER_4
+  name: string;
+  monthlyFee: string;   // Prisma Decimal serializes to string
+  includedInvoices: number;
+  description?: string;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TenantPlan {
+  id: string;
+  tenantId: string;
+  planId: string;
+  status: TenantPlanStatus;
+  activatedAt?: string;
+  expiresAt?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  plan: BillingPlan;
+  monthlyUsage?: {
+    id: string;
+    invoicesCount: number;
+    periodStart: string;
+    periodEnd: string;
+  };
+}
+
+/** Response shape from GET /tenants/me/usage */
+export type TenantUsage =
+  | { isExemptFromBilling: true }
+  | {
+      isExemptFromBilling?: false;
+      hasActivePlan: boolean;
+      plan: {
+        code: string;
+        name: string;
+        monthlyFee: string;
+        includedInvoices: number;
+      } | null;
+      usage: {
+        current: number;
+        limit: number;
+        percentage: number;
+        remaining: number;
+        periodStart: string;
+        periodEnd: string;
+        daysRemaining: number;
+      } | null;
+      status: TenantPlanStatus | 'NO_PLAN';
+    };
+
+export interface BillingDashboard {
+  totalActivePlans: number;
+  totalPendingPayment: number;
+  totalExpired: number;
+  expectedMonthlyRevenue: string; // Prisma Decimal serializes to string
+  tenantsNearLimit: Array<{
+    tenantId: string;
+    name: string;
+    percentage: number;
+    planCode: string;
+  }>;
+  expiringSoon: Array<{
+    tenantId: string;
+    name: string;
+    planCode: string;
+    expiresAt: string;
+    daysLeft: number;
+  }>;
+}
+
+// ============================================================
 // Metrics & Health
 // ============================================================
 

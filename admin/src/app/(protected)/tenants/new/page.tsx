@@ -5,13 +5,15 @@ import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft, Loader2, Users, CheckCircle2, AlertTriangle, Copy, Check,
+  CreditCard,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/lib/auth-store';
+import { fmtMoney } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,9 +22,15 @@ import { Badge } from '@/components/ui/badge';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import type { Plan } from '@/types/api';
+import type { Plan, BillingPlan } from '@/types/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+
+interface TenantPlanResult {
+  id: string;
+  status: string;
+  planId: string;
+}
 
 interface AdminCreateResult {
   tenant: {
@@ -39,21 +47,15 @@ interface AdminCreateResult {
     test: { key: string; prefix: string; scopes: string[] };
     live: { key: string; prefix: string; scopes: string[] };
   };
+  tenantPlan?: TenantPlanResult;
 }
 
 // ── Form schema ────────────────────────────────────────────────────────────────
 
-const PLANS: { value: Plan; label: string; desc: string }[] = [
-  { value: 'STARTER',    label: 'Starter',    desc: 'Hasta 1,000 facturas/mes' },
-  { value: 'BUSINESS',   label: 'Business',   desc: 'Hasta 10,000 facturas/mes' },
-  { value: 'ENTERPRISE', label: 'Enterprise', desc: 'Hasta 100,000 facturas/mes' },
-  { value: 'PLATFORM',   label: 'Platform',   desc: 'Volumen ilimitado' },
-];
-
 const schema = z.object({
-  name:  z.string().min(3, 'Mínimo 3 caracteres').max(200),
-  email: z.string().email('Email inválido'),
-  plan:  z.enum(['STARTER', 'BUSINESS', 'ENTERPRISE', 'PLATFORM']),
+  name:     z.string().min(3, 'Mínimo 3 caracteres').max(200),
+  email:    z.string().email('Email inválido'),
+  planCode: z.string().optional(),
 });
 type FormData = z.infer<typeof schema>;
 
@@ -88,12 +90,19 @@ function CopyField({ label, value, mono = true }: { label: string; value: string
   );
 }
 
-// ── Credentials screen (18.5.2) ────────────────────────────────────────────────
+// ── Credentials screen ────────────────────────────────────────────────────────
 
-function CredentialsScreen({ result, onConfirm }: { result: AdminCreateResult; onConfirm: () => void }) {
+function CredentialsScreen({
+  result,
+  selectedPlan,
+  onConfirm,
+}: {
+  result: AdminCreateResult;
+  selectedPlan: BillingPlan | undefined;
+  onConfirm: () => void;
+}) {
   const [confirmed, setConfirmed] = useState(false);
 
-  // Warn on accidental browser close / refresh while credentials are visible
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
@@ -103,7 +112,7 @@ function CredentialsScreen({ result, onConfirm }: { result: AdminCreateResult; o
     return () => window.removeEventListener('beforeunload', handler);
   }, []);
 
-  const { tenant, credentials, apiKeys } = result;
+  const { tenant, credentials, apiKeys, tenantPlan } = result;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-background/95 backdrop-blur-sm">
@@ -147,6 +156,34 @@ function CredentialsScreen({ result, onConfirm }: { result: AdminCreateResult; o
               </div>
             </CardContent>
           </Card>
+
+          {/* Plan asignado (si se creó TenantPlan) */}
+          {tenantPlan && selectedPlan && (
+            <Card className="border-amber-200 dark:border-amber-800">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <CreditCard className="h-4 w-4 text-amber-600" />
+                  Plan asignado
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold">{selectedPlan.name}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {fmtMoney(selectedPlan.monthlyFee, 'USD')}/mes · {selectedPlan.includedInvoices.toLocaleString()} facturas
+                    </p>
+                  </div>
+                  <Badge variant="warning">Pendiente de pago</Badge>
+                </div>
+                <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+                  Cuando el cliente realice el pago, andá a{' '}
+                  <strong>Tenants → {tenant.name} → Plan y Billing</strong>{' '}
+                  y activá el plan.
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Credentials */}
           <Card>
@@ -194,11 +231,7 @@ function CredentialsScreen({ result, onConfirm }: { result: AdminCreateResult; o
                 Entiendo que no podré recuperarlos.
               </span>
             </label>
-            <Button
-              className="w-full"
-              disabled={!confirmed}
-              onClick={onConfirm}
-            >
+            <Button className="w-full" disabled={!confirmed} onClick={onConfirm}>
               Ir a la lista de Tenants
             </Button>
           </div>
@@ -208,21 +241,31 @@ function CredentialsScreen({ result, onConfirm }: { result: AdminCreateResult; o
   );
 }
 
-// ── Page (18.5.1) ──────────────────────────────────────────────────────────────
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function NewTenantPage() {
   const router = useRouter();
   const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
   const [result, setResult] = useState<AdminCreateResult | null>(null);
+  const [selectedPlanCode, setSelectedPlanCode] = useState<string | undefined>(undefined);
   const [emailError, setEmailError] = useState<string | null>(null);
 
-  // Redirect non-admins
   useEffect(() => {
     if (isSuperAdmin === false) {
       toast.error('No tenés permiso para acceder a esa sección.');
       router.replace('/home');
     }
   }, [isSuperAdmin, router]);
+
+  // Fetch billing plan catalog
+  const { data: billingPlans } = useQuery({
+    queryKey: ['admin', 'billing', 'plans'],
+    queryFn: async () => {
+      const res = await apiClient.get<{ data: BillingPlan[] }>('/admin/plans');
+      return res.data.data;
+    },
+    enabled: isSuperAdmin === true,
+  });
 
   const {
     register,
@@ -232,15 +275,18 @@ export default function NewTenantPage() {
   } = useForm<FormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(schema) as any,
-    defaultValues: { plan: 'STARTER' },
   });
 
   const mutation = useMutation({
     mutationFn: async (dto: FormData) => {
-      const res = await apiClient.post<{ data: AdminCreateResult }>('/admin/tenants', dto);
+      const payload: Record<string, string> = { name: dto.name, email: dto.email };
+      if (dto.planCode && dto.planCode !== 'none') payload.planCode = dto.planCode;
+      const res = await apiClient.post<{ data: AdminCreateResult }>('/admin/tenants', payload);
       return res.data.data;
     },
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
+      const code = variables.planCode !== 'none' ? variables.planCode : undefined;
+      setSelectedPlanCode(code);
       setResult(data);
     },
     onError: (err: unknown) => {
@@ -259,8 +305,16 @@ export default function NewTenantPage() {
     router.push('/tenants');
   }
 
+  const selectedPlan = billingPlans?.find((p) => p.code === selectedPlanCode);
+
   if (result) {
-    return <CredentialsScreen result={result} onConfirm={handleConfirm} />;
+    return (
+      <CredentialsScreen
+        result={result}
+        selectedPlan={selectedPlan}
+        onConfirm={handleConfirm}
+      />
+    );
   }
 
   return (
@@ -290,11 +344,7 @@ export default function NewTenantPage() {
           >
             <div className="space-y-1.5">
               <Label>Nombre *</Label>
-              <Input
-                placeholder="Empresa Integradora SRL"
-                {...register('name')}
-                onChange={(e) => { register('name').onChange(e); }}
-              />
+              <Input placeholder="Empresa Integradora SRL" {...register('name')} />
               {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
             </div>
 
@@ -312,23 +362,31 @@ export default function NewTenantPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label>Plan</Label>
+              <Label>Plan inicial (opcional)</Label>
               <Select
-                defaultValue="STARTER"
-                onValueChange={(v) => setValue('plan', v as Plan)}
+                defaultValue="none"
+                onValueChange={(v) => setValue('planCode', v)}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Sin plan (asignar después)" />
                 </SelectTrigger>
                 <SelectContent>
-                  {PLANS.map(({ value, label, desc }) => (
-                    <SelectItem key={value} value={value}>
-                      <span className="font-medium">{label}</span>
-                      <span className="text-muted-foreground text-xs ml-2">— {desc}</span>
+                  <SelectItem value="none">
+                    <span className="text-muted-foreground">Sin plan (asignar después)</span>
+                  </SelectItem>
+                  {billingPlans?.map((p) => (
+                    <SelectItem key={p.code} value={p.code}>
+                      <span className="font-medium">{p.code}</span>
+                      <span className="text-muted-foreground text-xs ml-2">
+                        — {p.name} ({fmtMoney(p.monthlyFee, 'USD')}/mes, {p.includedInvoices.toLocaleString()} facturas)
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                Si asignás un plan, quedará en estado "Pendiente de pago" hasta que lo activés manualmente.
+              </p>
             </div>
 
             <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-sm text-muted-foreground">
