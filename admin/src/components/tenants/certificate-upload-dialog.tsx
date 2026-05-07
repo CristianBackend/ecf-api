@@ -114,7 +114,7 @@ export function CertificateUploadDialog({ open, onOpenChange, companies, tenantI
                 <SelectTrigger>
                   <SelectValue placeholder="Seleccioná empresa..." />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper">
                   {companies.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.businessName} ({c.rnc})

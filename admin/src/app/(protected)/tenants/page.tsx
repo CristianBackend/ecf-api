@@ -12,6 +12,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+
+const ALL = '__all__';
+function toSelect(v: string) { return v || ALL; }
+function fromSelect(v: string) { return v === ALL ? '' : v; }
 
 async function fetchTenants(page: number, limit: number, search: string, plan: string, isActive: string) {
   const params = new URLSearchParams({ page: String(page), limit: String(limit) });
@@ -76,25 +83,27 @@ export default function TenantsPage() {
             onChange={(e) => handleSearch(e.target.value)}
           />
         </div>
-        <select
-          value={plan}
-          onChange={(e) => { setPlan(e.target.value); setPage(1); }}
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="">Todos los planes</option>
-          {['STARTER', 'BUSINESS', 'ENTERPRISE', 'PLATFORM'].map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))}
-        </select>
-        <select
-          value={isActive}
-          onChange={(e) => { setIsActive(e.target.value); setPage(1); }}
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="">Todos</option>
-          <option value="true">Activos</option>
-          <option value="false">Inactivos</option>
-        </select>
+        <Select value={toSelect(plan)} onValueChange={(v) => { setPlan(fromSelect(v)); setPage(1); }}>
+          <SelectTrigger className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectItem value={ALL}>Todos los planes</SelectItem>
+            {['STARTER', 'BUSINESS', 'ENTERPRISE', 'PLATFORM'].map((p) => (
+              <SelectItem key={p} value={p}>{p}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={toSelect(isActive)} onValueChange={(v) => { setIsActive(fromSelect(v)); setPage(1); }}>
+          <SelectTrigger className="w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectItem value={ALL}>Todos</SelectItem>
+            <SelectItem value="true">Activos</SelectItem>
+            <SelectItem value="false">Inactivos</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Table */}

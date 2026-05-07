@@ -113,7 +113,7 @@ export function CreateTenantDialog({ open, onOpenChange }: Props) {
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper">
                   {(['STARTER', 'BUSINESS', 'ENTERPRISE', 'PLATFORM'] as const).map((p) => (
                     <SelectItem key={p} value={p}>{p}</SelectItem>
                   ))}

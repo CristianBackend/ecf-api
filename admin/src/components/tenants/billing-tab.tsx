@@ -261,7 +261,7 @@ function AssignPlanDialog({
               <SelectTrigger>
                 <SelectValue placeholder="Seleccioná un plan..." />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent position="popper">
                 {billingPlans.map((p) => (
                   <SelectItem key={p.code} value={p.code}>
                     <span className="font-medium">{p.code}</span>

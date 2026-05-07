@@ -192,7 +192,7 @@ export default function CompaniesPage() {
               <Label>Ambiente DGII</Label>
               <Select defaultValue="DEV" onValueChange={(v) => setValue('dgiiEnv', v as 'DEV' | 'CERT' | 'PROD')}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper">
                   <SelectItem value="DEV">Desarrollo</SelectItem>
                   <SelectItem value="CERT">Certificación</SelectItem>
                   <SelectItem value="PROD">Producción</SelectItem>

@@ -21,6 +21,13 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InvoiceDetailDrawer } from '@/components/invoices/invoice-detail-drawer';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+
+const ALL = '__all__';
+function toSelect(v: string) { return v || ALL; }
+function fromSelect(v: string) { return v === ALL ? '' : v; }
 
 const STATUS_BADGE: Record<InvoiceStatus, string> = {
   ACCEPTED: 'success', REJECTED: 'destructive', CONDITIONAL: 'warning',
@@ -121,35 +128,38 @@ export default function InvoicesPage() {
           />
           {/* Company */}
           {companies.length > 0 && (
-            <select
-              value={companyId}
-              onChange={(e) => { setCompanyId(e.target.value); resetPage(); }}
-              className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-            >
-              <option value="">Todas las empresas</option>
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>{c.businessName}</option>
-              ))}
-            </select>
+            <Select value={toSelect(companyId)} onValueChange={(v) => { setCompanyId(fromSelect(v)); resetPage(); }}>
+              <SelectTrigger className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                <SelectItem value={ALL}>Todas las empresas</SelectItem>
+                {companies.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.businessName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
           {/* Status */}
-          <select
-            value={status}
-            onChange={(e) => { setStatus(e.target.value); resetPage(); }}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="">Todos los estados</option>
-            {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <Select value={toSelect(status)} onValueChange={(v) => { setStatus(fromSelect(v)); resetPage(); }}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              <SelectItem value={ALL}>Todos los estados</SelectItem>
+              {STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
           {/* ECF type */}
-          <select
-            value={ecfType}
-            onChange={(e) => { setEcfType(e.target.value); resetPage(); }}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-          >
-            <option value="">Todos los tipos</option>
-            {ECF_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
+          <Select value={toSelect(ecfType)} onValueChange={(v) => { setEcfType(fromSelect(v)); resetPage(); }}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              <SelectItem value={ALL}>Todos los tipos</SelectItem>
+              {ECF_TYPES.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Date range + limit row */}
@@ -169,13 +179,17 @@ export default function InvoicesPage() {
             onChange={(e) => { setDateTo(e.target.value); resetPage(); }}
             title="Fecha fin"
           />
-          <select
-            value={limit}
-            onChange={(e) => { setLimit(Number(e.target.value) as typeof LIMITS[number]); resetPage(); }}
-            className="h-10 rounded-md border border-input bg-background px-3 text-sm ml-auto"
+          <Select
+            value={String(limit)}
+            onValueChange={(v) => { setLimit(Number(v) as typeof LIMITS[number]); resetPage(); }}
           >
-            {LIMITS.map((l) => <option key={l} value={l}>{l} por página</option>)}
-          </select>
+            <SelectTrigger className="w-36 ml-auto">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper">
+              {LIMITS.map((l) => <SelectItem key={l} value={String(l)}>{l} por página</SelectItem>)}
+            </SelectContent>
+          </Select>
           {hasFilters && (
             <Button variant="ghost" size="sm" onClick={clearFilters}>Limpiar filtros</Button>
           )}

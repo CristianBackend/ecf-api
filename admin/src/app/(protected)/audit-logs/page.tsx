@@ -9,6 +9,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+
+const ALL = '__all__';
+function toSelect(v: string) { return v || ALL; }
+function fromSelect(v: string) { return v === ALL ? '' : v; }
 
 async function fetchAuditLogs(page: number, entityType: string, action: string, dateFrom: string, dateTo: string) {
   const params = new URLSearchParams({ page: String(page), limit: '50' });
@@ -46,18 +53,28 @@ export default function AuditLogsPage() {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <select value={entityType} onChange={(e) => { setEntityType(e.target.value); setPage(1); }} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
-          <option value="">Todos los tipos</option>
-          {['invoice', 'company', 'certificate', 'tenant', 'apikey', 'webhook'].map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
-        <select value={action} onChange={(e) => { setAction(e.target.value); setPage(1); }} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
-          <option value="">Todas las acciones</option>
-          {['queued', 'created', 'updated', 'voided', 'accepted', 'rejected', 'signed', 'status_updated'].map((a) => (
-            <option key={a} value={a}>{a}</option>
-          ))}
-        </select>
+        <Select value={toSelect(entityType)} onValueChange={(v) => { setEntityType(fromSelect(v)); setPage(1); }}>
+          <SelectTrigger className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectItem value={ALL}>Todos los tipos</SelectItem>
+            {['invoice', 'company', 'certificate', 'tenant', 'apikey', 'webhook'].map((t) => (
+              <SelectItem key={t} value={t}>{t}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={toSelect(action)} onValueChange={(v) => { setAction(fromSelect(v)); setPage(1); }}>
+          <SelectTrigger className="w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectItem value={ALL}>Todas las acciones</SelectItem>
+            {['queued', 'created', 'updated', 'voided', 'accepted', 'rejected', 'signed', 'status_updated'].map((a) => (
+              <SelectItem key={a} value={a}>{a}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="h-10 rounded-md border border-input bg-background px-3 text-sm" />
         <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="h-10 rounded-md border border-input bg-background px-3 text-sm" />
       </div>

@@ -231,7 +231,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
                       onValueChange={(v) => setValue('dgiiEnv', v as 'DEV' | 'CERT' | 'PROD')}
                     >
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
+                      <SelectContent position="popper">
                         <SelectItem value="DEV">Desarrollo</SelectItem>
                         <SelectItem value="CERT">Certificación</SelectItem>
                         <SelectItem value="PROD">Producción</SelectItem>
@@ -381,7 +381,7 @@ export default function CompanyDetailPage({ params }: { params: Promise<{ id: st
                 <Field label="Tipo e-CF *">
                   <Select defaultValue="E31" onValueChange={(v) => setSeqVal('ecfType', v as typeof ECF_TYPES[number])}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
+                    <SelectContent position="popper">
                       {ECF_TYPES.map((t) => (
                         <SelectItem key={t} value={t}>{ECF_LABELS[t]}</SelectItem>
                       ))}

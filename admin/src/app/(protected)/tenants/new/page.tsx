@@ -370,7 +370,7 @@ export default function NewTenantPage() {
                 <SelectTrigger>
                   <SelectValue placeholder="Sin plan (asignar después)" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper">
                   <SelectItem value="none">
                     <span className="text-muted-foreground">Sin plan (asignar después)</span>
                   </SelectItem>
