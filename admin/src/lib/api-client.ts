@@ -1,4 +1,5 @@
-import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosError } from 'axios';
+import { toast } from 'sonner';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000/api/v1';
 
@@ -25,14 +26,46 @@ apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-// Response interceptor: on 401, clear auth and redirect to /login
+// Response interceptor: handle auth and billing errors globally
 apiClient.interceptors.response.use(
   (res) => res,
-  (error) => {
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
+  (error: AxiosError<{ error?: { message?: string } }>) => {
+    if (typeof window === 'undefined') return Promise.reject(error);
+
+    const status = error.response?.status;
+
+    if (status === 401) {
       localStorage.removeItem('ecf-admin-auth');
       window.location.href = '/login';
+      return Promise.reject(error);
     }
+
+    if (status === 402) {
+      const msg =
+        error.response?.data?.error?.message ??
+        'Plan vencido o límite de facturas alcanzado';
+
+      toast.error(`No se pudo crear la factura: ${msg}`, {
+        duration: Infinity, // persistent — user must dismiss
+        action: {
+          label: 'Ver mi plan',
+          onClick: () => { window.location.href = '/settings?tab=plan'; },
+        },
+      });
+
+      // Only redirect normal tenants (not admins — admins are exempt and
+      // should not see a 402 from the guard, but guard it defensively).
+      try {
+        const raw = localStorage.getItem('ecf-admin-auth');
+        const parsed = raw ? (JSON.parse(raw) as { state?: { isSuperAdmin?: boolean } }) : null;
+        if (!parsed?.state?.isSuperAdmin) {
+          window.location.href = '/settings?tab=plan';
+        }
+      } catch {
+        window.location.href = '/settings?tab=plan';
+      }
+    }
+
     return Promise.reject(error);
   },
 );
