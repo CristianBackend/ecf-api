@@ -1384,3 +1384,61 @@ del localStorage). Los admins jamás deberían recibir 402 (el guard los exime).
 No hay test runner configurado en el frontend admin (no hay Jest/Vitest).
 El build Next.js (tsc + bundler) valida los tipos estáticamente.
 npm run build → exitoso en todas las subtareas.
+
+
+---
+
+## Z-index audit and global dropdown fix
+
+### Commit
+
+`e8940b9` — fix(admin-ui): consistent z-index for all dropdown/popover components
+
+### Problema
+
+Los dropdowns de `<SelectContent>` de shadcn/ui aparecían detrás del contenido
+de la página en Next.js 16 + React 19. Aunque Radix UI usa Portal (renderiza en
+`document.body`), el z-index original de `z-50` no era suficiente en el contexto
+del layout protegido que tiene dos contenedores `overflow-hidden` anidados. En
+algunas versiones de React 19 y/o browsers, esta combinación puede crear un
+stacking context que interfiere con los elementos posicionados via Portal.
+
+### Componentes modificados
+
+| Componente | Antes | Después |
+|---|---|---|
+| `SelectContent` (select.tsx) | `z-50` | `z-[200]` |
+| `DialogOverlay` (dialog.tsx) | `z-50` | `z-[100]` |
+| `DialogContent` (dialog.tsx) | `z-50` | `z-[100]` |
+| `SheetOverlay` (sheet.tsx) | `z-50` | `z-[100]` |
+| `SheetContent` (sheet.tsx) | `z-50` | `z-[100]` |
+| `ForceChangePasswordModal` | `z-[100]` | `z-[9999]` |
+| audit-logs metadata modal | `z-50` | `z-[100]` |
+| CredentialsScreen (/tenants/new) | `z-50` | `z-[100]` |
+
+### Stack de z-index resultante
+
+```
+z-10    Sidebar collapse button (UI chrome)
+z-[100] Dialog/Sheet overlay + content, custom full-screen overlays
+z-[200] SelectContent via Portal — aparece sobre todo, incluso dialogs
+          (necesario para Select dentro de Dialog)
+z-[9999] ForceChangePasswordModal — siempre encima de todo, incluyendo
+          dropdowns abiertos
+```
+
+### Por qué z-[200] para Select y z-[100] para Dialog
+
+- Si SelectContent fuera `z-[100]` igual que Dialog, abrir un Select dentro de
+  un Dialog lo renderizaría detrás del dialog overlay. Con `z-[200]` el Select
+  aparece correctamente encima del dialog.
+- El único caso donde esto es "incorrecto" es si un Dialog se abre mientras hay
+  un Select visible — el dialog overlay (z-100) quedaría detrás del dropdown
+  (z-200). En la práctica esto no ocurre porque Radix cierra los Selects cuando
+  se abre un Dialog.
+
+### Native <select> elementos
+
+Los `<select>` HTML nativos (en audit-logs, invoices, tenants list) no se tocaron
+— los browsers siempre los renderizan encima de todo el contenido, sin importar
+el z-index.
