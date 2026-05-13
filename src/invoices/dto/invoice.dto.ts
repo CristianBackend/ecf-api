@@ -456,6 +456,16 @@ export class CreateInvoiceDto {
   @MaxLength(64, { message: 'Clave de idempotencia no puede exceder 64 caracteres' })
   idempotencyKey?: string;
 
+  @ApiPropertyOptional({
+    description: 'Forzar número específico dentro del rango de la secuencia (solo CERT/DEV, prohibido en PROD). Útil para set de pruebas DGII.',
+    example: 15,
+    minimum: 1,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  encfOverride?: number;
+
   @ApiPropertyOptional({ description: 'Metadata custom (no se envía a DGII, útil para referenciar entidades propias)', example: { orderId: 'ORD-2026-001', customerId: 'CUST-789' } })
   @IsOptional()
   @IsObject({ message: 'Metadata debe ser un objeto JSON' })

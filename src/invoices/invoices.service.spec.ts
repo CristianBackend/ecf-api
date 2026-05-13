@@ -10,7 +10,7 @@
  * Prisma, QueueService, and all DGII-adjacent dependencies are mocked so the
  * suite runs without a live database or Redis.
  */
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { InvoicesService } from './invoices.service';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 import { makeTestLogger } from '../common/logger/test-logger';
@@ -351,6 +351,96 @@ describe('InvoicesService.create — async pipeline', () => {
         NotFoundException,
       );
       expect(mocks.queueService.enqueueEcfProcessing).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('metadata._originalDto no filtra encfOverride', () => {
+    it('sin override → metadata._certification ausente, _originalDto sin encfOverride', async () => {
+      await service.create('tenant-1', makeValidDto());
+
+      const createArgs = mocks.prisma.invoice.create.mock.calls[0][0];
+      const meta = createArgs.data.metadata;
+      expect(meta._originalDto).not.toHaveProperty('encfOverride');
+      expect(meta._certification).toBeUndefined();
+    });
+
+    it('con override → _certification presente, _originalDto sin encfOverride', async () => {
+      mocks.prisma.company.findFirst.mockResolvedValueOnce({
+        ...makeCompany(),
+        dgiiEnv: 'CERT',
+      });
+      mocks.sequencesService.getNextEncf.mockResolvedValueOnce('E320000000015');
+      mocks.prisma.invoice.findFirst.mockResolvedValueOnce({
+        id: 'invoice-uuid-1',
+        tenantId: 'tenant-1',
+        encf: 'E320000000015',
+        status: 'QUEUED',
+        ecfType: 'E32',
+        lines: [],
+        company: { rnc: '131234567', businessName: 'Emisor SRL' },
+        isRfce: false,
+      });
+
+      await service.create('tenant-1', makeValidDto({
+        ecfType: 'E32',
+        buyer: { name: 'Consumidor', type: 2 },
+        encfOverride: 15,
+      }));
+
+      const createArgs = mocks.prisma.invoice.create.mock.calls[0][0];
+      const meta = createArgs.data.metadata;
+      expect(meta._originalDto).not.toHaveProperty('encfOverride');
+      expect(meta._certification).toMatchObject({
+        forcedEncf: true,
+        forcedNumber: 15,
+        forcedAt: expect.any(String),
+      });
+    });
+  });
+
+  describe('encfOverride', () => {
+    it('7. encfOverride en company dgiiEnv=PROD → ForbiddenException, sin enqueue', async () => {
+      mocks.prisma.company.findFirst.mockResolvedValueOnce({
+        ...makeCompany(),
+        dgiiEnv: 'PROD',
+      });
+
+      const dto = makeValidDto({ encfOverride: 5 });
+      await expect(service.create('tenant-1', dto)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(mocks.queueService.enqueueEcfProcessing).not.toHaveBeenCalled();
+    });
+
+    it('8. encfOverride en company dgiiEnv=CERT → pasa override a getNextEncf y retorna ENCF correcto', async () => {
+      mocks.prisma.company.findFirst.mockResolvedValueOnce({
+        ...makeCompany(),
+        dgiiEnv: 'CERT',
+      });
+      mocks.sequencesService.getNextEncf.mockResolvedValueOnce('E320000000015');
+      mocks.prisma.invoice.findFirst.mockResolvedValueOnce({
+        id: 'invoice-uuid-1',
+        tenantId: 'tenant-1',
+        encf: 'E320000000015',
+        status: 'QUEUED',
+        ecfType: 'E32',
+        lines: [],
+        company: { rnc: '131234567', businessName: 'Emisor SRL' },
+        isRfce: false,
+      });
+
+      const dto = makeValidDto({
+        ecfType: 'E32',
+        buyer: { name: 'Consumidor Final', type: 2 },
+        encfOverride: 15,
+      });
+      const result = await service.create('tenant-1', dto);
+
+      expect(mocks.sequencesService.getNextEncf).toHaveBeenCalledWith(
+        'tenant-1',
+        'company-uuid-1',
+        'E32',
+        15,
+      );
+      expect(result.encf).toBe('E320000000015');
     });
   });
 

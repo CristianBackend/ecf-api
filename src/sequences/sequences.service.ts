@@ -140,12 +140,28 @@ export class SequencesService {
    * Uses SELECT FOR UPDATE to prevent race conditions under concurrent load.
    * Returns the full eNCF string (e.g., "E310000000001")
    */
-  async getNextEncf(tenantId: string, companyId: string, ecfType: EcfType): Promise<string> {
+  async getNextEncf(tenantId: string, companyId: string, ecfType: EcfType, overrideNumber?: number): Promise<string> {
     return this.prisma.$transaction(async (tx) => {
-      // S7 fix: Use raw SELECT FOR UPDATE to lock the row, preventing concurrent
-      // reads from getting the same currentNumber
+      // SELECT FOR UPDATE locks the row to prevent concurrent reads from getting
+      // the same currentNumber. Column aliases map snake_case DB columns (via
+      // @map in schema) back to camelCase for the rest of this method.
       const sequences: any[] = await tx.$queryRawUnsafe(
-        `SELECT * FROM "Sequence" WHERE "tenantId" = $1 AND "companyId" = $2 AND "ecfType" = $3 AND "isActive" = true LIMIT 1 FOR UPDATE`,
+        `SELECT id,
+                tenant_id        AS "tenantId",
+                company_id       AS "companyId",
+                ecf_type         AS "ecfType",
+                prefix,
+                current_number   AS "currentNumber",
+                start_number     AS "startNumber",
+                end_number       AS "endNumber",
+                expires_at       AS "expiresAt",
+                is_active        AS "isActive"
+         FROM   sequences
+         WHERE  tenant_id  = $1::uuid
+           AND  company_id = $2::uuid
+           AND  ecf_type   = $3::"EcfType"
+           AND  is_active  = true
+         LIMIT 1 FOR UPDATE`,
         tenantId,
         companyId,
         ecfType,
@@ -169,6 +185,20 @@ export class SequencesService {
         throw new BadRequestException(
           `La secuencia para tipo ${ecfType} ha expirado. Solicite una nueva a la DGII.`,
         );
+      }
+
+      if (overrideNumber !== undefined) {
+        if (overrideNumber < sequence.startNumber || overrideNumber > sequence.endNumber) {
+          throw new BadRequestException(
+            `encfOverride ${overrideNumber} fuera del rango de secuencia [${sequence.startNumber}-${sequence.endNumber}]`,
+          );
+        }
+        const newCurrent = Math.max(sequence.currentNumber, overrideNumber);
+        await tx.sequence.update({
+          where: { id: sequence.id },
+          data: { currentNumber: newCurrent },
+        });
+        return `${sequence.prefix}${String(overrideNumber).padStart(10, '0')}`;
       }
 
       const nextNumber = sequence.currentNumber + 1;

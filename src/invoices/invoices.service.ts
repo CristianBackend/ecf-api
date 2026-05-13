@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
@@ -126,7 +127,18 @@ export class InvoicesService {
     const ecfType = dto.ecfType as EcfType;
     const typeCode = ECF_TYPE_CODES[dto.ecfType as keyof typeof ECF_TYPE_CODES];
 
-    const encf = await this.sequencesService.getNextEncf(tenantId, dto.companyId, ecfType);
+    if (dto.encfOverride !== undefined) {
+      if (company.dgiiEnv === 'PROD') {
+        throw new ForbiddenException(
+          'encfOverride no permitido en ambiente PROD. Solo disponible en CERT y DEV.',
+        );
+      }
+      this.logger.warn(
+        `[ENCF OVERRIDE] tenant=${tenantId} company=${dto.companyId} type=${dto.ecfType} forcedNumber=${dto.encfOverride} dgiiEnv=${company.dgiiEnv}`,
+      );
+    }
+
+    const encf = await this.sequencesService.getNextEncf(tenantId, dto.companyId, ecfType, dto.encfOverride);
     this.logger.info(`eNCF assigned: ${encf}`);
 
     const activeSequence = await this.prisma.sequence.findFirst({
@@ -204,7 +216,20 @@ export class InvoicesService {
           exportInfo: ecfType === EcfType.E46 && dto.additionalInfo ? dto.additionalInfo as any : null,
           foreignBeneficiaryInfo: ecfType === EcfType.E47 && dto.foreignBeneficiary ? dto.foreignBeneficiary as any : null,
           retentionAmount: dto.retentionAmount ?? null,
-          metadata: { ...dto.metadata, _originalDto: dto } as any,
+          metadata: (() => {
+            const { encfOverride: forcedNumber, ...dtoForMetadata } = dto;
+            return {
+              ...dto.metadata,
+              _originalDto: dtoForMetadata,
+              ...(forcedNumber !== undefined && {
+                _certification: {
+                  forcedEncf: true,
+                  forcedNumber,
+                  forcedAt: new Date().toISOString(),
+                },
+              }),
+            };
+          })() as any,
         },
       });
 
