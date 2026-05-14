@@ -8,9 +8,10 @@ import { DgiiService } from '../dgii/dgii.service';
 import { CertificatesService } from '../certificates/certificates.service';
 import { QueueService } from './queue.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { XsdValidationService } from '../validation/xsd-validation.service';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 import { QUEUES } from './queue.constants';
-import { FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-types';
+import { FC_FULL_SUBMISSION_THRESHOLD, ECF_TYPE_CODES } from '../xml-builder/ecf-types';
 
 export interface EcfProcessingJobData {
   invoiceId: string;
@@ -26,9 +27,10 @@ export interface EcfProcessingJobData {
  * Flow:
  * 1. Load invoice + unsigned XML from DB
  * 2. Get certificate (.p12)
- * 3. Sign XML with XMLDSig (enveloped, RSA-SHA256, C14N 1.0) — NOT XAdES.
- *    DGII requires plain W3C XMLDSig; there is no <xades:QualifyingProperties>
- *    block in the signature. See src/signing/signing.service.ts.
+ * 3. Sign XML with XMLDSig — inserts FechaHoraFirma then computes Signature.
+ *    DGII requires plain W3C XMLDSig (not XAdES). See signing.service.ts.
+ * 3b. Validate signed XML against DGII XSD (FechaHoraFirma now present).
+ *     Failure → status ERROR, no DGII call, no retry.
  * 4. Authenticate with DGII (semilla/token)
  * 5. Submit signed XML (or RFCE for E32 < 250K)
  * 6. Update invoice status + trackId
@@ -46,6 +48,7 @@ export class EcfProcessingProcessor extends WorkerHost {
     private readonly signingService: SigningService,
     private readonly dgiiService: DgiiService,
     private readonly certificatesService: CertificatesService,
+    private readonly xsdValidation: XsdValidationService,
     private readonly queueService: QueueService,
     private readonly webhooksService: WebhooksService,
     @InjectPinoLogger(EcfProcessingProcessor.name)
@@ -94,7 +97,7 @@ export class EcfProcessingProcessor extends WorkerHost {
 
       this.logger.info(`XML signed: ${invoice.encf} | Security: ${securityCode}`);
 
-      // Update with signed data
+      // Save signed data now — preserved even if XSD validation fails below
       await this.prisma.invoice.update({
         where: { id: invoiceId },
         data: {
@@ -104,6 +107,28 @@ export class EcfProcessingProcessor extends WorkerHost {
           status: InvoiceStatus.PROCESSING,
         },
       });
+
+      // 3b. Validate signed XML against DGII XSD.
+      // Must run post-sign: FechaHoraFirma (minOccurs=1) is only present after signXml().
+      if (this.xsdValidation.isAvailable()) {
+        const typeCode = ECF_TYPE_CODES[invoice.ecfType as keyof typeof ECF_TYPE_CODES];
+        const xsdResult = await this.xsdValidation.validateXml(signedXml, typeCode);
+        if (!xsdResult.valid) {
+          const errorMsg = xsdResult.errors.slice(0, 3).join('; ');
+          this.logger.error(`XSD validation failed for ${invoice.encf}: ${errorMsg}`);
+          await this.prisma.invoice.update({
+            where: { id: invoiceId },
+            data: { status: InvoiceStatus.ERROR, dgiiMessage: `XSD validation failed: ${errorMsg}` },
+          });
+          await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_ERROR, {
+            invoiceId, encf: invoice.encf, error: `XSD validation failed: ${errorMsg}`,
+          }).catch(() => {});
+          return { status: InvoiceStatus.ERROR, error: errorMsg };
+        }
+        this.logger.info(`XSD validation passed for ${invoice.encf} (${xsdResult.schema})`);
+      } else {
+        this.logger.warn(`XSD validation unavailable for ${invoice.encf} — xmllint not installed`);
+      }
 
       // 4. Authenticate with DGII
       const token = await this.dgiiService.getToken(

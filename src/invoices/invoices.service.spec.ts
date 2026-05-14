@@ -104,11 +104,6 @@ function makeMocks() {
     buildRfceXml: jest.fn() as Mock,
   };
 
-  const xsdValidation = {
-    isAvailable: jest.fn(() => false) as Mock,
-    validateXml: jest.fn() as Mock,
-  };
-
   const sequencesService = {
     getNextEncf: jest.fn(async () => 'E310000000001') as Mock,
   };
@@ -138,7 +133,6 @@ function makeMocks() {
   return {
     prisma,
     xmlBuilder,
-    xsdValidation,
     sequencesService,
     rncValidation,
     queueService,
@@ -160,7 +154,6 @@ function buildService(mocks: ReturnType<typeof makeMocks>) {
     mocks.certificatesService,
     mocks.sequencesService as any,
     mocks.validationService,
-    mocks.xsdValidation as any,
     mocks.rncValidation as any,
     mocks.queueService as any,
     mocks.webhooksService as any,

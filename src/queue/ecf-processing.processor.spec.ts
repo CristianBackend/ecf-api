@@ -75,6 +75,17 @@ function makeProcessor() {
     })) as Mock,
   };
 
+  const xsdValidation = {
+    isAvailable: jest.fn(() => true) as Mock,
+    validateXml: jest.fn(async () => ({
+      valid: true,
+      errors: [],
+      warnings: [],
+      schema: 'e-CF-31.xsd',
+      durationMs: 5,
+    })) as Mock,
+  };
+
   const queueService = {
     enqueueStatusPoll: jest.fn(async () => ({ id: 'poll-1' })) as Mock,
   };
@@ -89,6 +100,7 @@ function makeProcessor() {
     signingService as any,
     dgiiService as any,
     certificatesService as any,
+    xsdValidation as any,
     queueService as any,
     webhooksService as any,
     makeTestLogger(),
@@ -101,6 +113,7 @@ function makeProcessor() {
     signingService,
     dgiiService,
     certificatesService,
+    xsdValidation,
     queueService,
     webhooksService,
   };
@@ -281,6 +294,91 @@ describe('EcfProcessingProcessor', () => {
       expect(m.signingService.signXml).not.toHaveBeenCalled();
       expect(m.dgiiService.submitEcf).not.toHaveBeenCalled();
       expect(m.webhooksService.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('XSD validation post-sign', () => {
+    it('proceeds to DGII when XSD validation passes', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+      m.dgiiService.submitEcf.mockResolvedValue({
+        status: 1, trackId: 'TRACK-XSD-OK', message: 'Aceptado',
+      });
+      // default mock returns valid: true
+
+      const result = await m.processor.process(makeJob());
+
+      expect(m.xsdValidation.isAvailable).toHaveBeenCalled();
+      expect(m.xsdValidation.validateXml).toHaveBeenCalledWith(
+        '<ECF><Signature/></ECF>',
+        31, // E31 → typeCode 31
+      );
+      expect(result.status).toBe(InvoiceStatus.ACCEPTED);
+      expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
+    });
+
+    it('marks ERROR and fires INVOICE_ERROR when XSD validation fails post-sign', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+      m.xsdValidation.validateXml.mockResolvedValue({
+        valid: false,
+        errors: ["Element 'ECF': Missing child element(s). Expected is ( FechaHoraFirma )"],
+        warnings: [],
+        schema: 'e-CF-31.xsd',
+        durationMs: 8,
+      });
+
+      const result = await m.processor.process(makeJob());
+
+      expect(result.status).toBe(InvoiceStatus.ERROR);
+
+      // xmlSigned is saved before validation — should persist for audit
+      const firstUpdate = m.prisma.invoice.update.mock.calls[0][0].data;
+      expect(firstUpdate.xmlSigned).toBe('<ECF><Signature/></ECF>');
+      expect(firstUpdate.status).toBe(InvoiceStatus.PROCESSING);
+
+      // Second update marks ERROR
+      const secondUpdate = m.prisma.invoice.update.mock.calls[1][0].data;
+      expect(secondUpdate.status).toBe(InvoiceStatus.ERROR);
+      expect(secondUpdate.dgiiMessage).toMatch(/XSD validation failed/);
+
+      // DGII is never called
+      expect(m.dgiiService.getToken).not.toHaveBeenCalled();
+      expect(m.dgiiService.submitEcf).not.toHaveBeenCalled();
+
+      // INVOICE_ERROR webhook fired
+      const events = m.webhooksService.emit.mock.calls.map((c) => c[1]);
+      expect(events).toContain(WebhookEvent.INVOICE_ERROR);
+    });
+
+    it('skips XSD validation and proceeds to DGII when xmllint is unavailable', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+      m.xsdValidation.isAvailable.mockReturnValue(false);
+      m.dgiiService.submitEcf.mockResolvedValue({
+        status: 1, trackId: 'TRACK-NO-XSD', message: 'Aceptado',
+      });
+
+      const result = await m.processor.process(makeJob());
+
+      expect(m.xsdValidation.validateXml).not.toHaveBeenCalled();
+      expect(result.status).toBe(InvoiceStatus.ACCEPTED);
+      expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
+    });
+
+    it('validates E33 (nota de débito) signed XML with typeCode 33', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice({ ecfType: 'E33', encf: 'E330000000001' }));
+      m.dgiiService.submitEcf.mockResolvedValue({
+        status: 1, trackId: 'TRACK-E33', message: 'Aceptado',
+      });
+
+      await m.processor.process(makeJob());
+
+      expect(m.xsdValidation.validateXml).toHaveBeenCalledWith(
+        expect.any(String),
+        33, // E33 → typeCode 33
+      );
     });
   });
 });

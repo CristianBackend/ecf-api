@@ -13,7 +13,6 @@ import { DgiiService } from '../dgii/dgii.service';
 import { CertificatesService } from '../certificates/certificates.service';
 import { SequencesService } from '../sequences/sequences.service';
 import { ValidationService } from '../validation/validation.service';
-import { XsdValidationService } from '../validation/xsd-validation.service';
 import { RncValidationService } from '../common/services/rnc-validation.service';
 import { QueueService } from '../queue/queue.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
@@ -36,7 +35,6 @@ export class InvoicesService {
     private readonly certificatesService: CertificatesService,
     private readonly sequencesService: SequencesService,
     private readonly validationService: ValidationService,
-    private readonly xsdValidation: XsdValidationService,
     private readonly rncValidation: RncValidationService,
     private readonly queueService: QueueService,
     private readonly webhooksService: WebhooksService,
@@ -55,11 +53,12 @@ export class InvoicesService {
    * 2. Company lookup + DGII business validations (RNC, E33/E34 reference,
    *    discount-per-line, E32 250K threshold, credit term-days)
    * 3. eNCF assignment from sequences
-   * 4. Unsigned XML build + local XSD validation
+   * 4. Unsigned XML build
    * 5. INSERT invoice (status=QUEUED) + invoice lines
    * 6. Audit log
-   * 7. Enqueue EcfProcessingProcessor — the processor owns signing, DGII
-   *    submission, status polling, webhook delivery and retry/contingency.
+   * 7. Enqueue EcfProcessingProcessor — the processor owns signing, XSD
+   *    validation (post-sign so FechaHoraFirma is present), DGII submission,
+   *    status polling, webhook delivery and retry/contingency.
    *
    * The controller returns HTTP 202 Accepted with { id, eNCF, status:
    * 'QUEUED' }. All DGII interaction happens out-of-request.
@@ -167,18 +166,6 @@ export class InvoicesService {
       emitterData,
       encf,
     );
-
-    if (this.xsdValidation.isAvailable()) {
-      const xsdResult = await this.xsdValidation.validateXml(unsignedXml, typeCode);
-      if (!xsdResult.valid) {
-        this.logger.error(`XSD validation failed for ${encf}: ${xsdResult.errors.join('; ')}`);
-        throw new BadRequestException(
-          `XML no pasa validación XSD de DGII: ${xsdResult.errors.slice(0, 3).join('; ')}`,
-        );
-      }
-    } else {
-      this.logger.warn(`XSD validation unavailable for ${encf} — xmllint not installed`);
-    }
 
     const isRfce = typeCode === 32 && totals.totalAmount < FC_FULL_SUBMISSION_THRESHOLD;
 
