@@ -940,4 +940,197 @@ describe('XmlBuilderService', () => {
       expect(typeof service.buildRfceXml).toBe('function');
     });
   });
+
+  // ============================================================
+  // O. E47 XSD COMPLIANCE (certification fixes)
+  // ============================================================
+
+  describe('E47 XSD Compliance', () => {
+    const e47Buyer: BuyerInput = { name: 'Foreign Corp Ltd', foreignId: 'US-TAX-123456' };
+
+    const e47Item = (overrides?: Partial<InvoiceItemInput>): InvoiceItemInput => ({
+      description: 'Honorarios profesionales al exterior',
+      quantity: 1,
+      unitPrice: 5000,
+      itbisRate: 0,
+      indicadorFacturacion: 4, // Exento
+      retencionIndicador: 1,
+      goodService: 2,
+      ...overrides,
+    });
+
+    function makeE47(overrides?: Partial<InvoiceInput>): InvoiceInput {
+      return {
+        companyId: 'test-company-id',
+        ecfType: 'E47',
+        buyer: e47Buyer,
+        items: [e47Item()],
+        payment: { type: 1 },
+        ...overrides,
+      };
+    }
+
+    // -- FIX 1: buildTransporte --
+
+    it('E47 Transporte with countryDestination → emits only <PaisDestino>', () => {
+      const input = makeE47({
+        transport: {
+          countryDestination: 'United States',
+          conductor: 'Juan Perez',        // must NOT appear in E47
+          placa: 'ABC-1234',              // must NOT appear in E47
+          numeroAlbaran: 'ALBN-001',      // must NOT appear in E47
+        },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000001');
+
+      expect(hasTag(xml, 'Transporte')).toBe(true);
+      expect(tagContent(xml, 'PaisDestino')).toBe('United States');
+      expect(xml).not.toContain('<Conductor>');
+      expect(xml).not.toContain('<Placa>');
+      expect(xml).not.toContain('<NumeroAlbaran>');
+      expect(xml).not.toContain('<RutaTransporte>');
+      expect(xml).not.toContain('<ZonaTransporte>');
+    });
+
+    it('E47 Transporte without countryDestination → no <Transporte> emitted', () => {
+      const input = makeE47({
+        transport: {
+          conductor: 'Juan Perez', // only field but NOT PaisDestino
+        },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000001');
+      expect(xml).not.toContain('<Transporte>');
+    });
+
+    it('E47 without transport in DTO → no <Transporte> emitted', () => {
+      const input = makeE47(); // no transport field
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000001');
+      expect(xml).not.toContain('<Transporte>');
+    });
+
+    // -- FIX 2: MontoISRRetenido always emitted for E47 --
+
+    it('E47 Retencion without montoIsrRetenido → emits <MontoISRRetenido>0</MontoISRRetenido>', () => {
+      const input = makeE47({
+        items: [e47Item({ retencionIndicador: 1 })], // no montoIsrRetenido
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000001');
+
+      expect(xml).toContain('<Retencion>');
+      expect(xml).toContain('<MontoISRRetenido>0.00</MontoISRRetenido>');
+    });
+
+    it('E47 Retencion with montoIsrRetenido → emits the actual value', () => {
+      const input = makeE47({
+        items: [e47Item({ retencionIndicador: 1, montoIsrRetenido: 750 })],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000001');
+
+      expect(xml).toContain('<MontoISRRetenido>750.00</MontoISRRetenido>');
+    });
+
+    it('E47 Retencion does NOT emit MontoITBISRetenido (not allowed per XSD)', () => {
+      const input = makeE47({
+        items: [e47Item({ retencionIndicador: 1, montoItbisRetenido: 100, montoIsrRetenido: 750 })],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000001');
+
+      expect(xml).not.toContain('<MontoITBISRetenido>');
+      expect(xml).toContain('<MontoISRRetenido>750.00</MontoISRRetenido>');
+    });
+
+    // -- FIX 3: buildOtraMoneda restricted to 4 fields for E47 --
+
+    it('E47 OtraMoneda emits ONLY TipoMoneda, TipoCambio, MontoExentoOtraMoneda, MontoTotalOtraMoneda', () => {
+      const input = makeE47({
+        currency: { code: 'USD', exchangeRate: 59.5 },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000001');
+
+      expect(hasTag(xml, 'OtraMoneda')).toBe(true);
+      expect(tagContent(xml, 'TipoMoneda')).toBe('USD');
+      expect(tagContent(xml, 'TipoCambio')).toBeTruthy();
+
+      // Must NOT have ITBIS, gravado, or ImpuestosAdicionales fields in OtraMoneda
+      expect(xml).not.toContain('<MontoGravadoTotalOtraMoneda>');
+      expect(xml).not.toContain('<TotalITBISOtraMoneda>');
+      expect(xml).not.toContain('<MontoGravado1OtraMoneda>');
+      expect(xml).not.toContain('<ImpuestosAdicionalesOtraMoneda>');
+
+      // Must have MontoTotalOtraMoneda
+      expect(hasTag(xml, 'MontoTotalOtraMoneda')).toBe(true);
+    });
+
+    it('E47 OtraMoneda with exempt items → emits MontoExentoOtraMoneda', () => {
+      const input = makeE47({
+        items: [e47Item({ unitPrice: 5000, indicadorFacturacion: 4 })], // exento
+        currency: { code: 'USD', exchangeRate: 59.5 },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000001');
+
+      expect(hasTag(xml, 'MontoExentoOtraMoneda')).toBe(true);
+    });
+
+    it('E32 OtraMoneda (control) → still emits gravado and ITBIS fields', () => {
+      const input = makeInput('E32', {
+        buyer: consumerBuyer,
+        items: [basicItem({ itbisRate: 18, unitPrice: 1000 })],
+        currency: { code: 'USD', exchangeRate: 59.5 },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E320000000001');
+
+      expect(hasTag(xml, 'OtraMoneda')).toBe(true);
+      expect(hasTag(xml, 'MontoGravadoTotalOtraMoneda')).toBe(true);
+      expect(hasTag(xml, 'TotalITBISOtraMoneda')).toBe(true);
+    });
+
+    // -- FIX 5 (Paginacion complex element) --
+
+    it('Paginacion SubtotalImpuestoAdicional emits complex element when ISC fields provided', () => {
+      const input = makeInput('E31', {
+        paginacion: [{
+          paginaNo: 1,
+          noLineaDesde: 1,
+          noLineaHasta: 5,
+          montoSubtotalPagina: 5000,
+          subtotalIscEspecificoPagina: 150,
+          subtotalOtrosImpuestoPagina: 80,
+        }],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+
+      expect(hasTag(xml, 'SubtotalImpuestoAdicional')).toBe(true);
+      expect(xml).toContain('<SubtotalImpuestoSelectivoConsumoEspecificoPagina>150.00</SubtotalImpuestoSelectivoConsumoEspecificoPagina>');
+      expect(xml).toContain('<SubtotalOtrosImpuesto>80.00</SubtotalOtrosImpuesto>');
+    });
+
+    it('Paginacion without ISC fields → no SubtotalImpuestoAdicional complex element', () => {
+      const input = makeInput('E31', {
+        paginacion: [{
+          paginaNo: 1,
+          noLineaDesde: 1,
+          noLineaHasta: 5,
+          montoSubtotalPagina: 5000,
+        }],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+
+      expect(hasTag(xml, 'SubtotalImpuestoAdicional')).toBe(false);
+    });
+
+    it('Paginacion SubtotalImpuestoAdicionalPagina (simple) still emits correctly', () => {
+      const input = makeInput('E31', {
+        paginacion: [{
+          paginaNo: 1,
+          noLineaDesde: 1,
+          noLineaHasta: 5,
+          montoSubtotalPagina: 5000,
+          subtotalImpuestoAdicionalPagina: 250,
+        }],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+
+      expect(xml).toContain('<SubtotalImpuestoAdicionalPagina>250.00</SubtotalImpuestoAdicionalPagina>');
+    });
+  });
 });

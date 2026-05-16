@@ -317,8 +317,12 @@ export interface PaginacionInput {
   subtotalItbis2Pagina?: number;
   /** ITBIS at 0% */
   subtotalItbis3Pagina?: number;
-  /** Additional tax for this page */
+  /** Additional tax for this page (simple total — SubtotalImpuestoAdicionalPagina) */
   subtotalImpuestoAdicionalPagina?: number;
+  /** ISC Específico for this page — child of complex SubtotalImpuestoAdicional element */
+  subtotalIscEspecificoPagina?: number;
+  /** Otros impuestos for this page — child of complex SubtotalImpuestoAdicional element */
+  subtotalOtrosImpuestoPagina?: number;
   /** Page subtotal amount */
   montoSubtotalPagina: number;
   /** Non-billable amount for this page */

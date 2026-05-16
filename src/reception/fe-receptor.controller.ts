@@ -135,8 +135,9 @@ export class FeReceptorController {
     const encf = this.extractXmlField(xmlContent, 'eNCF');
 
     // ----------------------------------------------------------------
-    // STEP 1: Look up the receiving company FIRST (before validation)
-    // so we can sign error ARECFs with the receiver's certificate.
+    // STEP 1: Look up the receiving company and load its certificate.
+    // Must run BEFORE signature verification so the error ARECF for a bad
+    // signature can be signed with the receiver's cert.
     // Per DGII protocol, ALL ARECFs should be signed when possible.
     // ----------------------------------------------------------------
     let company: any = null;
@@ -160,7 +161,20 @@ export class FeReceptorController {
     }
 
     // ----------------------------------------------------------------
-    // STEP 2: Validate the incoming e-CF — return signed error ARECFs
+    // STEP 2: Verify the emitter's digital signature.
+    // Done after receptor lookup so the error ARECF can be signed when
+    // the receiver's certificate is available.
+    // Per DGII Descripción Técnica: reject with Estado=1, Código=2 on failure.
+    // ----------------------------------------------------------------
+    try {
+      this.signingService.verifySignedXml(xmlContent);
+    } catch (error: any) {
+      this.logger.warn(`Invalid signature on received e-CF ${encf} from ${rncEmisor}: ${error.message}`);
+      return this.buildSignedErrorArecf(rncEmisor || '', rncComprador || '', encf || '', 2, signingMaterial);
+    }
+
+    // ----------------------------------------------------------------
+    // STEP 3: Validate the incoming e-CF — return signed error ARECFs
     // ----------------------------------------------------------------
     if (!rncEmisor || !encf) {
       return this.buildSignedErrorArecf(rncEmisor || '', rncComprador || '', encf || '', 1, signingMaterial);
@@ -183,7 +197,7 @@ export class FeReceptorController {
     }
 
     // ----------------------------------------------------------------
-    // STEP 3: Store the received document
+    // STEP 4: Store the received document
     // ----------------------------------------------------------------
     const emitterName = this.extractXmlField(xmlContent, 'RazonSocialEmisor') || rncEmisor;
     const totalAmount = parseFloat(this.extractXmlField(xmlContent, 'MontoTotal') || '0');

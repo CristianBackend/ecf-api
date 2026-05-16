@@ -91,7 +91,7 @@ export class XmlBuilderService {
 
     // OtraMoneda within Encabezado
     const otraMoneda = input.currency && input.currency.code !== 'DOP'
-      ? this.buildOtraMoneda(input.currency, totals)
+      ? this.buildOtraMoneda(input.currency, totals, typeCode)
       : '';
 
     // InformacionesAdicionales (optional — E31 has 12 elements, E46 has 22 with export-specific fields)
@@ -821,7 +821,10 @@ export class XmlBuilderService {
         if (typeCode !== 47 && item.montoItbisRetenido) {
           xml += `        <MontoITBISRetenido>${fmt(item.montoItbisRetenido)}</MontoITBISRetenido>\n`;
         }
-        if (item.montoIsrRetenido) {
+        // E47 XSD: MontoISRRetenido has minOccurs=1 — always emit, default to 0
+        if (typeCode === 47) {
+          xml += `        <MontoISRRetenido>${fmt(item.montoIsrRetenido ?? 0)}</MontoISRRetenido>\n`;
+        } else if (item.montoIsrRetenido) {
           xml += `        <MontoISRRetenido>${fmt(item.montoIsrRetenido)}</MontoISRRetenido>\n`;
         }
         xml += `      </Retencion>\n`;
@@ -1119,6 +1122,20 @@ export class XmlBuilderService {
         xml += `      <SubtotalImpuestoAdicionalPagina>${fmt(p.subtotalImpuestoAdicionalPagina)}</SubtotalImpuestoAdicionalPagina>\n`;
       }
 
+      // SubtotalImpuestoAdicional (complex element — ISC específico + otros, XSD e-CF-31/32 Paginacion)
+      // Distinct from the simple SubtotalImpuestoAdicionalPagina above
+      if ((p.subtotalIscEspecificoPagina != null && p.subtotalIscEspecificoPagina > 0) ||
+          (p.subtotalOtrosImpuestoPagina != null && p.subtotalOtrosImpuestoPagina > 0)) {
+        xml += `      <SubtotalImpuestoAdicional>\n`;
+        if (p.subtotalIscEspecificoPagina != null && p.subtotalIscEspecificoPagina > 0) {
+          xml += `        <SubtotalImpuestoSelectivoConsumoEspecificoPagina>${fmt(p.subtotalIscEspecificoPagina)}</SubtotalImpuestoSelectivoConsumoEspecificoPagina>\n`;
+        }
+        if (p.subtotalOtrosImpuestoPagina != null && p.subtotalOtrosImpuestoPagina > 0) {
+          xml += `        <SubtotalOtrosImpuesto>${fmt(p.subtotalOtrosImpuestoPagina)}</SubtotalOtrosImpuesto>\n`;
+        }
+        xml += `      </SubtotalImpuestoAdicional>\n`;
+      }
+
       xml += `      <MontoSubtotalPagina>${fmt(p.montoSubtotalPagina)}</MontoSubtotalPagina>\n`;
 
       if (p.subtotalMontoNoFacturablePagina != null && p.subtotalMontoNoFacturablePagina > 0) {
@@ -1153,12 +1170,22 @@ export class XmlBuilderService {
     return xml;
   }
 
-  private buildOtraMoneda(currency: { code: string; exchangeRate: number }, totals: InvoiceTotals): string {
+  private buildOtraMoneda(currency: { code: string; exchangeRate: number }, totals: InvoiceTotals, typeCode?: number): string {
     const rate = currency.exchangeRate;
 
     let xml = '    <OtraMoneda>\n';
     xml += `      <TipoMoneda>${escapeXml(currency.code)}</TipoMoneda>\n`;
     xml += `      <TipoCambio>${ValidationService.formatExchangeRate(rate)}</TipoCambio>\n`;
+
+    // E47 OtraMoneda only allows 4 fields per XSD (lines 97-106 of e-CF-47.xsd)
+    if (typeCode === 47) {
+      if (totals.exemptAmount > 0) {
+        xml += `      <MontoExentoOtraMoneda>${fmt(r2(totals.exemptAmount / rate))}</MontoExentoOtraMoneda>\n`;
+      }
+      xml += `      <MontoTotalOtraMoneda>${fmt(r2(totals.totalAmount / rate))}</MontoTotalOtraMoneda>\n`;
+      xml += '    </OtraMoneda>';
+      return xml;
+    }
 
     // MontoGravadoTotalOtraMoneda
     const gravadoTotal = r2(totals.taxableAmount18 + totals.taxableAmount16 + totals.taxableAmount0);
@@ -1313,6 +1340,18 @@ export class XmlBuilderService {
   }
 
   private buildTransporte(transport: any, typeCode: number): string {
+    // E47 XSD Transporte only allows <PaisDestino> — all other fields are invalid
+    if (typeCode === 47) {
+      if (transport.countryDestination) {
+        return [
+          '    <Transporte>',
+          `      <PaisDestino>${escapeXml(transport.countryDestination)}</PaisDestino>`,
+          '    </Transporte>',
+        ].join('\n');
+      }
+      return '';
+    }
+
     let xml = '    <Transporte>\n';
 
     // Common transport fields (E31 XSD: 7 elements — all types that have Transporte)
