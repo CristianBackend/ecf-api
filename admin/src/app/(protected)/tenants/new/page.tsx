@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   ArrowLeft, Loader2, Users, CheckCircle2, AlertTriangle, Copy, Check,
-  CreditCard,
+  CreditCard, Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/select';
 import type { Plan, BillingPlan } from '@/types/api';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface TenantPlanResult {
   id: string;
@@ -50,18 +50,15 @@ interface AdminCreateResult {
   tenantPlan?: TenantPlanResult;
 }
 
-// ── Form schema ────────────────────────────────────────────────────────────────
+// ── Form schema ──────────────────────────────────────────────────────────────
 
-// planCode is managed as local state (not a form field) to keep the
-// Radix Select in controlled mode and avoid the hidden-native-select
-// click-intercept bug that occurs in uncontrolled mode.
 const schema = z.object({
   name:  z.string().min(3, 'Mínimo 3 caracteres').max(200),
   email: z.string().email('Email inválido'),
 });
 type FormData = z.infer<typeof schema>;
 
-// ── Copy button ────────────────────────────────────────────────────────────────
+// ── Copy button ──────────────────────────────────────────────────────────────
 
 function CopyField({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
   const [copied, setCopied] = useState(false);
@@ -92,7 +89,7 @@ function CopyField({ label, value, mono = true }: { label: string; value: string
   );
 }
 
-// ── Credentials screen ────────────────────────────────────────────────────────
+// ── Credentials screen ───────────────────────────────────────────────────────
 
 function CredentialsScreen({
   result,
@@ -121,7 +118,6 @@ function CredentialsScreen({
       <div className="min-h-screen flex items-start justify-center p-4 py-8">
         <div className="w-full max-w-xl space-y-6">
 
-          {/* Success banner */}
           <div className="flex items-center gap-3 rounded-xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4">
             <CheckCircle2 className="h-6 w-6 text-green-600 shrink-0" />
             <div>
@@ -132,7 +128,6 @@ function CredentialsScreen({
             </div>
           </div>
 
-          {/* Warning */}
           <div className="flex items-start gap-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 p-4">
             <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
             <div>
@@ -146,7 +141,6 @@ function CredentialsScreen({
             </div>
           </div>
 
-          {/* Tenant info */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Datos del tenant</CardTitle>
@@ -159,7 +153,6 @@ function CredentialsScreen({
             </CardContent>
           </Card>
 
-          {/* Plan asignado (si se creó TenantPlan) */}
           {tenantPlan && selectedPlan && (
             <Card className="border-amber-200 dark:border-amber-800">
               <CardHeader className="pb-3">
@@ -187,7 +180,6 @@ function CredentialsScreen({
             </Card>
           )}
 
-          {/* Credentials */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Credenciales de acceso</CardTitle>
@@ -199,7 +191,6 @@ function CredentialsScreen({
             </CardContent>
           </Card>
 
-          {/* API Keys */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">API Keys</CardTitle>
@@ -219,7 +210,6 @@ function CredentialsScreen({
             </CardContent>
           </Card>
 
-          {/* Confirm */}
           <div className="space-y-3">
             <label className="flex items-start gap-3 cursor-pointer">
               <input
@@ -243,13 +233,39 @@ function CredentialsScreen({
   );
 }
 
-// ── Page ──────────────────────────────────────────────────────────────────────
+// ── Plan option content ──────────────────────────────────────────────────────
+
+function PlanOptionContent({ plan }: { plan: BillingPlan }) {
+  return (
+    <div className="flex items-center justify-between gap-4 w-full py-1">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-2">
+          <span className="font-medium text-sm">{plan.name}</span>
+          <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wide">
+            {plan.code}
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          {plan.includedInvoices.toLocaleString()} facturas / mes
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <p className="text-sm font-semibold tabular-nums">
+          {fmtMoney(plan.monthlyFee, 'USD')}
+        </p>
+        <p className="text-[10px] text-muted-foreground">por mes</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function NewTenantPage() {
   const router = useRouter();
   const isSuperAdmin = useAuthStore((s) => s.isSuperAdmin);
   const [result, setResult] = useState<AdminCreateResult | null>(null);
-  const [planCode, setPlanCode] = useState('NONE'); // 'NONE' sentinel = no plan
+  const [planCode, setPlanCode] = useState('NONE');
   const [emailError, setEmailError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -259,7 +275,6 @@ export default function NewTenantPage() {
     }
   }, [isSuperAdmin, router]);
 
-  // Fetch billing plan catalog
   const { data: billingPlans } = useQuery({
     queryKey: ['admin', 'billing', 'plans'],
     queryFn: async () => {
@@ -325,7 +340,7 @@ export default function NewTenantPage() {
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <div>
-          <h1 className="text-2xl font-bold">Nuevo Tenant</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Nuevo Tenant</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             El backend genera la contraseña temporal automáticamente.
           </p>
@@ -341,17 +356,22 @@ export default function NewTenantPage() {
         <CardContent>
           <form
             onSubmit={handleSubmit((d) => { setEmailError(null); mutation.mutate(d); })}
-            className="space-y-4"
+            className="space-y-5"
           >
             <div className="space-y-1.5">
-              <Label>Nombre *</Label>
-              <Input placeholder="Empresa Integradora SRL" {...register('name')} />
+              <Label htmlFor="name">Nombre *</Label>
+              <Input
+                id="name"
+                placeholder="Empresa Integradora SRL"
+                {...register('name')}
+              />
               {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <Label>Email *</Label>
+              <Label htmlFor="email">Email *</Label>
               <Input
+                id="email"
                 type="email"
                 placeholder="admin@empresa.com"
                 {...register('email')}
@@ -363,27 +383,52 @@ export default function NewTenantPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label>Plan inicial (opcional)</Label>
+              <Label>Plan inicial</Label>
               <Select value={planCode} onValueChange={setPlanCode}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Sin plan (asignar después)" />
+                <SelectTrigger className="h-auto min-h-[2.5rem] py-2">
+                  {planCode === 'NONE' ? (
+                    <SelectValue placeholder="Sin plan asignado" />
+                  ) : selectedPlan ? (
+                    <div className="flex items-center justify-between w-full gap-3 pr-2">
+                      <span className="font-medium text-sm">{selectedPlan.name}</span>
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        {fmtMoney(selectedPlan.monthlyFee, 'USD')}/mes
+                      </span>
+                    </div>
+                  ) : (
+                    <SelectValue />
+                  )}
                 </SelectTrigger>
-                <SelectContent position="popper" className="z-[200]">
-                  <SelectItem value="NONE">Sin plan (asignar después)</SelectItem>
+                <SelectContent>
+                  <SelectItem value="NONE">
+                    <div className="flex items-center gap-2 py-1">
+                      <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+                      <div>
+                        <p className="text-sm font-medium">Sin plan asignado</p>
+                        <p className="text-xs text-muted-foreground">Lo podés asignar después</p>
+                      </div>
+                    </div>
+                  </SelectItem>
+
+                  {billingPlans && billingPlans.length > 0 && (
+                    <div className="my-1 h-px bg-border" aria-hidden="true" />
+                  )}
+
                   {billingPlans?.map((p) => (
                     <SelectItem key={p.code} value={p.code}>
-                      {p.code} — {p.name} ({fmtMoney(p.monthlyFee, 'USD')}/mes,{' '}
-                      {p.includedInvoices.toLocaleString()} facturas)
+                      <PlanOptionContent plan={p} />
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                Si asignás un plan, quedará en estado &quot;Pendiente de pago&quot; hasta que lo activés manualmente.
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Si asignás un plan, el tenant quedará en estado{' '}
+                <span className="font-medium text-foreground">Pendiente de pago</span>{' '}
+                hasta que lo actives manualmente.
               </p>
             </div>
 
-            <div className="rounded-lg bg-muted/50 border border-border px-3 py-2 text-sm text-muted-foreground">
+            <div className="rounded-lg bg-muted/50 border border-border px-3 py-2.5 text-xs text-muted-foreground leading-relaxed">
               La contraseña temporal es generada automáticamente por el backend.
               El cliente deberá cambiarla en su primer login.
             </div>
