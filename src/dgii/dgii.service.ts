@@ -518,6 +518,38 @@ export class DgiiService {
     const MAX_AUTH_RETRIES = 3;
     const BASE_DELAY_MS = 2000;
 
+    // Log certificate identity once before any attempt.
+    // Provides concrete evidence when DGII rejects with "Firma del certificado invalida".
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const forge = require('node-forge');
+      const cert = forge.pki.certificateFromPem(certificate);
+
+      const snAttr = cert.subject.attributes.find(
+        (a: any) => a.shortName === 'serialName' || a.type === '2.5.4.5',
+      );
+      const cnAttr = cert.subject.attributes.find((a: any) => a.shortName === 'CN');
+      const issuerCnAttr = cert.issuer.attributes.find((a: any) => a.shortName === 'CN');
+
+      const certDer = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const nodeCrypto = require('crypto');
+      const fingerprintHex = nodeCrypto.createHash('sha1')
+        .update(certDer, 'binary')
+        .digest('hex');
+
+      this.logger.info({
+        issuerName:          issuerCnAttr?.value ?? 'unknown',
+        signerName:          cnAttr?.value ?? 'unknown',
+        signerId:            snAttr?.value ?? 'unknown',
+        valid_from:          cert.validity.notBefore.toISOString(),
+        valid_to:            cert.validity.notAfter.toISOString(),
+        fingerprint_sha1_16: fingerprintHex.substring(0, 16),
+      }, 'DGII auth: certificate identity');
+    } catch (certLogErr: any) {
+      this.logger.warn(`DGII auth: could not extract certificate info for log: ${certLogErr.message}`);
+    }
+
     for (let attempt = 1; attempt <= MAX_AUTH_RETRIES; attempt++) {
       try {
         // Step 1: Request seed
