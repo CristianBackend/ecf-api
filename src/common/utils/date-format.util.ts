@@ -30,6 +30,16 @@ function toGmt4(d: Date): {
   };
 }
 
+/**
+ * Parse a DGII-format date string (DD-MM-YYYY) into a JavaScript Date.
+ * Uses explicit component extraction to avoid locale/environment differences
+ * in `new Date("DD-MM-YYYY")`, which returns Invalid Date in V8.
+ */
+export function parseDgiiDate(dateStr: string): Date {
+  const [d, m, y] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
 /** Format a date as DD/MM/YYYY in GMT-4 (America/Santo_Domingo). */
 export function fmtDateGmt4(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date;

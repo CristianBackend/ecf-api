@@ -386,13 +386,15 @@ export class DgiiService {
       }
     }
 
-    // Fallback: log warning that ARECF could not be delivered
+    // FIX 7: Emitter URL not resolved — ARECF was NOT delivered.
+    // Return failure so callers can keep the document in RECEIVED status
+    // instead of incorrectly marking it ACKNOWLEDGED.
     this.logger.warn('ARECF not delivered to emitter — emitter URL not resolved');
     return {
-      success: true,
+      success: false,
       trackId: null,
-      status: DGII_STATUS.ACCEPTED,
-      message: 'ARECF generado localmente. Pendiente entrega al emisor.',
+      status: DGII_STATUS.REJECTED,
+      message: 'ARECF no entregado: URL del emisor no disponible en directorio DGII.',
       rawResponse: '',
     };
   }

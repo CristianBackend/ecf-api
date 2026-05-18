@@ -381,4 +381,60 @@ describe('EcfProcessingProcessor', () => {
       );
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // FIX 2 — isRfce reads invoice.isRfce, not Number(totalAmount)
+  // Bug: Number(Decimal) can drift due to floating-point coercion,
+  // causing the wrong submission path for E32 near the 250K threshold.
+  // ─────────────────────────────────────────────────────────────
+  describe('FIX 2 — isRfce uses invoice.isRfce flag, not Number(totalAmount)', () => {
+    it('routes E32 with isRfce=true to submitRfce, never submitEcf', async () => {
+      const m = makeProcessor();
+      // isRfce=true (stored at creation), totalAmount is a Decimal-like object
+      // that Number() might coerce to 250000 even though it was < threshold
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice({
+        ecfType: 'E32',
+        encf: 'E320000000001',
+        isRfce: true,
+        totalAmount: { toNumber: () => 249999.99, toString: () => '249999.99' },
+        metadata: { _originalDto: {
+          ecfType: 'E32',
+          buyer: { name: 'Consumidor', type: 2 },
+          items: [{ description: 'X', quantity: 1, unitPrice: 249999.99, itbisRate: 0 }],
+          payment: { type: 1 },
+        }},
+      }));
+      m.xmlBuilder.buildEcfXml.mockReturnValue({
+        xml: '<ECF/>',
+        totals: { subtotalBeforeTax: 249999.99, totalDiscount: 0, totalItbis: 0, totalIsc: 0, totalAmount: 249999.99 },
+      });
+      m.xmlBuilder.buildRfceXml.mockReturnValue('<RFCE/>');
+      m.dgiiService.submitRfce.mockResolvedValue({
+        status: 1, trackId: null, message: 'RFCE aceptado',
+      });
+
+      await m.processor.process(makeJob());
+
+      expect(m.dgiiService.submitRfce).toHaveBeenCalledTimes(1);
+      expect(m.dgiiService.submitEcf).not.toHaveBeenCalled();
+    });
+
+    it('routes E32 with isRfce=false to submitEcf, never submitRfce', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice({
+        ecfType: 'E32',
+        encf: 'E320000000002',
+        isRfce: false,
+        totalAmount: 306800,
+      }));
+      m.dgiiService.submitEcf.mockResolvedValue({
+        status: 1, trackId: 'TRACK-E32-STD', message: 'Aceptado',
+      });
+
+      await m.processor.process(makeJob());
+
+      expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
+      expect(m.dgiiService.submitRfce).not.toHaveBeenCalled();
+    });
+  });
 });

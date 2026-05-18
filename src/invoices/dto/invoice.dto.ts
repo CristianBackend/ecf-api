@@ -9,6 +9,7 @@ import {
   IsEnum,
   IsIn,
   IsEmail,
+  IsNotEmpty,
   ValidateNested,
   Matches,
   Min,
@@ -428,19 +429,25 @@ export class CreateInvoiceDto {
   currency?: CurrencyDto;
 
   @ApiPropertyOptional({ description: 'Transporte — obligatorio para E46 (Exportaciones)', type: TransportInfoDto })
-  @IsOptional()
+  // E46: required — ValidateIf stays true so @IsNotEmpty fires even when value is null.
+  // Other types: ValidateIf is true only when a value is actually provided (validate structure).
+  @ValidateIf(o => o.ecfType === 'E46' || (o.transport !== undefined && o.transport !== null))
+  @IsNotEmpty({ message: 'transport es obligatorio para E46 (Exportaciones)' })
   @ValidateNested()
   @Type(() => TransportInfoDto)
   transport?: TransportInfoDto;
 
-  @ApiPropertyOptional({ description: 'Información adicional de exportación — para E46', type: ExportInfoDto })
-  @IsOptional()
+  @ApiPropertyOptional({ description: 'Información adicional de exportación — obligatorio para E46', type: ExportInfoDto })
+  @ValidateIf(o => o.ecfType === 'E46' || (o.additionalInfo !== undefined && o.additionalInfo !== null))
+  @IsNotEmpty({ message: 'additionalInfo es obligatorio para E46 (Exportaciones)' })
   @ValidateNested()
   @Type(() => ExportInfoDto)
   additionalInfo?: ExportInfoDto;
 
   @ApiPropertyOptional({ description: 'Beneficiario en el exterior — obligatorio para E47 (Pagos al Exterior)', type: ForeignBeneficiaryDto })
-  @IsOptional()
+  // E47: required. Other types: optional but validated if provided.
+  @ValidateIf(o => o.ecfType === 'E47' || (o.foreignBeneficiary !== undefined && o.foreignBeneficiary !== null))
+  @IsNotEmpty({ message: 'foreignBeneficiary es obligatorio para E47 (Pagos al Exterior)' })
   @ValidateNested()
   @Type(() => ForeignBeneficiaryDto)
   foreignBeneficiary?: ForeignBeneficiaryDto;

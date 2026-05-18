@@ -11,7 +11,7 @@ import { WebhooksService } from '../webhooks/webhooks.service';
 import { XsdValidationService } from '../validation/xsd-validation.service';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 import { QUEUES } from './queue.constants';
-import { FC_FULL_SUBMISSION_THRESHOLD, ECF_TYPE_CODES } from '../xml-builder/ecf-types';
+import { ECF_TYPE_CODES } from '../xml-builder/ecf-types';
 
 export interface EcfProcessingJobData {
   invoiceId: string;
@@ -137,8 +137,10 @@ export class EcfProcessingProcessor extends WorkerHost {
 
       // 5. Submit to DGII
       let submissionResult;
-      const isRfce = invoice.ecfType === 'E32' &&
-        Number(invoice.totalAmount) < FC_FULL_SUBMISSION_THRESHOLD;
+      // FIX 2: use the pre-computed flag stored at invoice creation time instead
+      // of re-evaluating Number(invoice.totalAmount), which can drift from the
+      // original Decimal value due to floating-point coercion.
+      const isRfce = invoice.isRfce;
 
       if (isRfce) {
         // RFCE flow: build summary, submit to FC endpoint

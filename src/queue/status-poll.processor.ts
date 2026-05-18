@@ -101,15 +101,26 @@ export class StatusPollProcessor extends WorkerHost {
         if (error instanceof DelayedError) throw error;
         this.logger.warn(`eNCF reconciliation failed for ${invoice.encf}: ${error.message}`);
       }
+      // FIX 6: reconciliation failed and no trackId available — mark ERROR so the
+      // invoice doesn't remain in PROCESSING/SENT (zombie state) forever.
+      await this.prisma.invoice.update({
+        where: { id: invoiceId },
+        data: {
+          status: InvoiceStatus.ERROR,
+          dgiiMessage: 'No trackId disponible y reconciliación DGII falló. Verifique manualmente.',
+        },
+      });
       return { status: 'NO_TRACK_ID' };
     }
 
-    // Max attempts reached
+    // Max attempts reached — FIX 5: mark ERROR so the invoice doesn't stay
+    // in PROCESSING/SENT indefinitely (zombie state).
     if (attempt > StatusPollProcessor.MAX_ATTEMPTS) {
       this.logger.warn(`Max polling attempts reached for ${invoice.encf}`);
       await this.prisma.invoice.update({
         where: { id: invoiceId },
         data: {
+          status: InvoiceStatus.ERROR,
           dgiiMessage: `Status polling timed out after ${attempt - 1} attempts. Last status: ${invoice.status}`,
         },
       });

@@ -121,18 +121,32 @@ export class ReceptionService {
     const arecfFileName = `${doc.company.rnc}${doc.encf}.xml`;
     const result = await this.dgiiService.sendArecf(signedXml, token, doc.company.dgiiEnv, doc.emitterRnc, arecfFileName);
 
-    await this.prisma.receivedDocument.update({
-      where: { id: receivedDocId },
-      data: {
-        status: ReceivedDocumentStatus.ACKNOWLEDGED,
-        arecfXml: signedXml,
-        arecfSentAt: new Date(),
-        arecfTrackId: result.trackId,
-      },
-    });
+    // FIX 7: only mark ACKNOWLEDGED when the ARECF was actually delivered.
+    // If sendArecf() returns success=false (emitter URL not resolved), keep
+    // status=RECEIVED so operators know the acknowledgment is still pending.
+    if (result.success) {
+      await this.prisma.receivedDocument.update({
+        where: { id: receivedDocId },
+        data: {
+          status: ReceivedDocumentStatus.ACKNOWLEDGED,
+          arecfXml: signedXml,
+          arecfSentAt: new Date(),
+          arecfTrackId: result.trackId,
+        },
+      });
+      this.logger.info(`ARECF sent for ${doc.encf}: TrackId ${result.trackId}`);
+    } else {
+      await this.prisma.receivedDocument.update({
+        where: { id: receivedDocId },
+        data: {
+          arecfXml: signedXml,
+          metadata: { arecfDeliveryError: result.message, arecfAttemptedAt: new Date().toISOString() } as any,
+        },
+      });
+      this.logger.warn(`ARECF not delivered for ${doc.encf}: ${result.message}`);
+    }
 
-    this.logger.info(`ARECF sent for ${doc.encf}: TrackId ${result.trackId}`);
-    return { trackId: result.trackId };
+    return { trackId: result.trackId, delivered: result.success };
   }
 
   async processApproval(

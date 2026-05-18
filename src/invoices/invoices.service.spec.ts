@@ -476,4 +476,65 @@ describe('InvoicesService.create — async pipeline', () => {
       expect(createArgs.data.isRfce).toBe(false);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // FIX 1 — referenceDate: parseDgiiDate instead of new Date()
+  // Bug: new Date("DD-MM-YYYY") returns Invalid Date in Node/V8,
+  // causing Prisma to throw when creating E33/E34 invoices.
+  // ─────────────────────────────────────────────────────────────
+  describe('FIX 1 — referenceDate parses DD-MM-YYYY correctly', () => {
+    const refDateStr = '25-01-2024';
+
+    function makeE33Dto() {
+      return makeValidDto({
+        ecfType: 'E33',
+        buyer: { name: 'Deudor SRL', type: 1 },
+        reference: {
+          encf: 'E310000000001',
+          date: refDateStr,
+          modificationCode: 3,
+        },
+      });
+    }
+
+    it('E33 with reference.date="DD-MM-YYYY" creates invoice without throwing', async () => {
+      // Setup: make findFirst return a valid E33 invoice after creation
+      mocks.prisma.invoice.findFirst.mockResolvedValue({
+        id: 'invoice-e33-1',
+        tenantId: 'tenant-1',
+        encf: 'E330000000001',
+        status: InvoiceStatus.QUEUED,
+        ecfType: 'E33',
+        lines: [],
+        company: { rnc: '131234567', businessName: 'Emisor SRL' },
+        isRfce: false,
+        referenceDate: new Date(2024, 0, 25),
+      });
+
+      await expect(service.create('tenant-1', makeE33Dto())).resolves.not.toThrow();
+      expect(mocks.prisma.invoice.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('referenceDate stored as valid Date (Jan 25, not Invalid Date)', async () => {
+      await service.create('tenant-1', makeE33Dto());
+
+      const createArgs = mocks.prisma.invoice.create.mock.calls[0][0];
+      const storedDate: Date = createArgs.data.referenceDate;
+
+      // Must be a real Date, not Invalid Date
+      expect(storedDate).toBeInstanceOf(Date);
+      expect(isNaN(storedDate.getTime())).toBe(false);
+
+      // Must parse as January 25, 2024 (DD=25, MM=01, YYYY=2024)
+      expect(storedDate.getFullYear()).toBe(2024);
+      expect(storedDate.getMonth()).toBe(0);   // January = 0
+      expect(storedDate.getDate()).toBe(25);
+    });
+
+    it('new Date("25-01-2024") would have produced Invalid Date (confirms the bug existed)', () => {
+      // Regression guard: proves why the fix was necessary
+      const buggyDate = new Date('25-01-2024');
+      expect(isNaN(buggyDate.getTime())).toBe(true);
+    });
+  });
 });

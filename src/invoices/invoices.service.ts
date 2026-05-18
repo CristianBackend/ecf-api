@@ -24,6 +24,7 @@ import {
   FC_FULL_SUBMISSION_THRESHOLD,
   ECF_TYPE_CODES,
 } from '../xml-builder/ecf-types';
+import { parseDgiiDate } from '../common/utils/date-format.util';
 
 @Injectable()
 export class InvoicesService {
@@ -189,7 +190,7 @@ export class InvoicesService {
           totalAmount: totals.totalAmount,
           paymentType: dto.payment.type,
           referenceEncf: dto.reference?.encf,
-          referenceDate: dto.reference?.date ? new Date(dto.reference.date) : undefined,
+          referenceDate: dto.reference?.date ? parseDgiiDate(dto.reference.date) : undefined,
           referenceModCode: dto.reference?.modificationCode,
           isRfce,
           currency: dto.currency?.code || 'DOP',
