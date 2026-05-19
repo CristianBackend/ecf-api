@@ -1133,4 +1133,27 @@ describe('XmlBuilderService', () => {
       expect(xml).toContain('<SubtotalImpuestoAdicionalPagina>250.00</SubtotalImpuestoAdicionalPagina>');
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // indicadorFacturacion flows from DTO item → XML <IndicadorFacturacion>
+  // ─────────────────────────────────────────────────────────────
+  describe('indicadorFacturacion in items', () => {
+    it('emits <IndicadorFacturacion>4</IndicadorFacturacion> when item has indicadorFacturacion=4', () => {
+      const input = makeInput('E32', {
+        items: [
+          basicItem({ indicadorFacturacion: 4, itbisRate: 0 }),
+        ],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E320000000001');
+      expect(xml).toContain('<IndicadorFacturacion>4</IndicadorFacturacion>');
+    });
+
+    it('emits <IndicadorFacturacion>1</IndicadorFacturacion> when item has indicadorFacturacion=1', () => {
+      const input = makeInput('E32', {
+        items: [basicItem({ indicadorFacturacion: 1, itbisRate: 18 })],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E320000000002');
+      expect(xml).toContain('<IndicadorFacturacion>1</IndicadorFacturacion>');
+    });
+  });
 });

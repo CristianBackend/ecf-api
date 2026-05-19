@@ -129,6 +129,16 @@ class InvoiceItemDto {
   @IsIn(VALID_ITBIS_RATES, { message: 'Tasa ITBIS debe ser 0, 16, o 18' })
   itbisRate?: number;
 
+  @ApiPropertyOptional({
+    description: 'Indicador Facturación (1=18%, 2=16%, 3=0%, 4=exento, 0=no facturable)',
+    example: 1,
+    enum: [0, 1, 2, 3, 4],
+  })
+  @IsOptional()
+  @IsInt({ message: 'indicadorFacturacion debe ser entero' })
+  @IsIn([0, 1, 2, 3, 4], { message: 'indicadorFacturacion debe ser 0, 1, 2, 3 o 4' })
+  indicadorFacturacion?: number;
+
   @ApiPropertyOptional({ description: '1=Bien, 2=Servicio', example: 1 })
   @IsOptional()
   @IsInt()

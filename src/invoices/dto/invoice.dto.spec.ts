@@ -27,7 +27,15 @@ async function validateDto(plain: object) {
 }
 
 function errorMessages(errors: any[]): string[] {
-  return errors.flatMap(e => Object.values(e.constraints || {}));
+  const msgs: string[] = [];
+  function collect(errs: any[]) {
+    for (const e of errs) {
+      if (e.constraints) msgs.push(...Object.values(e.constraints as Record<string, string>));
+      if (e.children?.length) collect(e.children);
+    }
+  }
+  collect(errors);
+  return msgs;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -122,5 +130,36 @@ describe('FIX 4 — foreignBeneficiary is required for E47, optional for other t
     }));
     const msgs = errorMessages(errors);
     expect(msgs.some(m => m.toLowerCase().includes('foreignbeneficiary'))).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// indicadorFacturacion field on items
+// ─────────────────────────────────────────────────────────────
+describe('InvoiceItemDto.indicadorFacturacion', () => {
+  it('accepts valid values 0-4 without validation errors', async () => {
+    for (const v of [0, 1, 2, 3, 4]) {
+      const errors = await validateDto(basePayload({
+        items: [{ description: 'X', quantity: 1, unitPrice: 100, indicadorFacturacion: v }],
+      }));
+      const msgs = errorMessages(errors);
+      expect(msgs.some(m => m.toLowerCase().includes('indicadorfacturacion'))).toBe(false);
+    }
+  });
+
+  it('rejects values outside 0-4', async () => {
+    const errors = await validateDto(basePayload({
+      items: [{ description: 'X', quantity: 1, unitPrice: 100, indicadorFacturacion: 5 }],
+    }));
+    const msgs = errorMessages(errors);
+    expect(msgs.some(m => m.toLowerCase().includes('indicadorfacturacion'))).toBe(true);
+  });
+
+  it('is optional — omitting it produces no error', async () => {
+    const errors = await validateDto(basePayload({
+      items: [{ description: 'X', quantity: 1, unitPrice: 100 }],
+    }));
+    const msgs = errorMessages(errors);
+    expect(msgs.some(m => m.toLowerCase().includes('indicadorfacturacion'))).toBe(false);
   });
 });
