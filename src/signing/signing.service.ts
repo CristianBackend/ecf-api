@@ -3,16 +3,14 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as crypto from 'crypto';
 import { SignedXml } from 'xml-crypto';
 import { DOMParser } from '@xmldom/xmldom';
+import { Signature as DgiiSignature } from 'dgii-ecf';
 import {
   buildStandardQrUrl,
   buildFcUnder250kQrUrl,
   getAmbiente,
 } from '../xml-builder/ecf-types';
 
-const C14N_1_0 = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
-const ENVELOPED_TRANSFORM = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
-const RSA_SHA256 = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
-const SHA256_DIGEST = 'http://www.w3.org/2001/04/xmlenc#sha256';
+// Kept for verifySignedXml() which still uses xml-crypto directly
 const DSIG_NS = 'http://www.w3.org/2000/09/xmldsig#';
 
 /**
@@ -40,7 +38,22 @@ export class SigningService {
   ) {}
 
   /**
-   * Sign an XML document using XMLDSig (enveloped, C14N 1.0, RSA-SHA256).
+   * Sign an XML document using dgii-ecf's DGII-compliant Signature.
+   *
+   * Replaces the previous xml-crypto-only implementation which produced
+   * a DigestValue that DGII rejected ("La firma del comprobante no es válida").
+   *
+   * Root cause: DGII's C# verifier sorts xmlns:* attributes alphabetically
+   * before computing the SHA-256 digest. dgii-ecf's custom Digest class
+   * replicates this sorting. Our old implementation used standard SHA-256
+   * without sorting → mismatched DigestValue → invalid signature.
+   *
+   * Additional differences fixed by dgii-ecf:
+   *  - One transform (enveloped-signature only) vs two (enveloped + C14N)
+   *  - cleanNodes() strips whitespace text nodes before signing
+   *  - xpath uses local-name() to be namespace-agnostic
+   *
+   * The interface is unchanged: same parameters, same return shape.
    */
   signXml(
     xml: string,
@@ -49,6 +62,7 @@ export class SigningService {
   ): SigningResult {
     const signTime = new Date();
 
+    // Detect root tag for FechaHoraFirma insertion (ECF only, not RFCE/ARECF/etc.)
     const rootTagMatch = xml.match(/<\/([A-Za-z][A-Za-z0-9]*)\s*>\s*$/);
     if (!rootTagMatch) {
       throw new Error('Cannot detect XML root closing tag for signing');
@@ -58,38 +72,24 @@ export class SigningService {
 
     let xmlPrepared = xml;
     if (rootTag === 'ECF') {
+      // FechaHoraFirma must be inserted before signing so it's covered by
+      // the DigestValue. Per DGII XSD it's the last element of the root.
       xmlPrepared = xml.replace(
         closingTag,
         `<FechaHoraFirma>${formatDateTimeFirma(signTime)}</FechaHoraFirma>${closingTag}`,
       );
     }
 
-    const sig = new SignedXml({
-      privateKey: privateKeyPem,
-      publicCert: certificatePem,
-      signatureAlgorithm: RSA_SHA256,
-      canonicalizationAlgorithm: C14N_1_0,
-    });
-
-    sig.addReference({
-      xpath: '/*',
-      transforms: [ENVELOPED_TRANSFORM, C14N_1_0],
-      digestAlgorithm: SHA256_DIGEST,
-      uri: '',
-      isEmptyUri: true,
-    });
-
-    sig.computeSignature(xmlPrepared, {
-      location: { reference: '/*', action: 'append' },
-    });
-
-    const signedXml = sig.getSignedXml();
+    // dgii-ecf Signature handles: attribute sorting, node cleaning, correct
+    // transforms, and DGII-compliant canonicalization internally.
+    const signer = new DgiiSignature(privateKeyPem, certificatePem);
+    const signedXml = signer.signXml(xmlPrepared, rootTag);
 
     const signatureValue = this.extractSignatureValue(signedXml);
     const securityCode = this.generateSecurityCode(signatureValue);
 
     this.logger.debug(
-      `XML signed (root: ${rootTag}). Security code: ${securityCode}`,
+      `XML signed via dgii-ecf (root: ${rootTag}). Security code: ${securityCode}`,
     );
 
     return {
