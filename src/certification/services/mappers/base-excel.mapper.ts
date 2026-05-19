@@ -1,0 +1,163 @@
+/**
+ * Shared utilities used by all type-specific Excel mappers.
+ *
+ * Design:
+ * - `v()`  → safe getter: returns undefined for '#e', null, empty string
+ * - `s()`  → coerce to string | undefined
+ * - `n()`  → coerce to number | undefined
+ * - `mapBuyer()`, `mapPayment()`, `mapItems()` → common section builders
+ * - `mapBase()` → builds the shared DTO skeleton every mapper extends
+ */
+
+import { ExcelRow, ExcelItem } from './excel-mapper.interface';
+
+// ---------------------------------------------------------------------------
+// Primitive helpers
+// ---------------------------------------------------------------------------
+
+/** Return undefined for Excel "not included" sentinel values. */
+export function v(raw: unknown): string | number | undefined {
+  if (raw === undefined || raw === null || raw === '' || raw === '#e') return undefined;
+  return raw as string | number;
+}
+
+export function s(raw: unknown): string | undefined {
+  const r = v(raw);
+  return r !== undefined ? String(r).trim() : undefined;
+}
+
+export function n(raw: unknown): number | undefined {
+  const r = v(raw);
+  if (r === undefined) return undefined;
+  const num = Number(r);
+  return isNaN(num) ? undefined : num;
+}
+
+/** Parse an integer, stripping leading zeros (e.g. "01" → 1). */
+export function int(raw: unknown): number | undefined {
+  const r = v(raw);
+  if (r === undefined) return undefined;
+  const parsed = parseInt(String(r), 10);
+  return isNaN(parsed) ? undefined : parsed;
+}
+
+/**
+ * Extract the decimal sequence number from a full eNCF string.
+ * "E320000000011" → 11
+ */
+export function encfToOverride(encf: string | undefined): number | undefined {
+  if (!encf || encf.length !== 13) return undefined;
+  return parseInt(encf.slice(3), 10) || undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Section mappers
+// ---------------------------------------------------------------------------
+
+export function mapBuyer(row: ExcelRow) {
+  return {
+    rnc:          s(row.RNCComprador),
+    name:         s(row.RazonSocialComprador) ?? 'Consumidor Final',
+    address:      s(row.DireccionComprador),
+    municipality: s(row.MunicipioComprador),
+    province:     s(row.ProvinciaComprador),
+    type:         int(row.TipoPersonaComprador),
+    foreignId:    s(row.IdentificadorExtranjero),
+    country:      s(row.PaisCompradorResidencia),
+  };
+}
+
+export function mapPayment(row: ExcelRow) {
+  return {
+    type:        n(row.TipoPago) ?? 1,
+    method:      int(row.FormaPago),
+    date:        s(row.FechaPago),
+    termDays:    int(row.TerminoPago),
+    accountType: s(row.TipoCuentaPago),
+    accountNumber: s(row.NumeroCuentaPago),
+    bank:        s(row.BancoPago),
+  };
+}
+
+export function mapItem(item: ExcelItem) {
+  // TipoIngresos in Excel is a 2-char string "01"–"06", parse to int
+  const tipoIngresos = item.TipoIngresos !== undefined ? int(item.TipoIngresos) : undefined;
+
+  return {
+    description:          s(item.NombreItem) ?? 'Item',
+    quantity:             n(item.CantidadItem) ?? 1,
+    unitPrice:            n(item.PrecioUnitarioItem) ?? 0,
+    discount:             n(item.DescuentoMonto),
+    surcharge:            n(item.RecargoMonto),
+    itbisRate:            n(item.TasaITBIS),
+    indicadorFacturacion: int(item.IndicadorFacturacion),
+    goodService:          int(item.BienOServicio),
+    code:                 s(item.CodigoProducto),
+    unit:                 s(item.UnidadMedida),
+    incomeType:           tipoIngresos,
+    manufacturingDate:    s(item.FechaElaboracion),
+    // ISC fields
+    additionalTaxCode:    s(item.CodigoImpuestoAdicional),
+    additionalTaxRate:    n(item.TasaImpuestoAdicional),
+    alcoholDegrees:       n(item.GradosAlcohol),
+    referenceQuantity:    n(item.CantidadReferencia),
+    subQuantity:          n(item.Subcantidad),
+    referenceUnitPrice:   n(item.PrecioUnitarioReferencia),
+    // Retention (E41)
+    retencionIndicador:   int(item.IndicadorAgenteRetencionoPercepcion),
+    montoItbisRetenido:   n(item.MontoITBISRetenido),
+    montoIsrRetenido:     n(item.MontoISRRetenido),
+  };
+}
+
+export function mapItems(row: ExcelRow) {
+  return Object.entries(row._items)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([, item]) => mapItem(item));
+}
+
+export function mapCurrency(row: ExcelRow) {
+  const code = s(row.TipoMoneda);
+  const rate = n(row.TipoCambio);
+  if (!code || code === 'DOP') return undefined;
+  return { code, exchangeRate: rate ?? 1 };
+}
+
+// ---------------------------------------------------------------------------
+// Base DTO builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the common DTO fields shared by every e-CF type.
+ * Type-specific mappers spread this and add their own fields.
+ */
+export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Record<string, unknown> {
+  const encf = s(row.eNCF ?? row.ENCF);
+
+  return {
+    companyId,
+    ecfType,
+    buyer:           mapBuyer(row),
+    items:           mapItems(row),
+    payment:         mapPayment(row),
+    currency:        mapCurrency(row),
+    fechaEmision:    s(row.FechaEmision),
+    encfOverride:    encfToOverride(encf),
+    idempotencyKey:  `cert-${encf ?? Date.now()}`,
+    indicadorMontoGravado:  int(row.IndicadorMontoGravado),
+    indicadorEnvioDiferido: int(row.IndicadorEnvioDiferido),
+    metadata: { certificationRow: true, casoPrueba: s(row.CasoPrueba) },
+  };
+}
+
+export function mapReference(row: ExcelRow) {
+  const encf = s(row.NCFModificado);
+  if (!encf) return undefined;
+  return {
+    encf,
+    date:               s(row.FechaNCFModificado) ?? '01-01-2020',
+    modificationCode:   int(row.CodigoModificacion) ?? 1,
+    rncOtroContribuyente: s(row.RNCOtroContribuyente),
+    reason:             s(row.RazonModificacion),
+  };
+}

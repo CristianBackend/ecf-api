@@ -29,6 +29,7 @@ import { BuyersModule } from './buyers/buyers.module';
 import { QueueModule } from './queue/queue.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { BillingModule } from './billing/billing.module';
+import { CertificationModule } from './certification/certification.module';
 import configuration from './config/configuration';
 import { envValidationSchema } from './config/env.validation';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -119,6 +120,7 @@ import { LoggerModule } from './common/logger/logger.module';
     ContingencyModule,
     ReceptionModule,
     SchedulerModule,
+    CertificationModule,
     BillingModule,
 
     // Utils
