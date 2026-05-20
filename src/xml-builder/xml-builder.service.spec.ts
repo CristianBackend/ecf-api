@@ -145,7 +145,8 @@ describe('XmlBuilderService', () => {
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
 
       expect(xml).toMatch(/^<\?xml version="1\.0" encoding="UTF-8"\?>/);
-      expect(xml).toContain('<ECF xmlns="http://dgii.gov.do/eCF">');
+      expect(xml).toContain('<ECF>');
+      expect(xml).not.toContain('xmlns="http://dgii.gov.do/eCF"');
       expect(xml).toContain('</ECF>');
     });
 

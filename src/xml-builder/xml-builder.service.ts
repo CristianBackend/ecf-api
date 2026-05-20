@@ -124,7 +124,7 @@ export class XmlBuilderService {
     // Assemble final XML per XSD xs:sequence order
     const xml = [
       '<?xml version="1.0" encoding="UTF-8"?>',
-      '<ECF xmlns="http://dgii.gov.do/eCF">',
+      '<ECF>',
       '  <Encabezado>',
       '    <Version>1.0</Version>',
       idDoc,
@@ -172,7 +172,7 @@ export class XmlBuilderService {
 
     const xml = [
       '<?xml version="1.0" encoding="UTF-8"?>',
-      '<RFCE xmlns="http://dgii.gov.do/RFCE">',
+      '<RFCE>',
       `  <RNCEmisor>${escapeXml(emitter.rnc)}</RNCEmisor>`,
       `  <eNCF>${escapeXml(encf)}</eNCF>`,
       `  <FechaEmision>${fechaEmision}</FechaEmision>`,
@@ -216,7 +216,7 @@ export class XmlBuilderService {
 
     const xml = [
       '<?xml version="1.0" encoding="UTF-8"?>',
-      '<ANECF xmlns="http://dgii.gov.do/ANECF">',
+      '<ANECF>',
       `  <Encabezado>`,
       `    <RNCEmisor>${escapeXml(emitter.rnc)}</RNCEmisor>`,
       `    <FechaAnulacion>${formatDate(now)}</FechaAnulacion>`,
