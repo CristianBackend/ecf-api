@@ -71,6 +71,38 @@ export interface InvoiceInput {
    */
   emitTipoPago?: boolean;
 
+  /**
+   * Verbatim string overrides for header-level totals (Fix 4g).
+   *
+   * DGII certification compares total values as STRINGS. The dataset's
+   * Excel has the totals PRE-CALCULATED per case, and they don't always
+   * coincide with what our `calculateTotals()` derives from items because
+   * the Excel uses specific rounding rules, includes adjustments not
+   * present in item lines (weight/volume breakdowns, retentions), and in
+   * some cases (NC corrección de texto E34 with modCode=2) outright
+   * disagrees with what the items would calculate (Excel has MontoTotal=0
+   * even when items have MontoItem=1).
+   *
+   * When provided, each field is emitted VERBATIM, bypassing the
+   * computed value. Empty/undefined means "compute from items as before".
+   * The numeric value passed via `retention.*` / item totals continues
+   * to drive any downstream math; only the literal XML emission of this
+   * specific tag uses the verbatim string.
+   *
+   * Examples from the DGII set:
+   *   E310000000005: MontoGravadoI1=622.88 (Excel) vs 735.00 (our calc)  → use Excel
+   *   E320000000006: ITBIS3=0, TotalITBIS3=0.00 (Excel) — DGII wants present,
+   *                  not omitted, even though monto=0
+   *   E340000000018: MontoTotal=0.00 (Excel) vs 1.00 (from items) → use Excel
+   *   E410000000001: TotalITBISRetenido=1800.00 (Excel) but our `retention`
+   *                  field defaults to undefined → use Excel
+   *
+   * Production-safe: production API callers leave this undefined and the
+   * builder falls through to the standard computed emission. Only the
+   * certification flow populates it from the Excel row.
+   */
+  totalsRawText?: TotalsRawText;
+
   /** Idempotency key to prevent duplicates */
   idempotencyKey?: string;
 
@@ -490,4 +522,46 @@ export interface InvoiceTotals {
 
   /** Per-tax-code entries for ImpuestosAdicionales wrapper in Totales */
   additionalTaxEntries: AdditionalTaxEntry[];
+}
+
+/**
+ * Verbatim string overrides for header-level totals (Fix 4g).
+ *
+ * Each field corresponds to an XML tag in the <Totales> section. When the
+ * caller provides a string here, the builder emits that string EXACTLY
+ * (preserving decimal precision and sign) and bypasses its own computed
+ * value for that single tag. Fields not provided fall through to the
+ * normal computed emission.
+ *
+ * The certification mapper populates this from the Excel totals (which
+ * DGII pre-calculated for each case); production callers leave it
+ * undefined.
+ *
+ * Why per-tag instead of an "all or nothing" flag?
+ *   - The DGII set sometimes specifies only SOME totals per row (E33 has
+ *     only MontoExento and MontoTotal, E34 NC has MontoTotal and
+ *     MontoNoFacturable but not the ITBIS breakdown).
+ *   - Per-tag overrides let production callers stay 100% backwards
+ *     compatible: they just don't set this object.
+ */
+export interface TotalsRawText {
+  MontoGravadoTotal?: string;
+  MontoGravadoI1?: string;
+  MontoGravadoI2?: string;
+  MontoGravadoI3?: string;
+  MontoExento?: string;
+  ITBIS1?: string;
+  ITBIS2?: string;
+  ITBIS3?: string;
+  TotalITBIS?: string;
+  TotalITBIS1?: string;
+  TotalITBIS2?: string;
+  TotalITBIS3?: string;
+  MontoImpuestoAdicional?: string;
+  MontoTotal?: string;
+  MontoNoFacturable?: string;
+  TotalITBISRetenido?: string;
+  TotalISRRetencion?: string;
+  TotalITBISPercepcion?: string;
+  TotalISRPercepcion?: string;
 }

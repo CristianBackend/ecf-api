@@ -5,7 +5,7 @@
  * certification Excel set, where mismatches silently dropped data
  * before Fix 4a (e.g. `BienOServicio` vs the real `IndicadorBienoServicio`).
  */
-import { mapItem, mapAdditionalInfo } from './base-excel.mapper';
+import { mapItem, mapAdditionalInfo, mapBase } from './base-excel.mapper';
 
 describe('base-excel.mapper', () => {
   describe('mapItem', () => {
@@ -178,6 +178,100 @@ describe('base-excel.mapper', () => {
       const mapped = mapItem(item) as any;
       // Neither should appear in rawText
       expect(mapped.rawText).toBeUndefined();
+    });
+  });
+
+  // ===========================================================================
+  // Fix 4g — header-level totals via totalsRawText
+  // ===========================================================================
+
+  describe('mapBase totalsRawText (Fix 4g)', () => {
+    // Minimal helpers to build a fake ExcelRow for mapBase.
+    function row(extra: Record<string, unknown> = {}) {
+      return {
+        eNCF: 'E310000000005',
+        TipoeCF: 31,
+        _items: {
+          1: { NombreItem: 'X', CantidadItem: 1, PrecioUnitarioItem: 1 },
+        },
+        FechaEmision: '01-01-2020',
+        // The minimum buyer fields so mapBuyer doesn't blow up
+        RNCComprador: '101000001',
+        RazonSocialComprador: 'TEST',
+        ...extra,
+      } as any;
+    }
+
+    // mapBase imported at top of file.
+
+    it('builds totalsRawText from Excel headers when totals are present', () => {
+      const out = mapBase(row({
+        MontoGravadoTotal: '70522.19',
+        MontoGravadoI1: '622.88',
+        MontoGravadoI2: '69129.31',
+        MontoGravadoI3: '770.00',
+        MontoExento: '1625.00',
+        ITBIS1: '18',
+        ITBIS2: '16',
+        ITBIS3: '0',
+        TotalITBIS: '11172.81',
+        TotalITBIS1: '112.12',
+        TotalITBIS2: '11060.69',
+        TotalITBIS3: '0.00',
+        MontoTotal: '83320.00',
+      }), 'company-1', 'E31');
+
+      expect(out.totalsRawText).toBeDefined();
+      const r = out.totalsRawText as Record<string, string>;
+      expect(r.MontoGravadoI1).toBe('622.88');
+      expect(r.MontoGravadoI2).toBe('69129.31');
+      expect(r.MontoGravadoI3).toBe('770.00');
+      expect(r.MontoExento).toBe('1625.00');
+      expect(r.ITBIS3).toBe('0');
+      expect(r.TotalITBIS3).toBe('0.00');
+      expect(r.MontoTotal).toBe('83320.00');
+    });
+
+    it('omits totalsRawText entirely when NO totals are present in the row', () => {
+      const out = mapBase(row(), 'company-1', 'E31');
+      expect(out.totalsRawText).toBeUndefined();
+    });
+
+    it('only includes fields that have valid numeric strings ("#e" → skip)', () => {
+      const out = mapBase(row({
+        MontoTotal: '500.00',
+        MontoNoFacturable: '#e',     // empty sentinel
+        TotalITBISRetenido: '',       // empty string
+      }), 'company-1', 'E31');
+
+      const r = out.totalsRawText as Record<string, string>;
+      expect(r.MontoTotal).toBe('500.00');
+      expect(r.MontoNoFacturable).toBeUndefined();
+      expect(r.TotalITBISRetenido).toBeUndefined();
+    });
+
+    it('reads retention totals (E41 case)', () => {
+      const out = mapBase(row({
+        TotalITBISRetenido: '1800.00',
+        TotalISRRetencion: '1000.00',
+        MontoTotal: '11800.00',
+      }), 'company-1', 'E41');
+
+      const r = out.totalsRawText as Record<string, string>;
+      expect(r.TotalITBISRetenido).toBe('1800.00');
+      expect(r.TotalISRRetencion).toBe('1000.00');
+      expect(r.MontoTotal).toBe('11800.00');
+    });
+
+    it('reads E34 NC corrección de texto case (MontoTotal=0, MontoNoFacturable>0)', () => {
+      const out = mapBase(row({
+        MontoTotal: '0.00',
+        MontoNoFacturable: '1.00',
+      }), 'company-1', 'E34');
+
+      const r = out.totalsRawText as Record<string, string>;
+      expect(r.MontoTotal).toBe('0.00');
+      expect(r.MontoNoFacturable).toBe('1.00');
     });
   });
 });

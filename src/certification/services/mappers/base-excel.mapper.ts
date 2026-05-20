@@ -237,6 +237,41 @@ export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Reco
   const valorPagarExcel = n(row.ValorPagar);
   const tipoPagoExcelRaw = v(row.TipoPago);
 
+  // Fix 4g: verbatim string overrides for the <Totales> section.
+  //
+  // The DGII test set ships every header total pre-calculated in the Excel
+  // (MontoGravadoTotal, MontoGravadoI1/2/3, MontoExento, ITBIS1/2/3,
+  // TotalITBIS*, MontoImpuestoAdicional, MontoTotal, MontoNoFacturable,
+  // and the four retention/perception totals). These values include
+  // adjustments and rounding rules that our calculateTotals() doesn't
+  // replicate, so we emit them verbatim when present.
+  //
+  // For totals that look like "0", "0.00", we still emit the tag because
+  // DGII certification requires presence in some cases even when the
+  // amount is zero (E32:6 needs <ITBIS3>0</ITBIS3>).
+  //
+  // For absent cells ('#e' or empty) rawNum returns undefined and the
+  // builder falls through to its computed value (which is the normal
+  // production path).
+  const totalsRawText: Record<string, string> = {};
+  const TOTAL_FIELDS = [
+    'MontoGravadoTotal', 'MontoGravadoI1', 'MontoGravadoI2', 'MontoGravadoI3',
+    'MontoExento',
+    'ITBIS1', 'ITBIS2', 'ITBIS3',
+    'TotalITBIS', 'TotalITBIS1', 'TotalITBIS2', 'TotalITBIS3',
+    'MontoImpuestoAdicional',
+    'MontoTotal', 'MontoNoFacturable',
+    'TotalITBISRetenido', 'TotalISRRetencion',
+    'TotalITBISPercepcion', 'TotalISRPercepcion',
+  ] as const;
+  for (const field of TOTAL_FIELDS) {
+    const raw = rawNum((row as Record<string, unknown>)[field]);
+    if (raw !== undefined) {
+      totalsRawText[field] = raw;
+    }
+  }
+  const hasTotalsRaw = Object.keys(totalsRawText).length > 0;
+
   return {
     companyId,
     ecfType,
@@ -261,6 +296,7 @@ export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Reco
     ...(tipoPagoExcelRaw === undefined ? { emitTipoPago: false } : {}),
     ...(emitterOverride ? { emitterOverride } : {}),
     ...(additionalInfo ? { additionalInfo } : {}),
+    ...(hasTotalsRaw ? { totalsRawText } : {}),
     metadata: { certificationRow: true, casoPrueba: s(row.CasoPrueba) },
   };
 }

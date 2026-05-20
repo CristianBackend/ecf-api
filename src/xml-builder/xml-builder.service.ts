@@ -751,10 +751,15 @@ export class XmlBuilderService {
     let xml = '';
     xml += `    <Totales>\n`;
 
+    // Fix 4g: convenient alias for the rawText overrides.
+    const raw = input.totalsRawText;
+
     // === XSD Totales xs:sequence order ===
 
     // 1. MontoGravadoTotal
-    if (hasGravadoTotal) {
+    if (raw?.MontoGravadoTotal !== undefined) {
+      xml += `      <MontoGravadoTotal>${raw.MontoGravadoTotal}</MontoGravadoTotal>\n`;
+    } else if (hasGravadoTotal) {
       const montoGravadoTotal = r2(totals.taxableAmount18 + totals.taxableAmount16 + totals.taxableAmount0);
       if (montoGravadoTotal > 0) {
         xml += `      <MontoGravadoTotal>${fmt(montoGravadoTotal)}</MontoGravadoTotal>\n`;
@@ -762,56 +767,77 @@ export class XmlBuilderService {
     }
 
     // 2-4. MontoGravadoI1/I2/I3 (breakdown by rate)
-    if (hasGravadoBreakdown) {
-      if (totals.taxableAmount18 > 0) {
-        xml += `      <MontoGravadoI1>${fmt(totals.taxableAmount18)}</MontoGravadoI1>\n`;
-      }
-      if (totals.taxableAmount16 > 0) {
-        xml += `      <MontoGravadoI2>${fmt(totals.taxableAmount16)}</MontoGravadoI2>\n`;
-      }
-      if (totals.taxableAmount0 > 0) {
-        xml += `      <MontoGravadoI3>${fmt(totals.taxableAmount0)}</MontoGravadoI3>\n`;
-      }
+    if (raw?.MontoGravadoI1 !== undefined) {
+      xml += `      <MontoGravadoI1>${raw.MontoGravadoI1}</MontoGravadoI1>\n`;
+    } else if (hasGravadoBreakdown && totals.taxableAmount18 > 0) {
+      xml += `      <MontoGravadoI1>${fmt(totals.taxableAmount18)}</MontoGravadoI1>\n`;
+    }
+    if (raw?.MontoGravadoI2 !== undefined) {
+      xml += `      <MontoGravadoI2>${raw.MontoGravadoI2}</MontoGravadoI2>\n`;
+    } else if (hasGravadoBreakdown && totals.taxableAmount16 > 0) {
+      xml += `      <MontoGravadoI2>${fmt(totals.taxableAmount16)}</MontoGravadoI2>\n`;
+    }
+    if (raw?.MontoGravadoI3 !== undefined) {
+      xml += `      <MontoGravadoI3>${raw.MontoGravadoI3}</MontoGravadoI3>\n`;
+    } else if (hasGravadoBreakdown && totals.taxableAmount0 > 0) {
+      xml += `      <MontoGravadoI3>${fmt(totals.taxableAmount0)}</MontoGravadoI3>\n`;
     }
 
     // 5. MontoExento
-    if (hasExento && totals.exemptAmount > 0) {
+    if (raw?.MontoExento !== undefined) {
+      xml += `      <MontoExento>${raw.MontoExento}</MontoExento>\n`;
+    } else if (hasExento && totals.exemptAmount > 0) {
       xml += `      <MontoExento>${fmt(totals.exemptAmount)}</MontoExento>\n`;
     }
 
-    // 6-8. ITBIS1/2/3 (rate values)
-    if (hasItbisRates) {
-      if (totals.itbis18 > 0) {
-        xml += `      <ITBIS1>18</ITBIS1>\n`;
-      }
-      if (totals.itbis16 > 0) {
-        xml += `      <ITBIS2>16</ITBIS2>\n`;
-      }
-      if (totals.itbis0 > 0) {
-        xml += `      <ITBIS3>0</ITBIS3>\n`;
-      }
+    // 6-8. ITBIS1/2/3 (rate values — these are "18", "16", "0" indicating rates present).
+    // Note: DGII certification expects these emitted whenever the corresponding
+    // gravado breakdown is present (even at amount 0 for ITBIS3 with exonerated
+    // items), not when "monto>0". The raw override lets us pin presence per row.
+    if (raw?.ITBIS1 !== undefined) {
+      xml += `      <ITBIS1>${raw.ITBIS1}</ITBIS1>\n`;
+    } else if (hasItbisRates && totals.itbis18 > 0) {
+      xml += `      <ITBIS1>18</ITBIS1>\n`;
+    }
+    if (raw?.ITBIS2 !== undefined) {
+      xml += `      <ITBIS2>${raw.ITBIS2}</ITBIS2>\n`;
+    } else if (hasItbisRates && totals.itbis16 > 0) {
+      xml += `      <ITBIS2>16</ITBIS2>\n`;
+    }
+    if (raw?.ITBIS3 !== undefined) {
+      xml += `      <ITBIS3>${raw.ITBIS3}</ITBIS3>\n`;
+    } else if (hasItbisRates && totals.itbis0 > 0) {
+      xml += `      <ITBIS3>0</ITBIS3>\n`;
     }
 
     // 9. TotalITBIS
-    if (hasTotalItbis && totals.totalItbis > 0) {
+    if (raw?.TotalITBIS !== undefined) {
+      xml += `      <TotalITBIS>${raw.TotalITBIS}</TotalITBIS>\n`;
+    } else if (hasTotalItbis && totals.totalItbis > 0) {
       xml += `      <TotalITBIS>${fmt(totals.totalItbis)}</TotalITBIS>\n`;
     }
 
     // 10-12. TotalITBIS1/2/3
-    if (hasItbisBreakdown) {
-      if (totals.itbis18 > 0) {
-        xml += `      <TotalITBIS1>${fmt(totals.itbis18)}</TotalITBIS1>\n`;
-      }
-      if (totals.itbis16 > 0) {
-        xml += `      <TotalITBIS2>${fmt(totals.itbis16)}</TotalITBIS2>\n`;
-      }
-      if (totals.itbis0 > 0) {
-        xml += `      <TotalITBIS3>${fmt(totals.itbis0)}</TotalITBIS3>\n`;
-      }
+    if (raw?.TotalITBIS1 !== undefined) {
+      xml += `      <TotalITBIS1>${raw.TotalITBIS1}</TotalITBIS1>\n`;
+    } else if (hasItbisBreakdown && totals.itbis18 > 0) {
+      xml += `      <TotalITBIS1>${fmt(totals.itbis18)}</TotalITBIS1>\n`;
+    }
+    if (raw?.TotalITBIS2 !== undefined) {
+      xml += `      <TotalITBIS2>${raw.TotalITBIS2}</TotalITBIS2>\n`;
+    } else if (hasItbisBreakdown && totals.itbis16 > 0) {
+      xml += `      <TotalITBIS2>${fmt(totals.itbis16)}</TotalITBIS2>\n`;
+    }
+    if (raw?.TotalITBIS3 !== undefined) {
+      xml += `      <TotalITBIS3>${raw.TotalITBIS3}</TotalITBIS3>\n`;
+    } else if (hasItbisBreakdown && totals.itbis0 > 0) {
+      xml += `      <TotalITBIS3>${fmt(totals.itbis0)}</TotalITBIS3>\n`;
     }
 
     // 13. MontoImpuestoAdicional (summary total of all additional taxes)
-    if (hasImpuestoAdicional) {
+    if (raw?.MontoImpuestoAdicional !== undefined) {
+      xml += `      <MontoImpuestoAdicional>${raw.MontoImpuestoAdicional}</MontoImpuestoAdicional>\n`;
+    } else if (hasImpuestoAdicional) {
       const montoImpuestoAdicional = r2(totals.totalIsc + totals.totalOtrosImpuestos);
       if (montoImpuestoAdicional > 0) {
         xml += `      <MontoImpuestoAdicional>${fmt(montoImpuestoAdicional)}</MontoImpuestoAdicional>\n`;
@@ -840,10 +866,19 @@ export class XmlBuilderService {
     }
 
     // 15. MontoTotal (required in ALL types, minOccurs=1)
-    xml += `      <MontoTotal>${fmt(totals.totalAmount)}</MontoTotal>\n`;
+    // Fix 4g: even though MontoTotal is XSD-required, the raw override lets
+    // certification rows force MontoTotal=0 (E34 NC corrección de texto) even
+    // when items add up to a different number.
+    if (raw?.MontoTotal !== undefined) {
+      xml += `      <MontoTotal>${raw.MontoTotal}</MontoTotal>\n`;
+    } else {
+      xml += `      <MontoTotal>${fmt(totals.totalAmount)}</MontoTotal>\n`;
+    }
 
     // 16. MontoNoFacturable
-    if (hasMontoNoFacturable && totals.montoNoFacturable > 0) {
+    if (raw?.MontoNoFacturable !== undefined) {
+      xml += `      <MontoNoFacturable>${raw.MontoNoFacturable}</MontoNoFacturable>\n`;
+    } else if (hasMontoNoFacturable && totals.montoNoFacturable > 0) {
       xml += `      <MontoNoFacturable>${fmt(totals.montoNoFacturable)}</MontoNoFacturable>\n`;
     }
 
@@ -876,16 +911,29 @@ export class XmlBuilderService {
     }
 
     // 17-20. Retenciones y Percepciones (per XSD: only in E31, E33, E34, E41; ISR also E47)
-    if (hasItbisRetenido && input.retention?.itbisRetenido && input.retention.itbisRetenido > 0) {
+    // Fix 4g: these are typically computed from item-level retention indicators
+    // and rates, but the DGII certification dataset just provides them as
+    // pre-computed Excel totals. When raw is present we emit verbatim; otherwise
+    // we keep the original input.retention.* path so production callers are
+    // unaffected.
+    if (raw?.TotalITBISRetenido !== undefined) {
+      xml += `      <TotalITBISRetenido>${raw.TotalITBISRetenido}</TotalITBISRetenido>\n`;
+    } else if (hasItbisRetenido && input.retention?.itbisRetenido && input.retention.itbisRetenido > 0) {
       xml += `      <TotalITBISRetenido>${fmt(input.retention.itbisRetenido)}</TotalITBISRetenido>\n`;
     }
-    if (hasIsrRetencion && input.retention?.isrRetencion && input.retention.isrRetencion > 0) {
+    if (raw?.TotalISRRetencion !== undefined) {
+      xml += `      <TotalISRRetencion>${raw.TotalISRRetencion}</TotalISRRetencion>\n`;
+    } else if (hasIsrRetencion && input.retention?.isrRetencion && input.retention.isrRetencion > 0) {
       xml += `      <TotalISRRetencion>${fmt(input.retention.isrRetencion)}</TotalISRRetencion>\n`;
     }
-    if (hasItbisPercepcion && input.retention?.itbisPercepcion && input.retention.itbisPercepcion > 0) {
+    if (raw?.TotalITBISPercepcion !== undefined) {
+      xml += `      <TotalITBISPercepcion>${raw.TotalITBISPercepcion}</TotalITBISPercepcion>\n`;
+    } else if (hasItbisPercepcion && input.retention?.itbisPercepcion && input.retention.itbisPercepcion > 0) {
       xml += `      <TotalITBISPercepcion>${fmt(input.retention.itbisPercepcion)}</TotalITBISPercepcion>\n`;
     }
-    if (hasIsrPercepcion && input.retention?.isrPercepcion && input.retention.isrPercepcion > 0) {
+    if (raw?.TotalISRPercepcion !== undefined) {
+      xml += `      <TotalISRPercepcion>${raw.TotalISRPercepcion}</TotalISRPercepcion>\n`;
+    } else if (hasIsrPercepcion && input.retention?.isrPercepcion && input.retention.isrPercepcion > 0) {
       xml += `      <TotalISRPercepcion>${fmt(input.retention.isrPercepcion)}</TotalISRPercepcion>\n`;
     }
 

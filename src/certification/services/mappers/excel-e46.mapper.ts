@@ -19,6 +19,14 @@ export function mapE46(row: ExcelRow, companyId: string): Record<string, unknown
     conductor:        s(row.Conductor),
     placa:            s(row.Placa),
     numeroAlbaran:    s(row.NumeroAlbaran),
+    // Fix 4g: common DGII transport fields the previous mapper missed.
+    // The Excel set ALWAYS specifies these for E46 (DocumentoTransporte,
+    // Ficha, RutaTransporte, ZonaTransporte are non-#e on every E46 row);
+    // omitting them caused 'enviado () no coincide con (363636)' in cert.
+    documentoTransporte: n(row.DocumentoTransporte),
+    ficha:               s(row.Ficha),
+    rutaTransporte:      s(row.RutaTransporte),
+    zonaTransporte:      s(row.ZonaTransporte),
   };
   // Remove undefined keys so ValidationPipe doesn't complain
   Object.keys(transport).forEach(k => transport[k] === undefined && delete transport[k]);

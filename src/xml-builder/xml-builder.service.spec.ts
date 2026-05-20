@@ -499,6 +499,113 @@ describe('XmlBuilderService', () => {
       // CantidadItem still goes through fmt() since no rawText for it.
       expect(tagContent(xml, 'CantidadItem')).toBe('10000.00');
     });
+
+    // ----- Fix 4g: totalsRawText verbatim header totals -----
+
+    it('Fix 4g: emits MontoGravadoI1 verbatim from totalsRawText', () => {
+      // Real DGII rejection: E310000000005 had MontoGravadoI1=735.00 (our calc)
+      // but DGII expected 622.88 (per the Excel set). With totalsRawText we
+      // emit exactly what the Excel says.
+      const input = makeInput('E31', {
+        totalsRawText: {
+          MontoGravadoI1: '622.88',
+          TotalITBIS1: '112.12',
+          MontoTotal: '83320.00',
+        },
+      } as any);
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000005');
+      expect(tagContent(xml, 'MontoGravadoI1')).toBe('622.88');
+      expect(tagContent(xml, 'TotalITBIS1')).toBe('112.12');
+      expect(tagContent(xml, 'MontoTotal')).toBe('83320.00');
+    });
+
+    it('Fix 4g: emits ITBIS3=0 and TotalITBIS3=0.00 even when computed amount is zero', () => {
+      // E320000000006 was rejected because we omitted <ITBIS3> when the tax
+      // amount = 0, but DGII expected the tag PRESENT with value 0 (indicates
+      // that an exonerated/0%-rate tax bracket is in use).
+      const input = makeInput('E32', {
+        buyer: consumerBuyer,
+        totalsRawText: {
+          ITBIS3: '0',
+          TotalITBIS3: '0.00',
+        },
+      } as any);
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E320000000006');
+      expect(tagContent(xml, 'ITBIS3')).toBe('0');
+      expect(tagContent(xml, 'TotalITBIS3')).toBe('0.00');
+    });
+
+    it('Fix 4g: emits MontoTotal=0 even when items add up to a positive number', () => {
+      // E340000000018 is an NC for text correction (CodigoModificacion=2).
+      // The Excel has MontoItem=1 but MontoTotal=0 (DGII semantic: text-only
+      // corrections must not move money). Builder must honor the override.
+      const input = makeInput('E34', {
+        items: [basicItem({ quantity: 1, unitPrice: 1 }) as any], // would sum to 1.00
+        totalsRawText: {
+          MontoTotal: '0.00',
+          MontoNoFacturable: '1.00',
+        },
+        reference: {
+          encf: 'E310000000001',
+          date: '01-01-2020',
+          modificationCode: 2,
+        } as any,
+      } as any);
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E340000000018');
+      expect(tagContent(xml, 'MontoTotal')).toBe('0.00');
+      expect(tagContent(xml, 'MontoNoFacturable')).toBe('1.00');
+    });
+
+    it('Fix 4g: emits TotalITBISRetenido verbatim from totalsRawText', () => {
+      // E410000000001 expected TotalITBISRetenido=1800.00 but we omitted the
+      // field entirely because input.retention.* was undefined.
+      const input = makeInput('E41', {
+        totalsRawText: {
+          TotalITBISRetenido: '1800.00',
+          TotalISRRetencion: '1000.00',
+        },
+      } as any);
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E410000000001');
+      expect(tagContent(xml, 'TotalITBISRetenido')).toBe('1800.00');
+      expect(tagContent(xml, 'TotalISRRetencion')).toBe('1000.00');
+    });
+
+    it('Fix 4g: emits TotalISRRetencion on E47 verbatim from totalsRawText', () => {
+      // E470000000009 expected TotalISRRetencion=17820.00.
+      const input = makeInput('E47', {
+        buyer: consumerBuyer,
+        totalsRawText: {
+          TotalISRRetencion: '17820.00',
+        },
+      } as any);
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000009');
+      expect(tagContent(xml, 'TotalISRRetencion')).toBe('17820.00');
+    });
+
+    it('Fix 4g: falls back to computed value when totalsRawText[field] is undefined', () => {
+      // Production safety: callers that don't pass totalsRawText (or pass
+      // an empty object) get the original behavior.
+      const input = makeInput('E31', {
+        totalsRawText: { MontoTotal: '999.99' }, // only override MontoTotal
+      } as any);
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      // MontoTotal is overridden
+      expect(tagContent(xml, 'MontoTotal')).toBe('999.99');
+      // MontoGravadoTotal NOT overridden → still computed
+      expect(hasTag(xml, 'MontoGravadoTotal')).toBe(true);
+    });
+
+    it('Fix 4g: undefined totalsRawText leaves all behavior unchanged (no PROD regression)', () => {
+      const noRaw = makeInput('E31');
+      const withEmpty = makeInput('E31', { totalsRawText: {} as any });
+      const { xml: xmlNoRaw } = service.buildEcfXml(noRaw, mockEmitter, 'E310000000001');
+      const { xml: xmlEmpty } = service.buildEcfXml(withEmpty, mockEmitter, 'E310000000001');
+      // The two XMLs must be byte-identical except for any timestamp-like
+      // fields. We compare the Totales section.
+      const totalesNo = xmlNoRaw.match(/<Totales>[\s\S]*?<\/Totales>/)?.[0];
+      const totalesEmpty = xmlEmpty.match(/<Totales>[\s\S]*?<\/Totales>/)?.[0];
+      expect(totalesNo).toBe(totalesEmpty);
+    });
   });
 
   // ============================================================
