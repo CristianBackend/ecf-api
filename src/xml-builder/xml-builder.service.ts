@@ -511,14 +511,34 @@ export class XmlBuilderService {
     }
 
     // TablaFormasPago: 3  3  3  0  3  0  3  3  3  3
+    //
+    // Fix 4h: when input.payment.forms is provided, emit one <FormaDePago>
+    // entry per element (up to 7 per XSD). This is required for the
+    // certification flow where DGII expects the EXACT MontoPago from the
+    // Excel (e.g. E470000000008 expects MontoPago=14350.00, not 17850.00
+    // which is the totalAmount).
+    //
+    // Backwards compatible: callers that don't set `forms` get the previous
+    // single-entry behavior (FormaPago=method or 1, MontoPago=totalAmount).
     const noFormasPago = [34, 43];
     if (!noFormasPago.includes(typeCode)) {
-      const formaPago = input.payment.method || 1; // FormaPago defaults to 1 (Efectivo) if not specified
       xml += `      <TablaFormasPago>\n`;
-      xml += `        <FormaDePago>\n`;
-      xml += `          <FormaPago>${formaPago}</FormaPago>\n`;
-      xml += `          <MontoPago>${fmt(totalAmount)}</MontoPago>\n`;
-      xml += `        </FormaDePago>\n`;
+      if (input.payment.forms && input.payment.forms.length > 0) {
+        for (const form of input.payment.forms) {
+          xml += `        <FormaDePago>\n`;
+          xml += `          <FormaPago>${form.method}</FormaPago>\n`;
+          // Honor rawText.MontoPago for byte-for-byte match against the Excel.
+          const montoPago = form.rawText?.MontoPago ?? fmt(form.amount);
+          xml += `          <MontoPago>${montoPago}</MontoPago>\n`;
+          xml += `        </FormaDePago>\n`;
+        }
+      } else {
+        const formaPago = input.payment.method || 1; // default Efectivo
+        xml += `        <FormaDePago>\n`;
+        xml += `          <FormaPago>${formaPago}</FormaPago>\n`;
+        xml += `          <MontoPago>${fmt(totalAmount)}</MontoPago>\n`;
+        xml += `        </FormaDePago>\n`;
+      }
       xml += `      </TablaFormasPago>\n`;
     }
 
@@ -1073,10 +1093,20 @@ export class XmlBuilderService {
           xml += `      <PrecioUnitarioReferencia>${item.rawText?.PrecioUnitarioReferencia ?? fmt(item.referenceUnitPrice)}</PrecioUnitarioReferencia>\n`;
         }
 
-        // M4: FechaElaboracion (optional, after PrecioUnitarioReferencia per XSD)
-        if (item.manufacturingDate) {
-          xml += `      <FechaElaboracion>${item.manufacturingDate}</FechaElaboracion>\n`;
-        }
+      }
+
+      // M4: FechaElaboracion (optional, at Item level — not inside ISC block)
+      if (item.manufacturingDate) {
+        xml += `      <FechaElaboracion>${item.manufacturingDate}</FechaElaboracion>\n`;
+      }
+
+      // Fix 4h: FechaVencimientoItem (optional, after FechaElaboracion per XSD).
+      // The DGII test set provides this for items with FechaElaboracion
+      // (E310000000008 expects "10-10-2020"). Mappers that don't set it
+      // leave the field undefined and the tag is omitted, so production is
+      // unaffected.
+      if (item.expirationDate) {
+        xml += `      <FechaVencimientoItem>${item.expirationDate}</FechaVencimientoItem>\n`;
       }
 
       // 17. PrecioUnitarioItem (up to 4 decimals per DGII XSD; cert dataset

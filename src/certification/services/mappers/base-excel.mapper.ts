@@ -102,6 +102,32 @@ export function mapBuyer(row: ExcelRow) {
 }
 
 export function mapPayment(row: ExcelRow) {
+  // Fix 4h: read multiple FormaPago[N]/MontoPago[N] from the Excel and
+  // package as payment.forms[]. The DGII test set provides per-row payment
+  // breakdowns (e.g. E410000000001 expects MontoPago=9000.00 even though
+  // MontoTotal=11800.00). The builder uses these directly via the new
+  // payment.forms array.
+  //
+  // We scan up to 7 form slots per XSD's <TablaFormasPago> max ocurrencia.
+  // Each cell uses rawNum() so we preserve the verbatim string (matches
+  // Fix 4f/4g approach) and only include slots that have a numeric amount.
+  const forms: Array<{ method: number; amount: number; rawText?: { MontoPago?: string } }> = [];
+  for (let i = 1; i <= 7; i++) {
+    const r = row as Record<string, unknown>;
+    const formaRaw = v(r[`FormaPago[${i}]`]);
+    const montoRaw = rawNum(r[`MontoPago[${i}]`]);
+    const method = int(r[`FormaPago[${i}]`]);
+    const amount = n(r[`MontoPago[${i}]`]);
+    if (method !== undefined && amount !== undefined) {
+      forms.push({
+        method,
+        amount,
+        ...(montoRaw !== undefined ? { rawText: { MontoPago: montoRaw } } : {}),
+      });
+    }
+    void formaRaw; // unused, kept for symmetry
+  }
+
   return {
     type:        n(row.TipoPago) ?? 1,
     method:      int(row.FormaPago),
@@ -110,6 +136,7 @@ export function mapPayment(row: ExcelRow) {
     accountType: s(row.TipoCuentaPago),
     accountNumber: s(row.NumeroCuentaPago),
     bank:        s(row.BancoPago),
+    ...(forms.length > 0 ? { forms } : {}),
   };
 }
 
@@ -148,6 +175,13 @@ export function mapItem(item: ExcelItem) {
     unit:                 s(item.UnidadMedida),
     incomeType:           tipoIngresos,
     manufacturingDate:    s(item.FechaElaboracion),
+    // Fix 4h: also read FechaVencimientoItem (DGII expects it for items
+    // that have an elaboration/manufacturing date).
+    expirationDate:       s(item.FechaVencimientoItem),
+    // Fix 4h: read DescripcionItem from the Excel and forward as
+    // longDescription so the builder emits <DescripcionItem>. The DGII
+    // test set has long lorem-ipsum descriptions per case (E410000000001).
+    longDescription:      s(item.DescripcionItem),
     // ISC fields
     additionalTaxRate:    n(item.TasaImpuestoAdicional),
     alcoholDegrees:       n(item.GradosAlcohol),

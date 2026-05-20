@@ -293,6 +293,17 @@ export interface InvoiceItemInput {
   /** M4: FechaElaboracion - manufacturing/creation date (DD-MM-YYYY, optional) */
   manufacturingDate?: string;
 
+  /**
+   * FechaVencimientoItem — expiration date of the item (DD-MM-YYYY).
+   * Optional, only for E31/E32/E33/E34/E44/E45 per XSD. Often paired with
+   * manufacturingDate (FechaElaboracion).
+   *
+   * Fix 4h: DGII certification expects FechaElaboracion='20-12-2019' and
+   * FechaVencimientoItem='10-10-2020' on E310000000008 item 1; previously
+   * we didn't read these from the Excel and the builder didn't emit them.
+   */
+  expirationDate?: string;
+
   /** Indicator if item amount includes ITBIS: 0=no, 1=yes */
   indicadorMontoGravado?: number;
 
@@ -342,6 +353,45 @@ export interface PaymentInput {
   accountNumber?: string;
   /** M5: BancoPago - bank name (max 75 chars) */
   bank?: string;
+
+  /**
+   * Multiple FormasPago (Fix 4h). Up to 7 per XSD.
+   *
+   * When provided, the builder uses this array INSTEAD of the single
+   * (method, totalAmount) pair, emitting one <FormaDePago> entry per
+   * element. The XSD's <TablaFormasPago> allows 1-7 <FormaDePago>
+   * children — this lets the certification flow forward the exact
+   * FormaPago[N]/MontoPago[N] values from the Excel.
+   *
+   * Backwards compatible: production API callers that ignore this field
+   * keep getting the single-entry table built from method + totalAmount.
+   *
+   * Why it matters:
+   *   - E470000000008 expected MontoPago=14350.00 (sub-total minus ITBIS
+   *     percepción) but we emitted 17850.00 (totalAmount, includes ITBIS).
+   *   - E410000000001 expected MontoPago=9000.00 vs our 11800.00.
+   *   - E310000000005/8 had similar mismatches.
+   * The Excel always provides the exact value; per-row override is the
+   * only reliable way to get them right.
+   */
+  forms?: PaymentFormInput[];
+}
+
+/** Single FormaDePago entry inside <TablaFormasPago>. */
+export interface PaymentFormInput {
+  /** FormaPago code per DGII catalog: 1..8 */
+  method: number;
+  /**
+   * Monto correspondiente. Numeric value used both for any downstream
+   * accounting and as the source of the <MontoPago> tag. The verbatim
+   * string version (preserving decimals exactly as the Excel sent it)
+   * goes in `rawText` to bypass our fmt() rounding.
+   */
+  amount: number;
+  /** Optional verbatim Excel string for MontoPago (Fix 4h, same idea as item rawText). */
+  rawText?: {
+    MontoPago?: string;
+  };
 }
 
 /** Reference to original e-CF (for credit/debit notes) */

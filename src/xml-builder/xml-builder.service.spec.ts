@@ -606,6 +606,92 @@ describe('XmlBuilderService', () => {
       const totalesEmpty = xmlEmpty.match(/<Totales>[\s\S]*?<\/Totales>/)?.[0];
       expect(totalesNo).toBe(totalesEmpty);
     });
+
+    // ----- Fix 4h: multiple FormasPago + FechaVencimientoItem -----
+
+    it('Fix 4h: emits multiple <FormaDePago> entries when payment.forms is provided', () => {
+      const input = makeInput('E31', {
+        payment: {
+          type: 1,
+          forms: [
+            { method: 1, amount: 9000 },
+            { method: 2, amount: 2800 },
+          ],
+        },
+      } as any);
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      const formaCount = (xml.match(/<FormaDePago>/g) || []).length;
+      expect(formaCount).toBe(2);
+      expect(xml).toContain('<FormaPago>1</FormaPago>');
+      expect(xml).toContain('<MontoPago>9000.00</MontoPago>');
+      expect(xml).toContain('<FormaPago>2</FormaPago>');
+      expect(xml).toContain('<MontoPago>2800.00</MontoPago>');
+    });
+
+    it('Fix 4h: emits MontoPago verbatim from payment.forms[].rawText', () => {
+      // E470000000008 expected MontoPago=14350.00 (Excel verbatim); the
+      // single-entry fallback used to emit totalAmount (17850.00). With
+      // payment.forms[] + rawText we match the expected string exactly.
+      const input = makeInput('E47', {
+        buyer: consumerBuyer,
+        payment: {
+          type: 1,
+          forms: [
+            { method: 1, amount: 14350, rawText: { MontoPago: '14350.00' } },
+          ],
+        },
+      } as any);
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E470000000008');
+      expect(tagContent(xml, 'MontoPago')).toBe('14350.00');
+    });
+
+    it('Fix 4h: falls back to single-entry table when payment.forms is absent', () => {
+      // Production safety: API callers that don't pass forms[] should
+      // continue to get the old single-entry behavior built from method +
+      // totalAmount.
+      const input = makeInput('E31', {
+        payment: { type: 1, method: 2 },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      const formaCount = (xml.match(/<FormaDePago>/g) || []).length;
+      expect(formaCount).toBe(1);
+      expect(xml).toContain('<FormaPago>2</FormaPago>');
+    });
+
+    it('Fix 4h: emits FechaVencimientoItem after FechaElaboracion when set', () => {
+      // E310000000008 expected FechaElaboracion=20-12-2019 and
+      // FechaVencimientoItem=10-10-2020. These fields are at the item level
+      // regardless of ISC code — use a plain item to avoid ISC validation.
+      const input = makeInput('E31', {
+        items: [basicItem({
+          quantity: 1,
+          unitPrice: 1500,
+          manufacturingDate: '20-12-2019',
+          expirationDate: '10-10-2020',
+        }) as any],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000008');
+      expect(xml).toContain('<FechaElaboracion>20-12-2019</FechaElaboracion>');
+      expect(xml).toContain('<FechaVencimientoItem>10-10-2020</FechaVencimientoItem>');
+      // Order: FechaElaboracion before FechaVencimientoItem
+      const elIdx = xml.indexOf('<FechaElaboracion>');
+      const vencIdx = xml.indexOf('<FechaVencimientoItem>');
+      expect(elIdx).toBeLessThan(vencIdx);
+    });
+
+    it('Fix 4h: omits FechaVencimientoItem when item.expirationDate is undefined', () => {
+      const input = makeInput('E31', {
+        items: [basicItem({
+          quantity: 1,
+          unitPrice: 1500,
+          manufacturingDate: '20-12-2019',
+          // no expirationDate
+        }) as any],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000008');
+      expect(xml).toContain('<FechaElaboracion>20-12-2019</FechaElaboracion>');
+      expect(xml).not.toContain('<FechaVencimientoItem>');
+    });
   });
 
   // ============================================================

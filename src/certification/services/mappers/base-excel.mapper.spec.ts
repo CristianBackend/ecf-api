@@ -274,4 +274,90 @@ describe('base-excel.mapper', () => {
       expect(r.MontoNoFacturable).toBe('1.00');
     });
   });
+
+  // ===========================================================================
+  // Fix 4h — payment.forms[] from Excel + item-level date/description
+  // ===========================================================================
+
+  describe('mapPayment forms (Fix 4h)', () => {
+    const { mapPayment } = jest.requireActual('./base-excel.mapper');
+
+    it('packages FormaPago[N]/MontoPago[N] into payment.forms[] array', () => {
+      const row = {
+        TipoPago: 1,
+        'FormaPago[1]': '1',
+        'MontoPago[1]': '9000.00',
+        'FormaPago[2]': '2',
+        'MontoPago[2]': '2800.00',
+      };
+      const p = mapPayment(row) as any;
+      expect(p.forms).toEqual([
+        { method: 1, amount: 9000, rawText: { MontoPago: '9000.00' } },
+        { method: 2, amount: 2800, rawText: { MontoPago: '2800.00' } },
+      ]);
+    });
+
+    it('skips form slots where method or amount is missing/"#e"', () => {
+      const row = {
+        'FormaPago[1]': '1',
+        'MontoPago[1]': '500.00',
+        'FormaPago[2]': '#e',  // skip
+        'MontoPago[2]': '100.00',
+        'FormaPago[3]': '3',
+        'MontoPago[3]': '#e',  // skip
+      };
+      const p = mapPayment(row) as any;
+      expect(p.forms).toEqual([
+        { method: 1, amount: 500, rawText: { MontoPago: '500.00' } },
+      ]);
+    });
+
+    it('omits payment.forms entirely when no FormaPago[N] is present', () => {
+      const row = { TipoPago: 1 };
+      const p = mapPayment(row) as any;
+      expect(p.forms).toBeUndefined();
+    });
+
+    it('preserves verbatim decimal precision from the Excel for MontoPago', () => {
+      // The certification flow needs verbatim strings to match DGII byte-for-byte.
+      const row = {
+        'FormaPago[1]': '1',
+        'MontoPago[1]': '14350.00',  // exact Excel formatting (not 14350)
+      };
+      const p = mapPayment(row) as any;
+      expect(p.forms[0].rawText.MontoPago).toBe('14350.00');
+    });
+  });
+
+  describe('mapItem date and description (Fix 4h)', () => {
+    it('reads FechaVencimientoItem from the Excel into expirationDate', () => {
+      const item = {
+        NombreItem: 'X',
+        CantidadItem: 1,
+        PrecioUnitarioItem: 1500,
+        FechaElaboracion: '20-12-2019',
+        FechaVencimientoItem: '10-10-2020',
+      };
+      const mapped = mapItem(item) as any;
+      expect(mapped.manufacturingDate).toBe('20-12-2019');
+      expect(mapped.expirationDate).toBe('10-10-2020');
+    });
+
+    it('reads DescripcionItem from the Excel into longDescription', () => {
+      // E410000000001 in the DGII set has a 1KB+ description; we forward it
+      // verbatim so the builder can emit <DescripcionItem>.
+      const item = {
+        NombreItem: 'SERVICIO',
+        DescripcionItem: 'LOREM IPSUM DOLOR SITI AMET',
+      };
+      const mapped = mapItem(item) as any;
+      expect(mapped.longDescription).toBe('LOREM IPSUM DOLOR SITI AMET');
+    });
+
+    it('leaves expirationDate undefined when not in the Excel', () => {
+      const item = { NombreItem: 'X', CantidadItem: 1, PrecioUnitarioItem: 100 };
+      const mapped = mapItem(item) as any;
+      expect(mapped.expirationDate).toBeUndefined();
+    });
+  });
 });

@@ -55,4 +55,49 @@ describe('mapE31', () => {
   it('sets encfOverride to 1 for E310000000001', () => {
     expect((mapE31(makeE31Row(), 'c') as any).encfOverride).toBe(1);
   });
+
+  // ---------------------------------------------------------------------
+  // Fix 4h: weight/package/volume units must reach the builder.
+  //
+  // Pre-Fix 4h, mapE31 built its OWN additionalInfo block that only kept
+  // grossWeight/netWeight, dropping the unit/package/volume fields that
+  // mapBase already had read via mapAdditionalInfo. DGII then rejected
+  // E310000000005 with "UnidadPesoBruto enviado () no coincide con (23)"
+  // for every missing unit field.
+  // ---------------------------------------------------------------------
+  describe('additionalInfo full set (Fix 4h)', () => {
+    it('keeps grossWeightUnit, netWeightUnit, packageCount, packageUnit, packageVolume, volumeUnit', () => {
+      const dto = mapE31(makeE31Row({
+        PesoBruto: '25.00',
+        PesoNeto: '24.50',
+        UnidadPesoBruto: '23',
+        UnidadPesoNeto: '23',
+        CantidadBulto: '1.00',
+        UnidadBulto: '6',
+        VolumenBulto: '1.00',
+        UnidadVolumen: '6',
+      }), 'c') as any;
+
+      expect(dto.additionalInfo.grossWeight).toBe(25);
+      expect(dto.additionalInfo.netWeight).toBe(24.5);
+      expect(dto.additionalInfo.grossWeightUnit).toBe(23);
+      expect(dto.additionalInfo.netWeightUnit).toBe(23);
+      expect(dto.additionalInfo.packageCount).toBe(1);
+      expect(dto.additionalInfo.packageUnit).toBe(6);
+      expect(dto.additionalInfo.packageVolume).toBe(1);
+      expect(dto.additionalInfo.volumeUnit).toBe(6);
+    });
+
+    it('omits unit fields that are "#e" or absent in the Excel', () => {
+      const dto = mapE31(makeE31Row({
+        PesoBruto: '25.00',
+        UnidadPesoBruto: '#e',
+        // packageCount and friends not set
+      }), 'c') as any;
+
+      expect(dto.additionalInfo.grossWeight).toBe(25);
+      expect(dto.additionalInfo.grossWeightUnit).toBeUndefined();
+      expect(dto.additionalInfo.packageCount).toBeUndefined();
+    });
+  });
 });
