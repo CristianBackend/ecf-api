@@ -178,15 +178,15 @@ export function mapReference(row: ExcelRow) {
  * In PROD it is rejected by InvoicesService.create().
  */
 export function mapEmitter(row: ExcelRow) {
-  // Normalize phones: Excel may give "809-472-7676", DGII XSD requires exactly 10 digits.
+  // TelefonoValidationType in DGII XSD requires format "DDD-DDD-DDDD"
+  // (e.g. "809-472-7676"). The Excel already provides them in this format,
+  // so we only validate the pattern and pass through — no normalization.
   const rawPhones = Array.isArray(row.TelefonoEmisor)
     ? (row.TelefonoEmisor as unknown[])
     : [];
   const phones = rawPhones
     .map(p => s(p))
-    .filter((p): p is string => !!p)
-    .map(p => p.replace(/\D/g, ''))
-    .filter(p => p.length === 10);
+    .filter((p): p is string => !!p && /^\d{3}-\d{3}-\d{4}$/.test(p));
 
   const override = {
     businessName:           s(row.RazonSocialEmisor),

@@ -1488,7 +1488,7 @@ export interface EmitterData {
   address?: string;
   municipality?: string;
   province?: string;
-  /** TelefonoEmisor: up to 3 phone numbers (TelefonoValidationType, exactly 10 digits) */
+  /** TelefonoEmisor: up to 3 phone numbers in DGII format "DDD-DDD-DDDD" (e.g. "809-472-7676") */
   phones?: string[];
   /** CorreoEmisor: email of the emitter (CorreoValidationType) */
   email?: string;

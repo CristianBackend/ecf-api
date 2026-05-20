@@ -370,7 +370,7 @@ describe('XmlBuilderService', () => {
     it('should emit optional emitter fields (phones, email, website, vendorCode, internal numbers) in XSD order', () => {
       const richEmitter: EmitterData = {
         ...mockEmitter,
-        phones: ['8095551111', '8095552222'],
+        phones: ['809-555-1111', '809-555-2222'],
         email: 'test@example.com',
         website: 'www.testco.com',
         economicActivity: 'COMERCIO DE TESTING',
@@ -384,8 +384,8 @@ describe('XmlBuilderService', () => {
 
       // Each field emits
       expect(hasTag(xml, 'TablaTelefonoEmisor')).toBe(true);
-      expect(xml).toContain('<TelefonoEmisor>8095551111</TelefonoEmisor>');
-      expect(xml).toContain('<TelefonoEmisor>8095552222</TelefonoEmisor>');
+      expect(xml).toContain('<TelefonoEmisor>809-555-1111</TelefonoEmisor>');
+      expect(xml).toContain('<TelefonoEmisor>809-555-2222</TelefonoEmisor>');
       expect(tagContent(xml, 'CorreoEmisor')).toBe('test@example.com');
       expect(tagContent(xml, 'WebSite')).toBe('www.testco.com');
       expect(tagContent(xml, 'ActividadEconomica')).toBe('COMERCIO DE TESTING');
@@ -408,7 +408,7 @@ describe('XmlBuilderService', () => {
     it('should cap TablaTelefonoEmisor at 3 phones (XSD maxOccurs="3")', () => {
       const tooManyPhones: EmitterData = {
         ...mockEmitter,
-        phones: ['8090000001', '8090000002', '8090000003', '8090000004', '8090000005'],
+        phones: ['809-000-0001', '809-000-0002', '809-000-0003', '809-000-0004', '809-000-0005'],
       };
       const input = makeInput('E31');
       const { xml } = service.buildEcfXml(input, tooManyPhones, 'E310000000001');
