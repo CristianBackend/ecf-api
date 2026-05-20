@@ -56,14 +56,25 @@ export function encfToOverride(encf: string | undefined): number | undefined {
 
 export function mapBuyer(row: ExcelRow) {
   return {
-    rnc:          s(row.RNCComprador),
-    name:         s(row.RazonSocialComprador) ?? 'Consumidor Final',
-    address:      s(row.DireccionComprador),
-    municipality: s(row.MunicipioComprador),
-    province:     s(row.ProvinciaComprador),
-    type:         int(row.TipoPersonaComprador),
-    foreignId:    s(row.IdentificadorExtranjero),
-    country:      s(row.PaisCompradorResidencia),
+    rnc:                s(row.RNCComprador),
+    name:               s(row.RazonSocialComprador) ?? 'Consumidor Final',
+    contactName:        s(row.ContactoComprador),
+    email:              s(row.CorreoComprador),
+    address:            s(row.DireccionComprador),
+    municipality:       s(row.MunicipioComprador),
+    province:           s(row.ProvinciaComprador),
+    type:               int(row.TipoPersonaComprador),
+    foreignId:          s(row.IdentificadorExtranjero),
+    country:            s(row.PaisCompradorResidencia),
+    deliveryDate:       s(row.FechaEntrega),
+    deliveryContact:    s(row.ContactoEntrega),
+    deliveryAddress:    s(row.DireccionEntrega),
+    additionalPhone:    s(row.TelefonoAdicional),
+    orderDate:          s(row.FechaOrdenCompra),
+    orderNumber:        s(row.NumeroOrdenCompra),
+    internalCode:       s(row.CodigoInternoComprador),
+    paymentResponsible: s(row.ResponsablePago),
+    additionalInfo:     s(row.InformacionAdicionalComprador),
   };
 }
 

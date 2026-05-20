@@ -158,25 +158,41 @@ export class InvoicesService {
     });
 
     const ovr = dto.emitterOverride;
-    const emitterData: EmitterData = {
-      rnc: company.rnc,
-      businessName: ovr?.businessName ?? company.businessName,
-      tradeName: ovr?.tradeName ?? company.tradeName ?? undefined,
-      branchCode: ovr?.branchCode ?? company.branchCode ?? undefined,
-      address: ovr?.address ?? company.address ?? undefined,
-      municipality: ovr?.municipality ?? company.municipality ?? undefined,
-      province: ovr?.province ?? company.province ?? undefined,
-      phones: ovr?.phones,
-      email: ovr?.email,
-      website: ovr?.website,
-      economicActivity: ovr?.economicActivity ?? company.economicActivity ?? undefined,
-      vendorCode: ovr?.vendorCode,
-      internalInvoiceNumber: ovr?.internalInvoiceNumber,
-      internalOrderNumber: ovr?.internalOrderNumber,
-      salesZone: ovr?.salesZone,
-      salesRoute: ovr?.salesRoute,
-      additionalInfo: ovr?.additionalEmitterInfo,
-    };
+    const emitterData: EmitterData = ovr
+      // Cuando viene emitterOverride (CERT/DEV), todo el bloque Emisor sale del override.
+      // RNC siempre viene de la company (DGII no permite cambiar el RNC del emisor).
+      // No hay fallback a company para los demás campos: si Excel no manda un campo
+      // opcional del XSD, el XML no debe emitir ese tag (regla DGII).
+      ? {
+          rnc: company.rnc,
+          businessName: ovr.businessName ?? company.businessName,  // required by XSD
+          tradeName: ovr.tradeName,
+          branchCode: ovr.branchCode,
+          address: ovr.address ?? company.address ?? undefined,    // required by XSD
+          municipality: ovr.municipality,
+          province: ovr.province,
+          phones: ovr.phones,
+          email: ovr.email,
+          website: ovr.website,
+          economicActivity: ovr.economicActivity,
+          vendorCode: ovr.vendorCode,
+          internalInvoiceNumber: ovr.internalInvoiceNumber,
+          internalOrderNumber: ovr.internalOrderNumber,
+          salesZone: ovr.salesZone,
+          salesRoute: ovr.salesRoute,
+          additionalInfo: ovr.additionalEmitterInfo,
+        }
+      // PROD: todo desde la BD como siempre.
+      : {
+          rnc: company.rnc,
+          businessName: company.businessName,
+          tradeName: company.tradeName ?? undefined,
+          branchCode: company.branchCode ?? undefined,
+          address: company.address ?? undefined,
+          municipality: company.municipality ?? undefined,
+          province: company.province ?? undefined,
+          economicActivity: company.economicActivity ?? undefined,
+        };
 
     const inputWithSequence = {
       ...(dto as any),

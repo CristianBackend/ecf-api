@@ -136,7 +136,10 @@ export interface BuyerInput {
   /** RNC or Cédula of buyer */
   rnc?: string;
   name: string;
+  /** ContactoComprador (XSD AlfNum80Type) — contact person NAME, not a phone */
+  contactName?: string;
   email?: string;
+  /** Buyer phone (informational only; NOT emitted as ContactoComprador) */
   phone?: string;
   address?: string;
   municipality?: string;
@@ -147,6 +150,24 @@ export interface BuyerInput {
   foreignId?: string;
   /** Country (only for E46 Exportaciones) */
   country?: string;
+  /** FechaEntrega DD-MM-YYYY (DGII FechaValidationType) */
+  deliveryDate?: string;
+  /** ContactoEntrega (AlfNum100Type) */
+  deliveryContact?: string;
+  /** DireccionEntrega (AlfNum100Type) */
+  deliveryAddress?: string;
+  /** TelefonoAdicional in format DDD-DDD-DDDD */
+  additionalPhone?: string;
+  /** FechaOrdenCompra DD-MM-YYYY */
+  orderDate?: string;
+  /** NumeroOrdenCompra (AlfNum20Type) */
+  orderNumber?: string;
+  /** CodigoInternoComprador (AlfNum20Type) */
+  internalCode?: string;
+  /** ResponsablePago (Alfa20Type) */
+  paymentResponsible?: string;
+  /** InformacionAdicionalComprador (AlfNum150Type) */
+  additionalInfo?: string;
 }
 
 /** Individual line item */

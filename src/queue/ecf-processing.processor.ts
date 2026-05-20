@@ -156,26 +156,39 @@ export class EcfProcessingProcessor extends WorkerHost {
         }
 
         // Apply emitterOverride from stored DTO (for CERT/DEV — set de pruebas DGII)
+        // When override is present, NO fallback to company for optional fields:
+        // the Excel set is the absolute truth for cert (DGII matches exact values).
         const ovr = originalDto?.emitterOverride;
-        const emitterData: EmitterData = {
-          rnc: invoice.company.rnc,
-          businessName: ovr?.businessName ?? invoice.company.businessName,
-          tradeName: ovr?.tradeName ?? invoice.company.tradeName ?? undefined,
-          branchCode: ovr?.branchCode ?? invoice.company.branchCode ?? undefined,
-          address: ovr?.address ?? invoice.company.address ?? undefined,
-          municipality: ovr?.municipality ?? invoice.company.municipality ?? undefined,
-          province: ovr?.province ?? invoice.company.province ?? undefined,
-          phones: ovr?.phones,
-          email: ovr?.email,
-          website: ovr?.website,
-          economicActivity: ovr?.economicActivity ?? invoice.company.economicActivity ?? undefined,
-          vendorCode: ovr?.vendorCode,
-          internalInvoiceNumber: ovr?.internalInvoiceNumber,
-          internalOrderNumber: ovr?.internalOrderNumber,
-          salesZone: ovr?.salesZone,
-          salesRoute: ovr?.salesRoute,
-          additionalInfo: ovr?.additionalEmitterInfo,
-        };
+        const emitterData: EmitterData = ovr
+          ? {
+              rnc: invoice.company.rnc,
+              businessName: ovr.businessName ?? invoice.company.businessName,
+              tradeName: ovr.tradeName,
+              branchCode: ovr.branchCode,
+              address: ovr.address ?? invoice.company.address ?? undefined,
+              municipality: ovr.municipality,
+              province: ovr.province,
+              phones: ovr.phones,
+              email: ovr.email,
+              website: ovr.website,
+              economicActivity: ovr.economicActivity,
+              vendorCode: ovr.vendorCode,
+              internalInvoiceNumber: ovr.internalInvoiceNumber,
+              internalOrderNumber: ovr.internalOrderNumber,
+              salesZone: ovr.salesZone,
+              salesRoute: ovr.salesRoute,
+              additionalInfo: ovr.additionalEmitterInfo,
+            }
+          : {
+              rnc: invoice.company.rnc,
+              businessName: invoice.company.businessName,
+              tradeName: invoice.company.tradeName ?? undefined,
+              branchCode: invoice.company.branchCode ?? undefined,
+              address: invoice.company.address ?? undefined,
+              municipality: invoice.company.municipality ?? undefined,
+              province: invoice.company.province ?? undefined,
+              economicActivity: invoice.company.economicActivity ?? undefined,
+            };
 
         const { totals } = this.xmlBuilder.buildEcfXml(
           originalDto,

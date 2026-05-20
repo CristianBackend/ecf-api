@@ -49,19 +49,25 @@ class BuyerDto {
   @MaxLength(250, { message: 'Nombre del comprador no puede exceder 250 caracteres' })
   name: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'ContactoComprador (XSD AlfNum80Type) — nombre/contacto del comprador' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80, { message: 'ContactoComprador no puede exceder 80 caracteres' })
+  contactName?: string;
+
+  @ApiPropertyOptional({ description: 'CorreoComprador (email del comprador)' })
   @IsOptional()
   @IsEmail({}, { message: 'Email del comprador inválido' })
   @MaxLength(320, { message: 'Email demasiado largo' })
   email?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Teléfono del comprador (no se emite en XML; histórico)' })
   @IsOptional()
   @IsString()
   @MaxLength(20, { message: 'Teléfono del comprador no puede exceder 20 caracteres' })
   phone?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'DireccionComprador (AlfNum100Type)' })
   @IsOptional()
   @IsString()
   @MaxLength(500, { message: 'Dirección del comprador no puede exceder 500 caracteres' })
@@ -84,6 +90,60 @@ class BuyerDto {
   @IsInt()
   @IsIn([1, 2, 3], { message: 'Tipo de comprador debe ser 1 (Jurídica), 2 (Física) o 3 (Extranjero)' })
   type?: number;
+
+  @ApiPropertyOptional({ description: 'FechaEntrega DGII format DD-MM-YYYY' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{2}-\d{2}-\d{4}$/, { message: 'FechaEntrega debe ser DD-MM-YYYY' })
+  deliveryDate?: string;
+
+  @ApiPropertyOptional({ description: 'ContactoEntrega (AlfNum100Type)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100, { message: 'ContactoEntrega no puede exceder 100 caracteres' })
+  deliveryContact?: string;
+
+  @ApiPropertyOptional({ description: 'DireccionEntrega (AlfNum100Type)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100, { message: 'DireccionEntrega no puede exceder 100 caracteres' })
+  deliveryAddress?: string;
+
+  @ApiPropertyOptional({ description: 'TelefonoAdicional formato DDD-DDD-DDDD' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{3}-\d{3}-\d{4}$/, { message: 'TelefonoAdicional debe ser DDD-DDD-DDDD' })
+  additionalPhone?: string;
+
+  @ApiPropertyOptional({ description: 'FechaOrdenCompra DGII format DD-MM-YYYY' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{2}-\d{2}-\d{4}$/, { message: 'FechaOrdenCompra debe ser DD-MM-YYYY' })
+  orderDate?: string;
+
+  @ApiPropertyOptional({ description: 'NumeroOrdenCompra (AlfNum20Type)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20, { message: 'NumeroOrdenCompra no puede exceder 20 caracteres' })
+  orderNumber?: string;
+
+  @ApiPropertyOptional({ description: 'CodigoInternoComprador (AlfNum20Type)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20, { message: 'CodigoInternoComprador no puede exceder 20 caracteres' })
+  internalCode?: string;
+
+  @ApiPropertyOptional({ description: 'ResponsablePago (Alfa20Type)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20, { message: 'ResponsablePago no puede exceder 20 caracteres' })
+  paymentResponsible?: string;
+
+  @ApiPropertyOptional({ description: 'InformacionAdicionalComprador (AlfNum150Type)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(150, { message: 'InformacionAdicionalComprador no puede exceder 150 caracteres' })
+  additionalInfo?: string;
 }
 
 class InvoiceItemDto {

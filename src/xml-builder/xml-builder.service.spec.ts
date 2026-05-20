@@ -461,6 +461,75 @@ describe('XmlBuilderService', () => {
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E440000000001');
       expect(tagContent(xml, 'IdentificadorExtranjero')).toBe('PASS-12345');
     });
+
+    it('should emit ContactoComprador from buyer.contactName, NOT buyer.phone (regression)', () => {
+      // Bug: previously ContactoComprador was being filled with buyer.phone, but XSD
+      // AlfNum80Type and DGII expects the contact's NAME there, not the phone number.
+      const input = makeInput('E31', {
+        buyer: {
+          ...basicBuyer,
+          contactName: 'María Pérez',
+          phone: '809-555-1234',  // should NOT appear as ContactoComprador
+        },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'ContactoComprador')).toBe('María Pérez');
+      expect(xml).not.toContain('<ContactoComprador>809-555-1234</ContactoComprador>');
+    });
+
+    it('should emit all optional Comprador fields in XSD order', () => {
+      const input = makeInput('E31', {
+        buyer: {
+          ...basicBuyer,
+          contactName: 'MARCOS LATIPLOL',
+          email: 'marcos@example.com',
+          address: 'Calle Falsa 123',
+          municipality: '010100',
+          province: '010000',
+          deliveryDate: '10-10-2020',
+          deliveryContact: 'Juan Entrega',
+          deliveryAddress: 'Dir Entrega 456',
+          additionalPhone: '809-555-9999',
+          orderDate: '10-11-2018',
+          orderNumber: '4500352238',
+          internalCode: '10633440',
+          paymentResponsible: 'María Pago',
+          additionalInfo: 'Cliente VIP',
+        },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+
+      expect(tagContent(xml, 'ContactoComprador')).toBe('MARCOS LATIPLOL');
+      expect(tagContent(xml, 'CorreoComprador')).toBe('marcos@example.com');
+      expect(tagContent(xml, 'FechaEntrega')).toBe('10-10-2020');
+      expect(tagContent(xml, 'ContactoEntrega')).toBe('Juan Entrega');
+      expect(tagContent(xml, 'DireccionEntrega')).toBe('Dir Entrega 456');
+      expect(tagContent(xml, 'TelefonoAdicional')).toBe('809-555-9999');
+      expect(tagContent(xml, 'FechaOrdenCompra')).toBe('10-11-2018');
+      expect(tagContent(xml, 'NumeroOrdenCompra')).toBe('4500352238');
+      expect(tagContent(xml, 'CodigoInternoComprador')).toBe('10633440');
+      expect(tagContent(xml, 'ResponsablePago')).toBe('María Pago');
+      expect(tagContent(xml, 'InformacionAdicionalComprador')).toBe('Cliente VIP');
+
+      // XSD order: RNCComprador → RazonSocialComprador → ContactoComprador → CorreoComprador
+      // → DireccionComprador → MunicipioComprador → ProvinciaComprador → FechaEntrega
+      // → ContactoEntrega → DireccionEntrega → TelefonoAdicional → FechaOrdenCompra
+      // → NumeroOrdenCompra → CodigoInternoComprador → ResponsablePago → InformacionAdicionalComprador
+      expect(tagBefore(xml, 'RazonSocialComprador', 'ContactoComprador')).toBe(true);
+      expect(tagBefore(xml, 'ContactoComprador', 'CorreoComprador')).toBe(true);
+      expect(tagBefore(xml, 'CorreoComprador', 'DireccionComprador')).toBe(true);
+      expect(tagBefore(xml, 'DireccionComprador', 'MunicipioComprador')).toBe(true);
+      expect(tagBefore(xml, 'MunicipioComprador', 'ProvinciaComprador')).toBe(true);
+      expect(tagBefore(xml, 'ProvinciaComprador', 'FechaEntrega')).toBe(true);
+      expect(tagBefore(xml, 'FechaEntrega', 'ContactoEntrega')).toBe(true);
+      expect(tagBefore(xml, 'ContactoEntrega', 'DireccionEntrega')).toBe(true);
+      expect(tagBefore(xml, 'DireccionEntrega', 'TelefonoAdicional')).toBe(true);
+      expect(tagBefore(xml, 'TelefonoAdicional', 'FechaOrdenCompra')).toBe(true);
+      expect(tagBefore(xml, 'FechaOrdenCompra', 'NumeroOrdenCompra')).toBe(true);
+      expect(tagBefore(xml, 'NumeroOrdenCompra', 'CodigoInternoComprador')).toBe(true);
+      expect(tagBefore(xml, 'CodigoInternoComprador', 'ResponsablePago')).toBe(true);
+      expect(tagBefore(xml, 'ResponsablePago', 'InformacionAdicionalComprador')).toBe(true);
+    });
   });
 
   // ============================================================

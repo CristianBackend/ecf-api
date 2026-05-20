@@ -636,12 +636,12 @@ export class XmlBuilderService {
 
     xml += `      <RazonSocialComprador>${escapeXml(buyer.name)}</RazonSocialComprador>\n`;
 
-    // E47: ContactoComprador=0, CorreoComprador=0, DireccionComprador=0, etc
+    // E47: ContactoComprador, CorreoComprador, DireccionComprador all = código 0 (don't emit)
     if (!isE47) {
-      // Per XSD: ContactoComprador (AlfNum80Type) is for general contact (phone/name)
-      // CorreoComprador (CorreoValidationType) is specifically for email
-      if (buyer.phone) {
-        xml += `      <ContactoComprador>${escapeXml(buyer.phone)}</ContactoComprador>\n`;
+      // ContactoComprador (AlfNum80Type): contact person NAME — not phone.
+      // The DGII XSD documentation clarifies this is for "persona de contacto".
+      if (buyer.contactName) {
+        xml += `      <ContactoComprador>${escapeXml(buyer.contactName)}</ContactoComprador>\n`;
       }
       if (buyer.email) {
         xml += `      <CorreoComprador>${escapeXml(buyer.email)}</CorreoComprador>\n`;
@@ -659,6 +659,39 @@ export class XmlBuilderService {
       if (buyer.province) {
         this.validateProvinciaMunicipio(buyer.province, 'Comprador.ProvinciaComprador');
         xml += `      <ProvinciaComprador>${escapeXml(buyer.province)}</ProvinciaComprador>\n`;
+      }
+
+      // FechaEntrega, ContactoEntrega, DireccionEntrega, TelefonoAdicional (XSD order)
+      if (buyer.deliveryDate) {
+        xml += `      <FechaEntrega>${escapeXml(buyer.deliveryDate)}</FechaEntrega>\n`;
+      }
+      if (buyer.deliveryContact) {
+        xml += `      <ContactoEntrega>${escapeXml(buyer.deliveryContact)}</ContactoEntrega>\n`;
+      }
+      if (buyer.deliveryAddress) {
+        xml += `      <DireccionEntrega>${escapeXml(buyer.deliveryAddress)}</DireccionEntrega>\n`;
+      }
+      if (buyer.additionalPhone) {
+        xml += `      <TelefonoAdicional>${escapeXml(buyer.additionalPhone)}</TelefonoAdicional>\n`;
+      }
+
+      // FechaOrdenCompra, NumeroOrdenCompra, CodigoInternoComprador (XSD order)
+      if (buyer.orderDate) {
+        xml += `      <FechaOrdenCompra>${escapeXml(buyer.orderDate)}</FechaOrdenCompra>\n`;
+      }
+      if (buyer.orderNumber) {
+        xml += `      <NumeroOrdenCompra>${escapeXml(buyer.orderNumber)}</NumeroOrdenCompra>\n`;
+      }
+      if (buyer.internalCode) {
+        xml += `      <CodigoInternoComprador>${escapeXml(buyer.internalCode)}</CodigoInternoComprador>\n`;
+      }
+
+      // ResponsablePago, InformacionAdicionalComprador (XSD order)
+      if (buyer.paymentResponsible) {
+        xml += `      <ResponsablePago>${escapeXml(buyer.paymentResponsible)}</ResponsablePago>\n`;
+      }
+      if (buyer.additionalInfo) {
+        xml += `      <InformacionAdicionalComprador>${escapeXml(buyer.additionalInfo)}</InformacionAdicionalComprador>\n`;
       }
     }
 
