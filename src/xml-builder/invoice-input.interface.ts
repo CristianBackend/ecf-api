@@ -263,6 +263,37 @@ export interface InvoiceItemInput {
 
   /** Indicator if item amount includes ITBIS: 0=no, 1=yes */
   indicadorMontoGravado?: number;
+
+  /**
+   * Optional verbatim string overrides for numeric XML fields. When present,
+   * the builder emits exactly that string instead of formatting the numeric
+   * counterpart.
+   *
+   * DGII certification compares XML values as STRINGS, not numbers. The set
+   * is loaded from Excel cells that vary case-by-case in decimal precision:
+   *   E430000000001: PrecioUnitarioItem="100.00" (2 dec)
+   *   E330000000001: PrecioUnitarioItem="40.00"  (2 dec)
+   *   E440000000007: PrecioUnitarioItem="900.0000" (4 dec)
+   *   E430000000012: CantidadItem="1"  (NO decimals)
+   *   E450000000010: PrecioOtraMoneda="26.64" (2 dec, while XSD allows 4)
+   *
+   * Without this override, the builder always emits 4 decimals for prices and
+   * 2 decimals for quantities, so DGII rejects the value mismatch.
+   *
+   * Keys correspond to the XML element name. Numeric inputs still drive the
+   * totals calculation (sum of items, MontoTotal, etc.) — only the LITERAL
+   * emission of the field uses the raw string.
+   */
+  rawText?: {
+    CantidadItem?: string;
+    PrecioUnitarioItem?: string;
+    PrecioUnitarioReferencia?: string;
+    PrecioOtraMoneda?: string;
+    MontoItem?: string;
+    DescuentoMonto?: string;
+    RecargoMonto?: string;
+    CantidadReferencia?: string;
+  };
 }
 
 /** Payment information */

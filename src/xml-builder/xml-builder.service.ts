@@ -981,8 +981,11 @@ export class XmlBuilderService {
         xml += `      <DescripcionItem>${escapeXml(item.longDescription)}</DescripcionItem>\n`;
       }
 
-      // 8. CantidadItem — XSD Decimal18D1or2; DGII cert expects 2 fixed decimals
-      xml += `      <CantidadItem>${fmt(qty)}</CantidadItem>\n`;
+      // 8. CantidadItem — XSD Decimal18D1or2; DGII cert expects EXACT Excel format.
+      // The raw string override (rawText.CantidadItem) bypasses fmt() so we emit
+      // whatever the Excel sent: "1", "7.00", "20.00" etc. — DGII compares as
+      // strings byte-for-byte against the dataset.
+      xml += `      <CantidadItem>${item.rawText?.CantidadItem ?? fmt(qty)}</CantidadItem>\n`;
 
       // 9. UnidadMedida (optional)
       if (item.unitMeasureCode) {
@@ -996,7 +999,7 @@ export class XmlBuilderService {
       if (emitIscFields && item.additionalTaxCode) {
         // 10. CantidadReferencia (direct Item child)
         if (item.referenceQuantity) {
-          xml += `      <CantidadReferencia>${fmt(item.referenceQuantity)}</CantidadReferencia>\n`;
+          xml += `      <CantidadReferencia>${item.rawText?.CantidadReferencia ?? fmt(item.referenceQuantity)}</CantidadReferencia>\n`;
         }
 
         // 12. TablaSubcantidad > SubcantidadItem > Subcantidad + CodigoSubcantidad
@@ -1019,7 +1022,7 @@ export class XmlBuilderService {
 
         // 14. PrecioUnitarioReferencia (direct Item child)
         if (item.referenceUnitPrice) {
-          xml += `      <PrecioUnitarioReferencia>${fmt(item.referenceUnitPrice)}</PrecioUnitarioReferencia>\n`;
+          xml += `      <PrecioUnitarioReferencia>${item.rawText?.PrecioUnitarioReferencia ?? fmt(item.referenceUnitPrice)}</PrecioUnitarioReferencia>\n`;
         }
 
         // M4: FechaElaboracion (optional, after PrecioUnitarioReferencia per XSD)
@@ -1028,17 +1031,18 @@ export class XmlBuilderService {
         }
       }
 
-      // 17. PrecioUnitarioItem (up to 4 decimals per DGII)
-      xml += `      <PrecioUnitarioItem>${fmtPrice(price)}</PrecioUnitarioItem>\n`;
+      // 17. PrecioUnitarioItem (up to 4 decimals per DGII XSD; cert dataset
+      // varies per row: "40.00", "100.00", "900.0000", "1500.0000" all appear).
+      xml += `      <PrecioUnitarioItem>${item.rawText?.PrecioUnitarioItem ?? fmtPrice(price)}</PrecioUnitarioItem>\n`;
 
       // 18. DescuentoMonto (optional, not in E47)
       if (discount > 0 && typeCode !== 47) {
-        xml += `      <DescuentoMonto>${fmt(discount)}</DescuentoMonto>\n`;
+        xml += `      <DescuentoMonto>${item.rawText?.DescuentoMonto ?? fmt(discount)}</DescuentoMonto>\n`;
       }
 
       // M3: RecargoMonto (optional, after DescuentoMonto/TablaSubDescuento per XSD)
       if (surcharge > 0) {
-        xml += `      <RecargoMonto>${fmt(surcharge)}</RecargoMonto>\n`;
+        xml += `      <RecargoMonto>${item.rawText?.RecargoMonto ?? fmt(surcharge)}</RecargoMonto>\n`;
       }
 
       // 22. TablaImpuestoAdicional — per XSD: contains ImpuestoAdicional > TipoImpuesto ONLY
@@ -1057,7 +1061,7 @@ export class XmlBuilderService {
       if (currency) {
         const xRate = currency.exchangeRate;
         xml += `      <OtraMonedaDetalle>\n`;
-        xml += `        <PrecioOtraMoneda>${fmtPrice(r4(price / xRate))}</PrecioOtraMoneda>\n`;
+        xml += `        <PrecioOtraMoneda>${item.rawText?.PrecioOtraMoneda ?? fmtPrice(r4(price / xRate))}</PrecioOtraMoneda>\n`;
         if (discount > 0) {
           xml += `        <DescuentoOtraMoneda>${fmt(r2(discount / xRate))}</DescuentoOtraMoneda>\n`;
         }
@@ -1069,7 +1073,7 @@ export class XmlBuilderService {
       }
 
       // 24. MontoItem (required) — per XSD this is the line total (without ITBIS at item level)
-      xml += `      <MontoItem>${fmt(lineSubtotal)}</MontoItem>\n`;
+      xml += `      <MontoItem>${item.rawText?.MontoItem ?? fmt(lineSubtotal)}</MontoItem>\n`;
 
       xml += `    </Item>\n`;
     });

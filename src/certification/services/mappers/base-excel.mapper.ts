@@ -42,6 +42,29 @@ export function int(raw: unknown): number | undefined {
 }
 
 /**
+ * Return the verbatim string representation of a numeric Excel cell,
+ * preserving the EXACT decimal precision the source used. Returns undefined
+ * for empty / '#e' cells, and also if the value does not look like a valid
+ * number (so we never propagate garbage to the XML).
+ *
+ * DGII certification compares XML field values as STRINGS byte-for-byte
+ * against the dataset. The set is loaded with varying precision per case:
+ *   PrecioUnitarioItem "100.00" (E43) vs "1500.0000" (E31)
+ *   CantidadItem "1" (E43:12) vs "7.00" (E43:1)
+ * Round-tripping through Number() loses this formatting, so we keep the
+ * verbatim string separately and emit it as-is.
+ */
+export function rawNum(raw: unknown): string | undefined {
+  const r = v(raw);
+  if (r === undefined) return undefined;
+  const str = String(r).trim();
+  // Accept integers, decimals, optional leading minus. Reject anything else
+  // (text, dates) to avoid emitting non-numeric values into numeric XML fields.
+  if (!/^-?\d+(\.\d+)?$/.test(str)) return undefined;
+  return str;
+}
+
+/**
  * Extract the decimal sequence number from a full eNCF string.
  * "E320000000011" → 11
  */
@@ -94,6 +117,21 @@ export function mapItem(item: ExcelItem) {
   // TipoIngresos in Excel is a 2-char string "01"–"06", parse to int
   const tipoIngresos = item.TipoIngresos !== undefined ? int(item.TipoIngresos) : undefined;
 
+  // Verbatim decimal strings from the Excel cell. Only set when the source
+  // value parses as a number; otherwise undefined (so the builder falls
+  // back to its standard fmt()).
+  const rawText = {
+    CantidadItem:             rawNum(item.CantidadItem),
+    PrecioUnitarioItem:       rawNum(item.PrecioUnitarioItem),
+    PrecioUnitarioReferencia: rawNum(item.PrecioUnitarioReferencia),
+    PrecioOtraMoneda:         rawNum(item.PrecioOtraMoneda),
+    MontoItem:                rawNum(item.MontoItem),
+    DescuentoMonto:           rawNum(item.DescuentoMonto),
+    RecargoMonto:             rawNum(item.RecargoMonto),
+    CantidadReferencia:       rawNum(item.CantidadReferencia),
+  };
+  const hasAnyRaw = Object.values(rawText).some(v => v !== undefined);
+
   return {
     description:          s(item.NombreItem) ?? 'Item',
     quantity:             n(item.CantidadItem) ?? 1,
@@ -119,6 +157,8 @@ export function mapItem(item: ExcelItem) {
     retencionIndicador:   int(item.IndicadorAgenteRetencionoPercepcion),
     montoItbisRetenido:   n(item.MontoITBISRetenido),
     montoIsrRetenido:     n(item.MontoISRRetenido),
+    // Verbatim Excel strings for decimal fields (Fix 4f).
+    ...(hasAnyRaw ? { rawText } : {}),
   };
 }
 

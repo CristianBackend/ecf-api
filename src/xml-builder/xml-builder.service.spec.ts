@@ -434,6 +434,71 @@ describe('XmlBuilderService', () => {
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
       expect(tagContent(xml, 'TipoPago')).toBe('1');
     });
+
+    // ----- Fix 4f: rawText verbatim emission -----
+
+    it('Fix 4f: emits PrecioUnitarioItem verbatim from rawText (no fmt rounding)', () => {
+      // Without rawText, fmtPrice(100) emits "100.0000". The DGII set wants "100.00".
+      const input = makeInput('E43', {
+        buyer: consumerBuyer,
+        items: [basicItem({
+          quantity: 7,
+          unitPrice: 100,
+          rawText: { PrecioUnitarioItem: '100.00' },
+        }) as any],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E430000000001');
+      expect(tagContent(xml, 'PrecioUnitarioItem')).toBe('100.00');
+    });
+
+    it('Fix 4f: emits CantidadItem verbatim ("1" without decimals)', () => {
+      const input = makeInput('E43', {
+        buyer: consumerBuyer,
+        items: [basicItem({
+          quantity: 1,
+          unitPrice: 10000,
+          rawText: { CantidadItem: '1' },
+        }) as any],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E430000000012');
+      expect(tagContent(xml, 'CantidadItem')).toBe('1');
+    });
+
+    it('Fix 4f: emits PrecioOtraMoneda verbatim ("26.64" not "26.6430")', () => {
+      const input = makeInput('E45', {
+        currency: { code: 'USD', exchangeRate: 56.2876 },
+        items: [basicItem({
+          quantity: 20,
+          unitPrice: 1500,
+          rawText: { PrecioOtraMoneda: '26.64' },
+        }) as any],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E450000000010');
+      expect(tagContent(xml, 'PrecioOtraMoneda')).toBe('26.64');
+    });
+
+    it('Fix 4f: falls back to fmt() when rawText for that field is undefined', () => {
+      // Production safety: callers that don't pass rawText still get formatted output.
+      const input = makeInput('E31');
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      // Default basicItem has unitPrice=1000, no rawText → 4-decimal format.
+      expect(tagContent(xml, 'PrecioUnitarioItem')).toBe('1000.0000');
+    });
+
+    it('Fix 4f: rawText for only ONE field does not affect siblings', () => {
+      // E330000000001 has rawText for PrecioUnitarioItem but not for CantidadItem.
+      const input = makeInput('E31', {
+        items: [basicItem({
+          quantity: 10000,
+          unitPrice: 40,
+          rawText: { PrecioUnitarioItem: '40.00' }, // only this is overridden
+        }) as any],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'PrecioUnitarioItem')).toBe('40.00');
+      // CantidadItem still goes through fmt() since no rawText for it.
+      expect(tagContent(xml, 'CantidadItem')).toBe('10000.00');
+    });
   });
 
   // ============================================================

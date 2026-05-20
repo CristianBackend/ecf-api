@@ -97,4 +97,87 @@ describe('base-excel.mapper', () => {
       expect(info).not.toHaveProperty('netWeightUnit');
     });
   });
+
+  // ===========================================================================
+  // Fix 4f — verbatim decimal strings (rawText)
+  // ===========================================================================
+
+  describe('mapItem rawText (Fix 4f)', () => {
+    it('preserves the EXACT decimal precision from the Excel cell', () => {
+      // Real DGII test set values that previously triggered rejection.
+      const item = {
+        NombreItem: 'X',
+        CantidadItem: '7.00',
+        PrecioUnitarioItem: '100.00',
+        MontoItem: '700.00',
+      };
+      const mapped = mapItem(item) as any;
+
+      // Numeric values still flow for totals math.
+      expect(mapped.quantity).toBe(7);
+      expect(mapped.unitPrice).toBe(100);
+
+      // The verbatim strings are preserved so the builder can emit them as-is.
+      expect(mapped.rawText.CantidadItem).toBe('7.00');
+      expect(mapped.rawText.PrecioUnitarioItem).toBe('100.00');
+      expect(mapped.rawText.MontoItem).toBe('700.00');
+    });
+
+    it('preserves "1" (no decimal) and "10000.0000" (4 decimals) verbatim', () => {
+      // E430000000012: CantidadItem is exactly '1' (no decimals);
+      // PrecioUnitarioItem is '10000.0000' (4 decimals).
+      const item = {
+        NombreItem: 'X',
+        CantidadItem: '1',
+        PrecioUnitarioItem: '10000.0000',
+      };
+      const mapped = mapItem(item) as any;
+      expect(mapped.rawText.CantidadItem).toBe('1');
+      expect(mapped.rawText.PrecioUnitarioItem).toBe('10000.0000');
+      expect(mapped.quantity).toBe(1);     // still parsed for math
+      expect(mapped.unitPrice).toBe(10000);
+    });
+
+    it('omits rawText when no fields parsed as numeric strings', () => {
+      const item = { NombreItem: 'X' };
+      const mapped = mapItem(item) as any;
+      expect(mapped.rawText).toBeUndefined();
+    });
+
+    it('omits non-numeric cells like "#e" from rawText (no garbage emitted)', () => {
+      const item = {
+        NombreItem: 'X',
+        CantidadItem: '1.00',
+        PrecioUnitarioItem: '#e',  // empty sentinel
+      };
+      const mapped = mapItem(item) as any;
+      expect(mapped.rawText.CantidadItem).toBe('1.00');
+      // PrecioUnitarioItem should NOT be in rawText because it's '#e'
+      expect(mapped.rawText.PrecioUnitarioItem).toBeUndefined();
+    });
+
+    it('preserves PrecioOtraMoneda verbatim (E45 quirk: 26.64 vs 26.6430)', () => {
+      // E450000000010 was rejected because DGII expected 26.64 but we emitted
+      // 26.6430 (computed from price/exchangeRate at 4 decimals).
+      const item = {
+        NombreItem: 'X',
+        CantidadItem: '20.00',
+        PrecioUnitarioItem: '1500.0000',
+        PrecioOtraMoneda: '26.64',
+      };
+      const mapped = mapItem(item) as any;
+      expect(mapped.rawText.PrecioOtraMoneda).toBe('26.64');
+    });
+
+    it('rejects non-numeric strings (dates, text) so they never leak to XML', () => {
+      const item = {
+        NombreItem: 'X',
+        CantidadItem: 'not-a-number',
+        PrecioUnitarioItem: '10-2026',  // date-like
+      };
+      const mapped = mapItem(item) as any;
+      // Neither should appear in rawText
+      expect(mapped.rawText).toBeUndefined();
+    });
+  });
 });
