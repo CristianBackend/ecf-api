@@ -354,17 +354,21 @@ export class ValidationService {
   }
 
   /**
-   * Format price to up to 4 decimal places (PrecioUnitarioItem)
+   * Format price to EXACTLY 4 decimal places (PrecioUnitarioItem).
+   * XSD type is Decimal20D1or4 (permits 1-4 decimals), but DGII certification
+   * expects the maximum: 4 fixed decimals. Stripping trailing zeros to "5.00"
+   * causes DGII to reject with "valor enviado (5.00) no coincide con valor (5.0000)".
    */
   static formatPrice(n: number): string {
-    return ValidationService.round4(n).toFixed(4).replace(/0+$/, '').replace(/\.$/, '.00');
+    return ValidationService.round4(n).toFixed(4);
   }
 
   /**
-   * Format exchange rate to up to 4 decimal places
+   * Format exchange rate to EXACTLY 4 decimal places.
+   * Same DGII rule as formatPrice — XSD allows 1-4, DGII expects 4 fixed.
    */
   static formatExchangeRate(n: number): string {
-    return ValidationService.round4(n).toFixed(4).replace(/0+$/, '').replace(/\.$/, '.00');
+    return ValidationService.round4(n).toFixed(4);
   }
 
   /**

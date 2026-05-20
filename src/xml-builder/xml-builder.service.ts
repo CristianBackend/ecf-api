@@ -924,8 +924,8 @@ export class XmlBuilderService {
         xml += `      <DescripcionItem>${escapeXml(item.longDescription)}</DescripcionItem>\n`;
       }
 
-      // 8. CantidadItem
-      xml += `      <CantidadItem>${qty}</CantidadItem>\n`;
+      // 8. CantidadItem — XSD Decimal18D1or2; DGII cert expects 2 fixed decimals
+      xml += `      <CantidadItem>${fmt(qty)}</CantidadItem>\n`;
 
       // 9. UnidadMedida (optional)
       if (item.unitMeasureCode) {
@@ -939,7 +939,7 @@ export class XmlBuilderService {
       if (emitIscFields && item.additionalTaxCode) {
         // 10. CantidadReferencia (direct Item child)
         if (item.referenceQuantity) {
-          xml += `      <CantidadReferencia>${item.referenceQuantity}</CantidadReferencia>\n`;
+          xml += `      <CantidadReferencia>${fmt(item.referenceQuantity)}</CantidadReferencia>\n`;
         }
 
         // 12. TablaSubcantidad > SubcantidadItem > Subcantidad + CodigoSubcantidad
@@ -1350,10 +1350,10 @@ export class XmlBuilderService {
 
     // E31 XSD fields (PesoBruto, PesoNeto, Unidades, CantidadBulto, VolumenBulto)
     if (info.grossWeight) {
-      xml += `      <PesoBruto>${info.grossWeight}</PesoBruto>\n`;
+      xml += `      <PesoBruto>${fmt(info.grossWeight)}</PesoBruto>\n`;
     }
     if (info.netWeight) {
-      xml += `      <PesoNeto>${info.netWeight}</PesoNeto>\n`;
+      xml += `      <PesoNeto>${fmt(info.netWeight)}</PesoNeto>\n`;
     }
     if (info.grossWeightUnit) {
       xml += `      <UnidadPesoBruto>${info.grossWeightUnit}</UnidadPesoBruto>\n`;
@@ -1362,13 +1362,13 @@ export class XmlBuilderService {
       xml += `      <UnidadPesoNeto>${info.netWeightUnit}</UnidadPesoNeto>\n`;
     }
     if (info.packageCount) {
-      xml += `      <CantidadBulto>${info.packageCount}</CantidadBulto>\n`;
+      xml += `      <CantidadBulto>${fmt(info.packageCount)}</CantidadBulto>\n`;
     }
     if (info.packageUnit) {
       xml += `      <UnidadBulto>${info.packageUnit}</UnidadBulto>\n`;
     }
     if (info.packageVolume) {
-      xml += `      <VolumenBulto>${info.packageVolume}</VolumenBulto>\n`;
+      xml += `      <VolumenBulto>${fmt(info.packageVolume)}</VolumenBulto>\n`;
     }
     if (info.volumeUnit) {
       xml += `      <UnidadVolumen>${info.volumeUnit}</UnidadVolumen>\n`;

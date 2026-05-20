@@ -748,14 +748,38 @@ describe('XmlBuilderService', () => {
       expect(tagBefore(item, 'PrecioUnitarioItem', 'MontoItem')).toBe(true);
     });
 
-    it('should format PrecioUnitarioItem with up to 4 decimals (per XSD Decimal20D1or4)', () => {
+    it('should format PrecioUnitarioItem with EXACTLY 4 decimals (DGII cert strict)', () => {
+      // DGII certification requires fixed 4 decimals (not "up to 4"). Stripping
+      // trailing zeros leads to "5.00" vs DGII's expected "5.0000" mismatch.
       const input = makeInput('E31', {
         items: [basicItem({ unitPrice: 100 })],
       });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
-      const price = tagContent(xml, 'PrecioUnitarioItem');
-      // XSD allows 1-4 decimal places; formatPrice strips trailing zeros
-      expect(price).toMatch(/^\d+\.\d{2,4}$/);
+      expect(tagContent(xml, 'PrecioUnitarioItem')).toBe('100.0000');
+    });
+
+    it('should format PrecioUnitarioItem 1500 as 1500.0000', () => {
+      const input = makeInput('E31', { items: [basicItem({ unitPrice: 1500 })] });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'PrecioUnitarioItem')).toBe('1500.0000');
+    });
+
+    it('should preserve actual decimals when present (123.4567 → 123.4567)', () => {
+      const input = makeInput('E31', { items: [basicItem({ unitPrice: 123.4567 })] });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'PrecioUnitarioItem')).toBe('123.4567');
+    });
+
+    it('should format CantidadItem with EXACTLY 2 decimals (DGII cert strict)', () => {
+      const input = makeInput('E31', { items: [basicItem({ quantity: 20 })] });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'CantidadItem')).toBe('20.00');
+    });
+
+    it('should format CantidadItem 100 as 100.00', () => {
+      const input = makeInput('E31', { items: [basicItem({ quantity: 100 })] });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'CantidadItem')).toBe('100.00');
     });
   });
 
@@ -793,6 +817,15 @@ describe('XmlBuilderService', () => {
       });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
       expect(hasTag(xml, 'MontoExentoOtraMoneda')).toBe(true);
+    });
+
+    it('should format TipoCambio with EXACTLY 4 decimals (DGII cert strict)', () => {
+      // DGII rejected "56.3" expecting "56.3000"
+      const input = makeInput('E31', {
+        currency: { code: 'USD', exchangeRate: 56.3 },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'TipoCambio')).toBe('56.3000');
     });
   });
 
