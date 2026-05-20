@@ -47,6 +47,30 @@ export interface InvoiceInput {
    */
   indicadorNotaCredito?: number;
 
+  /**
+   * MontoPeriodo override (XSD cod 3, opcional).
+   * When provided, emitted as-is. When undefined, falls back to per-type
+   * default behavior (some types compute it from totals, others omit).
+   * Used by certification flow to forward the exact value from the Excel
+   * row, which can be either a number or absent ("#e") per case.
+   */
+  montoPeriodo?: number;
+
+  /**
+   * ValorPagar override (XSD cod 3, opcional). Same semantics as
+   * montoPeriodo.
+   */
+  valorPagar?: number;
+
+  /**
+   * TipoPago override (presence/absence). When `undefined` AND the type
+   * allows omission (E43, E47 — cod 3), the tag is omitted. Otherwise the
+   * builder uses `payment.type`. This exists so the certification flow
+   * can faithfully reproduce the case where Excel has `#e` for TipoPago
+   * (E430000000001 in the DGII test set).
+   */
+  emitTipoPago?: boolean;
+
   /** Idempotency key to prevent duplicates */
   idempotencyKey?: string;
 

@@ -479,10 +479,18 @@ export class XmlBuilderService {
     }
 
     // TipoPago: 1  1  1  1  1  3  1  1  1  3
-    // For E43 and E47 it's optional (code 3), for E34 it's obligatory (code 1)
+    //                        31 32 33 34 41 43 44 45 46 47
+    // For E43 and E47 it's optional (cod 3); for the rest it's obligatorio (cod 1).
+    //
+    // For the optional types, DGII certification has rows expecting the tag
+    // ABSENT (e.g. E430000000001 has TipoPago='#e' in the Excel). To express
+    // that, the caller can set emitTipoPago=false explicitly. By default
+    // (undefined) we keep the previous behavior of emitting when payment.type
+    // is truthy so production API consumers don't regress.
     const tipoPagoOptional = [43, 47];
     if (tipoPagoOptional.includes(typeCode)) {
-      if (input.payment.type) {
+      const emit = input.emitTipoPago ?? !!input.payment.type;
+      if (emit) {
         xml += `      <TipoPago>${input.payment.type}</TipoPago>\n`;
       }
     } else {
@@ -841,25 +849,30 @@ export class XmlBuilderService {
 
     // 16b/16c. MontoPeriodo and ValorPagar (XSD cod 3, opcional).
     //
-    // The DGII certification dataset is INCONSISTENT about these tags by
-    // type, despite the XSD marking both as optional everywhere:
-    //   - E31/E32/E44/E45/E47: dataset expects them present with computed values
-    //   - E41/E43: dataset expects them absent
-    //   - E33/E34/E46: no data yet (we'll learn on the next cert run)
+    // DGII certification semantics: the dataset is inconsistent — each row
+    // explicitly specifies whether these two tags should be present and what
+    // value they should carry. There is NO clean "rule by type" because the
+    // SAME type can want both behaviors on different rows:
+    //   E310000000006 → expects MontoPeriodo=228460.50, ValorPagar=228460.50
+    //   E310000000034 → expects BOTH absent
+    //   E410000000001 → expects MontoPeriodo absent, ValorPagar=11800.00
+    //   E440000000007 → expects both present (=MontoTotal)
     //
-    // Conservative policy: emit only for the types we have positive evidence
-    // require them. Other types stay silent until DGII tells us otherwise.
-    //   MontoPeriodo = MontoTotal + MontoNoFacturable
-    //   ValorPagar = MontoTotal - MontoAvancePago ± SaldoAnterior
-    // For the certification rows neither MontoAvancePago nor SaldoAnterior
-    // are provided, so ValorPagar == MontoTotal and MontoPeriodo ==
-    // MontoTotal + MontoNoFacturable.
-    const emitMontoPeriodoValorPagar = [31, 32, 44, 45, 47];
-    if (emitMontoPeriodoValorPagar.includes(typeCode)) {
-      const montoPeriodo = totals.totalAmount + (totals.montoNoFacturable || 0);
-      const valorPagar = totals.totalAmount;
-      xml += `      <MontoPeriodo>${fmt(montoPeriodo)}</MontoPeriodo>\n`;
-      xml += `      <ValorPagar>${fmt(valorPagar)}</ValorPagar>\n`;
+    // To support this faithfully we honor the per-invoice overrides:
+    //   - input.montoPeriodo defined? emit with that value
+    //   - input.valorPagar  defined? emit with that value
+    // Otherwise emit nothing. The certification mapper reads MontoPeriodo and
+    // ValorPagar directly from the Excel row ("#e" → undefined → omit).
+    //
+    // For production API callers who don't set these, we keep MontoPeriodo/
+    // ValorPagar absent. Per DGII XSD they are always cod 3 (optional), so
+    // omitting them is always XSD-valid. Callers wanting these emitted must
+    // provide explicit values.
+    if (input.montoPeriodo !== undefined) {
+      xml += `      <MontoPeriodo>${fmt(input.montoPeriodo)}</MontoPeriodo>\n`;
+    }
+    if (input.valorPagar !== undefined) {
+      xml += `      <ValorPagar>${fmt(input.valorPagar)}</ValorPagar>\n`;
     }
 
     // 17-20. Retenciones y Percepciones (per XSD: only in E31, E33, E34, E41; ISR also E47)

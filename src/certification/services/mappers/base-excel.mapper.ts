@@ -182,6 +182,21 @@ export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Reco
   const emitterOverride = mapEmitter(row);
   const additionalInfo = mapAdditionalInfo(row);
 
+  // DGII certification overrides — read straight from the Excel row.
+  //
+  // The DGII test set is inconsistent across cases for MontoPeriodo,
+  // ValorPagar and TipoPago: the SAME e-CF type can want different
+  // present/absent behavior on different rows. Honoring the value from
+  // the Excel is the only way to match all of them without violating XSD.
+  //   - '#e' / missing → undefined → builder omits the tag
+  //   - numeric value  → builder emits with that value
+  // For TipoPago we also encode "Excel said #e" as emitTipoPago=false so
+  // the builder omits the tag even when input.payment.type defaults to 1
+  // (the underlying default is set elsewhere to keep PROD callers safe).
+  const montoPeriodoExcel = n(row.MontoPeriodo);
+  const valorPagarExcel = n(row.ValorPagar);
+  const tipoPagoExcelRaw = v(row.TipoPago);
+
   return {
     companyId,
     ecfType,
@@ -198,6 +213,12 @@ export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Reco
     // a computed one from reference.date. If Excel sends '#e' (-> undefined),
     // the builder will fall back to its 30-day calculation.
     indicadorNotaCredito:   int(row.IndicadorNotaCredito),
+    ...(montoPeriodoExcel !== undefined ? { montoPeriodo: montoPeriodoExcel } : {}),
+    ...(valorPagarExcel !== undefined ? { valorPagar: valorPagarExcel } : {}),
+    // tipoPagoExcelRaw === undefined means the Excel had '#e' (or was empty).
+    // Encode that intent as emitTipoPago=false so the builder omits the tag
+    // for E43/E47 (the only types where it's XSD-optional).
+    ...(tipoPagoExcelRaw === undefined ? { emitTipoPago: false } : {}),
     ...(emitterOverride ? { emitterOverride } : {}),
     ...(additionalInfo ? { additionalInfo } : {}),
     metadata: { certificationRow: true, casoPrueba: s(row.CasoPrueba) },

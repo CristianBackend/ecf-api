@@ -382,44 +382,57 @@ describe('XmlBuilderService', () => {
       expect(tagContent(xml, 'IndicadorNotaCredito')).toBe('1'); // > 30 days
     });
 
-    it('Fix 4c: emits MontoPeriodo and ValorPagar for E31/E32/E44/E45/E47', () => {
-      // DGII certification dataset expects these tags for these types.
-      // Without them, invoices were rejected with
-      //   "MontoPeriodo enviado () no coincide con (228460.50)"
-      for (const ecfType of ['E31', 'E32', 'E44', 'E45', 'E47']) {
-        const input = makeInput(ecfType, {
-          buyer: ecfType === 'E32' ? consumerBuyer : basicBuyer,
-        });
-        const encfPrefix = ecfType.replace('E', 'E') + '0000000001';
-        const { xml } = service.buildEcfXml(input, mockEmitter, encfPrefix);
-        expect(hasTag(xml, 'MontoPeriodo')).toBe(true);
-        expect(hasTag(xml, 'ValorPagar')).toBe(true);
-      }
-    });
-
-    it('Fix 4c: does NOT emit MontoPeriodo or ValorPagar for E41 or E43', () => {
-      // DGII certification dataset expects these tags ABSENT for E41/E43.
-      // The Fix 4b "always emit" caused regressions with
-      //   "MontoPeriodo enviado (11800.00) no coincide con valor ()"
-      for (const ecfType of ['E41', 'E43']) {
-        const input = makeInput(ecfType, {
-          buyer: ecfType === 'E43' ? consumerBuyer : basicBuyer,
-        });
-        const encfPrefix = ecfType.replace('E', 'E') + '0000000001';
-        const { xml } = service.buildEcfXml(input, mockEmitter, encfPrefix);
-        expect(hasTag(xml, 'MontoPeriodo')).toBe(false);
-        expect(hasTag(xml, 'ValorPagar')).toBe(false);
-      }
-    });
-
-    it('Fix 4c: MontoPeriodo and ValorPagar equal MontoTotal when no anticipos/no-facturable', () => {
-      const input = makeInput('E31', {
-        items: [basicItem({ quantity: 10, unitPrice: 1000, itbisRate: 18 })],
+    it('Fix 4e: emits MontoPeriodo and ValorPagar only when input provides them', () => {
+      // Fix 4c emitted these unconditionally for [31, 32, 44, 45, 47]; Fix 4e
+      // delegates the decision to the caller because the DGII certification
+      // dataset is inconsistent — the SAME e-CF type can want these tags
+      // present on one row and absent on another (e.g. E31:6 vs E31:34).
+      const inputWithValues = makeInput('E31', {
+        montoPeriodo: 1234.56,
+        valorPagar: 1234.56,
       });
+      const { xml: xmlWith } = service.buildEcfXml(inputWithValues, mockEmitter, 'E310000000001');
+      expect(tagContent(xmlWith, 'MontoPeriodo')).toBe('1234.56');
+      expect(tagContent(xmlWith, 'ValorPagar')).toBe('1234.56');
+
+      const inputWithout = makeInput('E31');
+      const { xml: xmlNo } = service.buildEcfXml(inputWithout, mockEmitter, 'E310000000001');
+      expect(hasTag(xmlNo, 'MontoPeriodo')).toBe(false);
+      expect(hasTag(xmlNo, 'ValorPagar')).toBe(false);
+    });
+
+    it('Fix 4e: MontoPeriodo can be emitted without ValorPagar and vice versa', () => {
+      // E410000000001 in the DGII test set has MontoPeriodo absent but
+      // ValorPagar=11800.00. The two fields are independent.
+      const input = makeInput('E41', { valorPagar: 11800 });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E410000000001');
+      expect(hasTag(xml, 'MontoPeriodo')).toBe(false);
+      expect(tagContent(xml, 'ValorPagar')).toBe('11800.00');
+    });
+
+    it('Fix 4e: TipoPago can be omitted on E43 via emitTipoPago=false', () => {
+      // E430000000001 in the DGII test set has TipoPago='#e'. The mapper
+      // encodes that as emitTipoPago=false so the builder omits the tag.
+      const input = makeInput('E43', {
+        buyer: consumerBuyer,
+        emitTipoPago: false,
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E430000000001');
+      expect(hasTag(xml, 'TipoPago')).toBe(false);
+    });
+
+    it('Fix 4e: TipoPago is still emitted on E43 by default (production safety)', () => {
+      const input = makeInput('E43', { buyer: consumerBuyer });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E430000000001');
+      expect(tagContent(xml, 'TipoPago')).toBe('1');
+    });
+
+    it('Fix 4e: TipoPago is ALWAYS emitted on non-optional types regardless of emitTipoPago', () => {
+      // For E31/E32/E33/E34/E41/E44/E45/E46 TipoPago is cod 1 (obligatorio).
+      // The flag must not let us omit it on these types.
+      const input = makeInput('E31', { emitTipoPago: false as any });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
-      const total = tagContent(xml, 'MontoTotal');
-      expect(tagContent(xml, 'MontoPeriodo')).toBe(total);
-      expect(tagContent(xml, 'ValorPagar')).toBe(total);
+      expect(tagContent(xml, 'TipoPago')).toBe('1');
     });
   });
 
