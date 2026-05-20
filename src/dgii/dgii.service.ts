@@ -642,11 +642,26 @@ export class DgiiService {
   private extractStatusCode(responseText: string): number {
     try {
       const json = JSON.parse(responseText);
-      return json.estado ?? json.status ?? DGII_STATUS.NOT_FOUND;
+      return json.estado ?? json.status ?? json.codigo ?? json.Codigo ?? DGII_STATUS.NOT_FOUND;
     } catch {}
 
-    const match = responseText.match(/<estado>(\d+)<\/estado>/i);
-    return match ? parseInt(match[1], 10) : DGII_STATUS.NOT_FOUND;
+    // DGII XML wraps the numeric status in <Codigo>, not <estado>.
+    // <Estado>Aceptado</Estado> is the textual form.
+    const codigoMatch = responseText.match(/<Codigo>\s*(\d+)\s*<\/Codigo>/i);
+    if (codigoMatch) return parseInt(codigoMatch[1], 10);
+
+    const estadoTextMatch = responseText.match(/<Estado>\s*([^<]+?)\s*<\/Estado>/i);
+    if (estadoTextMatch) {
+      const t = estadoTextMatch[1].toLowerCase();
+      if (t.includes('aceptado condicional')) return DGII_STATUS.CONDITIONAL;
+      if (t.includes('aceptado'))             return DGII_STATUS.ACCEPTED;
+      if (t.includes('rechazado'))            return DGII_STATUS.REJECTED;
+      if (t.includes('proceso'))              return DGII_STATUS.IN_PROCESS;
+    }
+
+    // Last-ditch: legacy lowercase <estado>N</estado>
+    const oldMatch = responseText.match(/<estado>\s*(\d+)\s*<\/estado>/i);
+    return oldMatch ? parseInt(oldMatch[1], 10) : DGII_STATUS.NOT_FOUND;
   }
 
   private parseRfceResponse(responseText: string): { status: number; encf?: string; secuenciaUtilizada?: boolean; mensajes?: string[] } {
@@ -685,15 +700,54 @@ export class DgiiService {
         rawResponse: responseText,
       };
     } catch {
-      const statusMatch = responseText.match(/<estado>(\d+)<\/estado>/i);
-      const msgMatch = responseText.match(/<mensaje>([\s\S]*?)<\/mensaje>/i);
-      const seqMatch = responseText.match(/<secuenciaUtilizada>(true|false)<\/secuenciaUtilizada>/i);
+      // DGII XML response (RespuestaConsultaTrackId) uses:
+      //   <Codigo>N</Codigo>   numeric status (1=Aceptado, 2=Rechazado, 3=En proceso, 4=Cond.)
+      //   <Estado>Texto</Estado> textual status
+      //   <Mensajes><Mensaje><Valor /><Codigo>...</Codigo></Mensaje>...</Mensajes>
+      // The old regex /<estado>(\d+)<\/estado>/ never matched because:
+      //   - the numeric code lives in <Codigo>, not <Estado>
+      //   - <Estado> contains the word "Aceptado", not a number
+      // Result: every accepted invoice ended up status=NOT_FOUND (0), which the
+      // poll processor then mapped to SENT instead of ACCEPTED.
+
+      // 1) Prefer the top-level <Codigo> (DGII numeric status code).
+      //    Scope to the first occurrence near the start to avoid matching the
+      //    inner <Mensaje><Codigo> blocks (those represent per-message warnings).
+      const codigoMatch = responseText.match(/<Codigo>\s*(\d+)\s*<\/Codigo>/i);
+      let status: number = DGII_STATUS.NOT_FOUND;
+      if (codigoMatch) {
+        status = parseInt(codigoMatch[1], 10);
+      } else {
+        // 2) Fallback: parse the textual <Estado> if <Codigo> missing.
+        const estadoTextMatch = responseText.match(/<Estado>\s*([^<]+?)\s*<\/Estado>/i);
+        if (estadoTextMatch) {
+          const t = estadoTextMatch[1].toLowerCase();
+          if (t.includes('aceptado condicional')) status = DGII_STATUS.CONDITIONAL;
+          else if (t.includes('aceptado'))        status = DGII_STATUS.ACCEPTED;
+          else if (t.includes('rechazado'))       status = DGII_STATUS.REJECTED;
+          else if (t.includes('proceso'))         status = DGII_STATUS.IN_PROCESS;
+        }
+        // 3) Last-ditch fallback: old lowercase <estado>N</estado> shape (kept for
+        //    backwards compatibility with any non-standard environments).
+        if (status === DGII_STATUS.NOT_FOUND) {
+          const oldMatch = responseText.match(/<estado>\s*(\d+)\s*<\/estado>/i);
+          if (oldMatch) status = parseInt(oldMatch[1], 10);
+        }
+      }
+
+      // Mensaje extraction: try standard DGII shape first, then fallback.
+      const mensajeMatch =
+        responseText.match(/<Mensaje>([\s\S]*?)<\/Mensaje>/i) ??
+        responseText.match(/<mensaje>([\s\S]*?)<\/mensaje>/i);
+      const encfMatch = responseText.match(/<Encf>([^<]*)<\/Encf>/i);
+      const seqMatch = responseText.match(/<SecuenciaUtilizada>\s*(true|false)\s*<\/SecuenciaUtilizada>/i);
 
       return {
         trackId,
-        status: statusMatch ? parseInt(statusMatch[1], 10) : DGII_STATUS.NOT_FOUND,
-        message: msgMatch ? msgMatch[1].trim() : responseText,
-        secuenciaUtilizada: seqMatch ? seqMatch[1] === 'true' : undefined,
+        status,
+        message: mensajeMatch ? mensajeMatch[1].trim() : responseText,
+        encf: encfMatch ? encfMatch[1] : undefined,
+        secuenciaUtilizada: seqMatch ? seqMatch[1].toLowerCase() === 'true' : undefined,
         rawResponse: responseText,
       };
     }
