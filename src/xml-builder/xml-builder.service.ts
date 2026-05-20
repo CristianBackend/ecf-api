@@ -460,18 +460,22 @@ export class XmlBuilderService {
 
     // TipoIngresos: 1  1  1  1  0  0  1  1  1  0
     //
-    // DGII semantics: required (cod 1) for 31/32/33/34/44/45/46 — must be a
-    // 2-digit code 01-06. But in the certification test set some rows for
-    // E34 expect the tag absent ("valor enviado (01) no coincide con valor ()").
-    // To respect both PROD (where defaulting to 01 keeps the XML valid) and
-    // CERT (where the test set may explicitly want it omitted), we only emit
-    // the tag when the caller provided an incomeType on the first item.
+    // DGII semantics: required (cod 1) for 31/32/33/34/44/45/46 — must emit
+    // a 2-digit code 01-06. The XSD also enforces this position: omitting
+    // TipoIngresos when the type requires it causes XSD rejection because
+    // the next element (TipoPago) becomes positionally invalid:
+    //   "Element 'TipoPago': This element is not expected.
+    //    Expected is one of (..., TipoIngresos)"
+    //
+    // E340000000015's DGII complaint "(01) vs ()" reflects a quirk of the
+    // certification dataset, NOT an XSD requirement. We honor the XSD: if
+    // the caller did not provide incomeType, default to 01 to keep the XML
+    // valid. (The "01 vs ()" mismatch will be a soft warning, but the XML
+    // structure is correct and the rest of the document can be evaluated.)
     const noTipoIngresos = [41, 43, 47];
     if (!noTipoIngresos.includes(typeCode)) {
-      const tipoIngreso = input.items[0]?.incomeType;
-      if (tipoIngreso !== undefined && tipoIngreso !== null) {
-        xml += `      <TipoIngresos>${String(tipoIngreso).padStart(2, '0')}</TipoIngresos>\n`;
-      }
+      const tipoIngreso = input.items[0]?.incomeType ?? 1;
+      xml += `      <TipoIngresos>${String(tipoIngreso).padStart(2, '0')}</TipoIngresos>\n`;
     }
 
     // TipoPago: 1  1  1  1  1  3  1  1  1  3
@@ -835,18 +839,28 @@ export class XmlBuilderService {
       xml += `      <MontoNoFacturable>${fmt(totals.montoNoFacturable)}</MontoNoFacturable>\n`;
     }
 
-    // 16b. MontoPeriodo (XSD cod 3, opcional) — DGII test set expects this present.
+    // 16b/16c. MontoPeriodo and ValorPagar (XSD cod 3, opcional).
+    //
+    // The DGII certification dataset is INCONSISTENT about these tags by
+    // type, despite the XSD marking both as optional everywhere:
+    //   - E31/E32/E44/E45/E47: dataset expects them present with computed values
+    //   - E41/E43: dataset expects them absent
+    //   - E33/E34/E46: no data yet (we'll learn on the next cert run)
+    //
+    // Conservative policy: emit only for the types we have positive evidence
+    // require them. Other types stay silent until DGII tells us otherwise.
     //   MontoPeriodo = MontoTotal + MontoNoFacturable
-    // 16c. ValorPagar (XSD cod 3, opcional) — DGII test set also expects this.
     //   ValorPagar = MontoTotal - MontoAvancePago ± SaldoAnterior
-    // For the certification set neither MontoAvancePago nor SaldoAnterior are
-    // provided, so ValorPagar == MontoTotal and MontoPeriodo == MontoTotal +
-    // MontoNoFacturable. Emit both so DGII does not reject 11+ invoices with
-    //   "MontoPeriodo enviado () no coincide con (228460.50)"
-    const montoPeriodo = totals.totalAmount + (totals.montoNoFacturable || 0);
-    const valorPagar = totals.totalAmount;
-    xml += `      <MontoPeriodo>${fmt(montoPeriodo)}</MontoPeriodo>\n`;
-    xml += `      <ValorPagar>${fmt(valorPagar)}</ValorPagar>\n`;
+    // For the certification rows neither MontoAvancePago nor SaldoAnterior
+    // are provided, so ValorPagar == MontoTotal and MontoPeriodo ==
+    // MontoTotal + MontoNoFacturable.
+    const emitMontoPeriodoValorPagar = [31, 32, 44, 45, 47];
+    if (emitMontoPeriodoValorPagar.includes(typeCode)) {
+      const montoPeriodo = totals.totalAmount + (totals.montoNoFacturable || 0);
+      const valorPagar = totals.totalAmount;
+      xml += `      <MontoPeriodo>${fmt(montoPeriodo)}</MontoPeriodo>\n`;
+      xml += `      <ValorPagar>${fmt(valorPagar)}</ValorPagar>\n`;
+    }
 
     // 17-20. Retenciones y Percepciones (per XSD: only in E31, E33, E34, E41; ISR also E47)
     if (hasItbisRetenido && input.retention?.itbisRetenido && input.retention.itbisRetenido > 0) {

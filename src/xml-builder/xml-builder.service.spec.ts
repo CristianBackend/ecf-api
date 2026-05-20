@@ -349,11 +349,15 @@ describe('XmlBuilderService', () => {
       expect(tagContent(xml, 'IndicadorMontoGravado')).toBe('1');
     });
 
-    it('Fix 4b: should NOT emit TipoIngresos when incomeType is undefined', () => {
-      // DGII E34 test rows expect TipoIngresos absent ("(01) vs ()").
+    it('Fix 4c: should emit TipoIngresos=01 by default when type requires it and incomeType is absent', () => {
+      // The Fix 4b attempt to make TipoIngresos conditional broke XSD validation:
+      //   "Element 'TipoPago': This element is not expected. Expected is one
+      //    of (..., TipoIngresos)"
+      // because XSD requires the field at a fixed position for these types.
+      // Fix 4c restores the default '01' so the XML is structurally valid.
       const input = makeInput('E31', { items: [basicItem({ incomeType: undefined })] });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
-      expect(hasTag(xml, 'TipoIngresos')).toBe(false);
+      expect(tagContent(xml, 'TipoIngresos')).toBe('01');
     });
 
     it('Fix 4b: should honor input.indicadorNotaCredito override for E34', () => {
@@ -378,17 +382,37 @@ describe('XmlBuilderService', () => {
       expect(tagContent(xml, 'IndicadorNotaCredito')).toBe('1'); // > 30 days
     });
 
-    it('Fix 4b: should always emit MontoPeriodo and ValorPagar in Totales', () => {
-      // DGII test set expects both present even though XSD says optional.
-      // Without them, 11+ invoices were rejected with
+    it('Fix 4c: emits MontoPeriodo and ValorPagar for E31/E32/E44/E45/E47', () => {
+      // DGII certification dataset expects these tags for these types.
+      // Without them, invoices were rejected with
       //   "MontoPeriodo enviado () no coincide con (228460.50)"
-      const input = makeInput('E31');
-      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
-      expect(hasTag(xml, 'MontoPeriodo')).toBe(true);
-      expect(hasTag(xml, 'ValorPagar')).toBe(true);
+      for (const ecfType of ['E31', 'E32', 'E44', 'E45', 'E47']) {
+        const input = makeInput(ecfType, {
+          buyer: ecfType === 'E32' ? consumerBuyer : basicBuyer,
+        });
+        const encfPrefix = ecfType.replace('E', 'E') + '0000000001';
+        const { xml } = service.buildEcfXml(input, mockEmitter, encfPrefix);
+        expect(hasTag(xml, 'MontoPeriodo')).toBe(true);
+        expect(hasTag(xml, 'ValorPagar')).toBe(true);
+      }
     });
 
-    it('Fix 4b: MontoPeriodo and ValorPagar equal MontoTotal when no anticipos/no-facturable', () => {
+    it('Fix 4c: does NOT emit MontoPeriodo or ValorPagar for E41 or E43', () => {
+      // DGII certification dataset expects these tags ABSENT for E41/E43.
+      // The Fix 4b "always emit" caused regressions with
+      //   "MontoPeriodo enviado (11800.00) no coincide con valor ()"
+      for (const ecfType of ['E41', 'E43']) {
+        const input = makeInput(ecfType, {
+          buyer: ecfType === 'E43' ? consumerBuyer : basicBuyer,
+        });
+        const encfPrefix = ecfType.replace('E', 'E') + '0000000001';
+        const { xml } = service.buildEcfXml(input, mockEmitter, encfPrefix);
+        expect(hasTag(xml, 'MontoPeriodo')).toBe(false);
+        expect(hasTag(xml, 'ValorPagar')).toBe(false);
+      }
+    });
+
+    it('Fix 4c: MontoPeriodo and ValorPagar equal MontoTotal when no anticipos/no-facturable', () => {
       const input = makeInput('E31', {
         items: [basicItem({ quantity: 10, unitPrice: 1000, itbisRate: 18 })],
       });
