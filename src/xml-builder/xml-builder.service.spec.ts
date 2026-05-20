@@ -34,6 +34,7 @@ const basicItem = (overrides?: Partial<InvoiceItemInput>): InvoiceItemInput => (
   quantity: 1,
   unitPrice: 1000,
   itbisRate: 18,
+  incomeType: 1,
   code: 'SVC-001',
   unit: 'UND',
   ...overrides,
@@ -45,6 +46,7 @@ const exemptItem = (overrides?: Partial<InvoiceItemInput>): InvoiceItemInput => 
   unitPrice: 500,
   itbisRate: 0,
   indicadorFacturacion: 4,
+  incomeType: 1,
   code: 'EXM-001',
   unit: 'UND',
   ...overrides,
@@ -322,6 +324,78 @@ describe('XmlBuilderService', () => {
       const input = makeInput('E31');
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
       expect(hasTag(xml, 'FechaLimitePago')).toBe(false);
+    });
+
+    // ----- Fix 4b: condicional / override behaviors -----
+
+    it('Fix 4b: should NOT emit IndicadorMontoGravado when input.indicadorMontoGravado is undefined', () => {
+      // DGII test set has rows where this tag must be absent. Defaulting to 0
+      // caused rejections: "valor enviado (0) no coincide con valor ()".
+      const input = makeInput('E31');
+      delete (input as any).indicadorMontoGravado;
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(hasTag(xml, 'IndicadorMontoGravado')).toBe(false);
+    });
+
+    it('Fix 4b: should emit IndicadorMontoGravado=0 when explicitly provided', () => {
+      const input = makeInput('E31', { indicadorMontoGravado: 0 });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'IndicadorMontoGravado')).toBe('0');
+    });
+
+    it('Fix 4b: should emit IndicadorMontoGravado=1 when explicitly provided', () => {
+      const input = makeInput('E31', { indicadorMontoGravado: 1 });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'IndicadorMontoGravado')).toBe('1');
+    });
+
+    it('Fix 4b: should NOT emit TipoIngresos when incomeType is undefined', () => {
+      // DGII E34 test rows expect TipoIngresos absent ("(01) vs ()").
+      const input = makeInput('E31', { items: [basicItem({ incomeType: undefined })] });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(hasTag(xml, 'TipoIngresos')).toBe(false);
+    });
+
+    it('Fix 4b: should honor input.indicadorNotaCredito override for E34', () => {
+      // DGII test set provides fixed expected values regardless of 30-day rule.
+      // Without override, the builder computes from reference.date — wrong for cert.
+      const oldDate = '01-01-2018'; // >30 days, normally computes 1
+      const input = makeInput('E34', {
+        reference: { encf: 'E310000000050', date: oldDate, modificationCode: 3 },
+        indicadorNotaCredito: 0, // override forces 0
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E340000000001');
+      expect(tagContent(xml, 'IndicadorNotaCredito')).toBe('0');
+    });
+
+    it('Fix 4b: should fall back to 30-day calculation when indicadorNotaCredito is absent', () => {
+      // Production behavior must not regress.
+      const oldDate = '01-01-2018';
+      const input = makeInput('E34', {
+        reference: { encf: 'E310000000050', date: oldDate, modificationCode: 3 },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E340000000001');
+      expect(tagContent(xml, 'IndicadorNotaCredito')).toBe('1'); // > 30 days
+    });
+
+    it('Fix 4b: should always emit MontoPeriodo and ValorPagar in Totales', () => {
+      // DGII test set expects both present even though XSD says optional.
+      // Without them, 11+ invoices were rejected with
+      //   "MontoPeriodo enviado () no coincide con (228460.50)"
+      const input = makeInput('E31');
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(hasTag(xml, 'MontoPeriodo')).toBe(true);
+      expect(hasTag(xml, 'ValorPagar')).toBe(true);
+    });
+
+    it('Fix 4b: MontoPeriodo and ValorPagar equal MontoTotal when no anticipos/no-facturable', () => {
+      const input = makeInput('E31', {
+        items: [basicItem({ quantity: 10, unitPrice: 1000, itbisRate: 18 })],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      const total = tagContent(xml, 'MontoTotal');
+      expect(tagContent(xml, 'MontoPeriodo')).toBe(total);
+      expect(tagContent(xml, 'ValorPagar')).toBe(total);
     });
   });
 

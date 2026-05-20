@@ -194,6 +194,10 @@ export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Reco
     idempotencyKey:  `cert-${encf ?? Date.now()}`,
     indicadorMontoGravado:  int(row.IndicadorMontoGravado),
     indicadorEnvioDiferido: int(row.IndicadorEnvioDiferido),
+    // IndicadorNotaCredito: DGII test set expects fixed values per row, not
+    // a computed one from reference.date. If Excel sends '#e' (-> undefined),
+    // the builder will fall back to its 30-day calculation.
+    indicadorNotaCredito:   int(row.IndicadorNotaCredito),
     ...(emitterOverride ? { emitterOverride } : {}),
     ...(additionalInfo ? { additionalInfo } : {}),
     metadata: { certificationRow: true, casoPrueba: s(row.CasoPrueba) },

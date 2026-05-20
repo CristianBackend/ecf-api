@@ -39,6 +39,14 @@ export interface InvoiceInput {
   /** Indicador Envío Diferido: 0=normal, 1=diferido */
   indicadorEnvioDiferido?: number;
 
+  /**
+   * Indicador Nota de Crédito (only for E34).
+   * 0 = original e-CF date is ≤ 30 calendar days ago (NC can deduct ITBIS).
+   * 1 = original e-CF date is > 30 calendar days ago (NC cannot deduct ITBIS).
+   * If absent, computed from reference.date and current date.
+   */
+  indicadorNotaCredito?: number;
+
   /** Idempotency key to prevent duplicates */
   idempotencyKey?: string;
 
