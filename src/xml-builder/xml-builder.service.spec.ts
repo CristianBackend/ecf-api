@@ -366,6 +366,55 @@ describe('XmlBuilderService', () => {
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
       expect(tagContent(xml, 'NombreComercial')).toBe('TestCo');
     });
+
+    it('should emit optional emitter fields (phones, email, website, vendorCode, internal numbers) in XSD order', () => {
+      const richEmitter: EmitterData = {
+        ...mockEmitter,
+        phones: ['8095551111', '8095552222'],
+        email: 'test@example.com',
+        website: 'www.testco.com',
+        economicActivity: 'COMERCIO DE TESTING',
+        vendorCode: 'V001',
+        internalInvoiceNumber: 'INV-2026-1',
+        internalOrderNumber: '12345',
+        salesZone: 'NORTE',
+      };
+      const input = makeInput('E31');
+      const { xml } = service.buildEcfXml(input, richEmitter, 'E310000000001');
+
+      // Each field emits
+      expect(hasTag(xml, 'TablaTelefonoEmisor')).toBe(true);
+      expect(xml).toContain('<TelefonoEmisor>8095551111</TelefonoEmisor>');
+      expect(xml).toContain('<TelefonoEmisor>8095552222</TelefonoEmisor>');
+      expect(tagContent(xml, 'CorreoEmisor')).toBe('test@example.com');
+      expect(tagContent(xml, 'WebSite')).toBe('www.testco.com');
+      expect(tagContent(xml, 'ActividadEconomica')).toBe('COMERCIO DE TESTING');
+      expect(tagContent(xml, 'CodigoVendedor')).toBe('V001');
+      expect(tagContent(xml, 'NumeroFacturaInterna')).toBe('INV-2026-1');
+      expect(tagContent(xml, 'NumeroPedidoInterno')).toBe('12345');
+      expect(tagContent(xml, 'ZonaVenta')).toBe('NORTE');
+
+      // XSD-required order: TablaTelefonoEmisor → CorreoEmisor → WebSite → ActividadEconomica → CodigoVendedor → NumeroFacturaInterna → NumeroPedidoInterno → ZonaVenta
+      expect(tagBefore(xml, 'TablaTelefonoEmisor', 'CorreoEmisor')).toBe(true);
+      expect(tagBefore(xml, 'CorreoEmisor', 'WebSite')).toBe(true);
+      expect(tagBefore(xml, 'WebSite', 'ActividadEconomica')).toBe(true);
+      expect(tagBefore(xml, 'ActividadEconomica', 'CodigoVendedor')).toBe(true);
+      expect(tagBefore(xml, 'CodigoVendedor', 'NumeroFacturaInterna')).toBe(true);
+      expect(tagBefore(xml, 'NumeroFacturaInterna', 'NumeroPedidoInterno')).toBe(true);
+      expect(tagBefore(xml, 'NumeroPedidoInterno', 'ZonaVenta')).toBe(true);
+      expect(tagBefore(xml, 'ZonaVenta', 'FechaEmision')).toBe(true);
+    });
+
+    it('should cap TablaTelefonoEmisor at 3 phones (XSD maxOccurs="3")', () => {
+      const tooManyPhones: EmitterData = {
+        ...mockEmitter,
+        phones: ['8090000001', '8090000002', '8090000003', '8090000004', '8090000005'],
+      };
+      const input = makeInput('E31');
+      const { xml } = service.buildEcfXml(input, tooManyPhones, 'E310000000001');
+      const matches = xml.match(/<TelefonoEmisor>/g);
+      expect(matches?.length).toBe(3);
+    });
   });
 
   // ============================================================

@@ -138,6 +138,17 @@ export class InvoicesService {
       );
     }
 
+    if (dto.emitterOverride !== undefined) {
+      if (company.dgiiEnv === 'PROD') {
+        throw new ForbiddenException(
+          'emitterOverride no permitido en ambiente PROD. Solo disponible en CERT y DEV (set de pruebas DGII).',
+        );
+      }
+      this.logger.warn(
+        `[EMITTER OVERRIDE] tenant=${tenantId} company=${dto.companyId} type=${dto.ecfType} dgiiEnv=${company.dgiiEnv}`,
+      );
+    }
+
     const encf = await this.sequencesService.getNextEncf(tenantId, dto.companyId, ecfType, dto.encfOverride);
     this.logger.info(`eNCF assigned: ${encf}`);
 
@@ -146,15 +157,25 @@ export class InvoicesService {
       select: { expiresAt: true },
     });
 
+    const ovr = dto.emitterOverride;
     const emitterData: EmitterData = {
       rnc: company.rnc,
-      businessName: company.businessName,
-      tradeName: company.tradeName || undefined,
-      branchCode: company.branchCode || undefined,
-      address: company.address || undefined,
-      municipality: company.municipality || undefined,
-      province: company.province || undefined,
-      economicActivity: company.economicActivity || undefined,
+      businessName: ovr?.businessName ?? company.businessName,
+      tradeName: ovr?.tradeName ?? company.tradeName ?? undefined,
+      branchCode: ovr?.branchCode ?? company.branchCode ?? undefined,
+      address: ovr?.address ?? company.address ?? undefined,
+      municipality: ovr?.municipality ?? company.municipality ?? undefined,
+      province: ovr?.province ?? company.province ?? undefined,
+      phones: ovr?.phones,
+      email: ovr?.email,
+      website: ovr?.website,
+      economicActivity: ovr?.economicActivity ?? company.economicActivity ?? undefined,
+      vendorCode: ovr?.vendorCode,
+      internalInvoiceNumber: ovr?.internalInvoiceNumber,
+      internalOrderNumber: ovr?.internalOrderNumber,
+      salesZone: ovr?.salesZone,
+      salesRoute: ovr?.salesRoute,
+      additionalInfo: ovr?.additionalEmitterInfo,
     };
 
     const inputWithSequence = {

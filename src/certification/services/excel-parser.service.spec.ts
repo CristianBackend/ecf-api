@@ -131,4 +131,41 @@ describe('ExcelParserService', () => {
     expect(rows[1].TipoeCF).toBe(32);
     expect(rows[2].TipoeCF).toBe(33);
   });
+
+  it('groups TelefonoEmisor[N] as an array on the row, not under _items', () => {
+    const buf = buildXlsx([
+      {
+        TipoeCF: 31,
+        eNCF: 'E310000000001',
+        'TelefonoEmisor[1]': '8095551111',
+        'TelefonoEmisor[2]': '8095552222',
+        'NombreItem[1]': 'Producto A',
+      },
+    ]);
+
+    const rows = parser.parseBuffer(buf);
+    expect(rows[0].TelefonoEmisor).toEqual(['8095551111', '8095552222']);
+    // _items must NOT have a phantom TelefonoEmisor inside it
+    expect((rows[0]._items[1] as any).TelefonoEmisor).toBeUndefined();
+    expect((rows[0]._items[1] as any).NombreItem).toBe('Producto A');
+  });
+
+  it('groups FormaPago[N] and MontoPago[N] on the row, not under _items', () => {
+    const buf = buildXlsx([
+      {
+        TipoeCF: 31,
+        eNCF: 'E310000000001',
+        'FormaPago[1]': 1,
+        'MontoPago[1]': 1000,
+        'FormaPago[2]': 4,
+        'MontoPago[2]': 500,
+      },
+    ]);
+
+    const rows = parser.parseBuffer(buf);
+    expect(rows[0].FormaPago).toEqual([1, 4]);
+    expect(rows[0].MontoPago).toEqual([1000, 500]);
+    // No item entries should be created from these
+    expect(Object.keys(rows[0]._items)).toHaveLength(0);
+  });
 });

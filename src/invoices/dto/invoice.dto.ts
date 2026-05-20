@@ -392,6 +392,74 @@ export class ForeignBeneficiaryDto {
 // MAIN DTO
 // ============================================================
 
+export class EmitterOverrideDto {
+  @ApiPropertyOptional({ description: 'Razón social del emisor (override)', example: 'DOCUMENTOS ELECTRONICOS DE 02' })
+  @IsOptional() @IsString() @MaxLength(150)
+  businessName?: string;
+
+  @ApiPropertyOptional({ description: 'Nombre comercial (override)', example: 'DOCUMENTOS ELECTRONICOS DE 02' })
+  @IsOptional() @IsString() @MaxLength(150)
+  tradeName?: string;
+
+  @ApiPropertyOptional({ description: 'Sucursal/branch (override)', example: '001' })
+  @IsOptional() @IsString() @MaxLength(20)
+  branchCode?: string;
+
+  @ApiPropertyOptional({ description: 'Dirección del emisor (override)', example: 'AVE. ISABEL AGUIAR NO. 269, ZONA INDUSTRIAL DE HERRERA' })
+  @IsOptional() @IsString() @MaxLength(100)
+  address?: string;
+
+  @ApiPropertyOptional({ description: 'Código de municipio (override)', example: '010101' })
+  @IsOptional() @IsString()
+  municipality?: string;
+
+  @ApiPropertyOptional({ description: 'Código de provincia (override)', example: '010000' })
+  @IsOptional() @IsString()
+  province?: string;
+
+  @ApiPropertyOptional({ description: 'Teléfonos del emisor (1-3)', example: ['8095551234'] })
+  @IsOptional() @IsArray()
+  @ArrayMaxSize(3)
+  @IsString({ each: true })
+  phones?: string[];
+
+  @ApiPropertyOptional({ description: 'Correo del emisor', example: 'empresa@ejemplo.com' })
+  @IsOptional() @IsString() @MaxLength(80)
+  email?: string;
+
+  @ApiPropertyOptional({ description: 'Sitio web', example: 'www.facturaelectronica.com' })
+  @IsOptional() @IsString() @MaxLength(50)
+  website?: string;
+
+  @ApiPropertyOptional({ description: 'Actividad económica', example: 'VENTA AL POR MAYOR' })
+  @IsOptional() @IsString() @MaxLength(100)
+  economicActivity?: string;
+
+  @ApiPropertyOptional({ description: 'Código de vendedor', example: 'V001' })
+  @IsOptional() @IsString() @MaxLength(60)
+  vendorCode?: string;
+
+  @ApiPropertyOptional({ description: 'Número de factura interna', example: '123456789016' })
+  @IsOptional() @IsString() @MaxLength(20)
+  internalInvoiceNumber?: string;
+
+  @ApiPropertyOptional({ description: 'Número de pedido interno', example: '123456789016' })
+  @IsOptional() @IsString() @MaxLength(20)
+  internalOrderNumber?: string;
+
+  @ApiPropertyOptional({ description: 'Zona de venta', example: 'NORTE' })
+  @IsOptional() @IsString() @MaxLength(20)
+  salesZone?: string;
+
+  @ApiPropertyOptional({ description: 'Ruta de venta', example: 'RUTA-01' })
+  @IsOptional() @IsString() @MaxLength(20)
+  salesRoute?: string;
+
+  @ApiPropertyOptional({ description: 'Información adicional del emisor', example: 'Datos extra...' })
+  @IsOptional() @IsString() @MaxLength(250)
+  additionalEmitterInfo?: string;
+}
+
 export class CreateInvoiceDto {
   @ApiProperty({ description: 'ID de la empresa emisora (UUID)', example: 'clng9x0010000vwc0l5s1234' })
   @IsString({ message: 'companyId es requerido' })
@@ -482,6 +550,15 @@ export class CreateInvoiceDto {
   @IsInt()
   @Min(1)
   encfOverride?: number;
+
+  @ApiPropertyOptional({
+    description: 'Override de datos del emisor (solo CERT/DEV). Útil para set de pruebas DGII donde los datos del emisor son fijados por DGII, no por la empresa. Bloqueado en PROD.',
+    type: EmitterOverrideDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EmitterOverrideDto)
+  emitterOverride?: EmitterOverrideDto;
 
   @ApiPropertyOptional({ description: 'Metadata custom (no se envía a DGII, útil para referenciar entidades propias)', example: { orderId: 'ORD-2026-001', customerId: 'CUST-789' } })
   @IsOptional()

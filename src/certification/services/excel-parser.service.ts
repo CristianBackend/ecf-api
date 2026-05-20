@@ -7,6 +7,21 @@ const ITEM_FIELD_RE = /^(.+)\[(\d+)\]$/;
 const EXCLUDED_VALUE = '#e';
 const ECF_SHEET_NAME = 'ECF';
 
+/**
+ * Fields with [N] indexers that are NOT line items but rather sized arrays of
+ * the same header-level property. These get stored on the row as base-name
+ * arrays (e.g. row.TelefonoEmisor = ['8095551234', '8095555678']) instead of
+ * being mistakenly grouped into row._items[N].TelefonoEmisor.
+ *
+ * Detected from the official DGII certification Excel by their max index ≤ 7,
+ * vs. true item fields which max at 62.
+ */
+const NON_ITEM_INDEXED_FIELDS = new Set<string>([
+  'TelefonoEmisor',
+  'FormaPago',
+  'MontoPago',
+]);
+
 @Injectable()
 export class ExcelParserService {
   constructor(
@@ -94,6 +109,16 @@ export class ExcelParserService {
       if (itemMatch) {
         const fieldName = itemMatch[1];
         const lineNum = parseInt(itemMatch[2], 10);
+
+        // Non-item indexed fields (e.g. TelefonoEmisor[1..3], FormaPago[1..7])
+        // go on the row as arrays, not into _items.
+        if (NON_ITEM_INDEXED_FIELDS.has(fieldName)) {
+          const existing = (row[fieldName] as unknown[] | undefined) ?? [];
+          existing[lineNum - 1] = raw;
+          row[fieldName] = existing;
+          continue;
+        }
+
         if (!row._items[lineNum]) row._items[lineNum] = {};
         (row._items[lineNum] as Record<string, unknown>)[fieldName] = raw;
       } else {

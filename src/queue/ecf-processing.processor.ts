@@ -144,16 +144,6 @@ export class EcfProcessingProcessor extends WorkerHost {
 
       if (isRfce) {
         // RFCE flow: build summary, submit to FC endpoint
-        const emitterData: EmitterData = {
-          rnc: invoice.company.rnc,
-          businessName: invoice.company.businessName,
-          tradeName: invoice.company.tradeName || undefined,
-          branchCode: invoice.company.branchCode || undefined,
-          address: invoice.company.address || undefined,
-          municipality: invoice.company.municipality || undefined,
-          province: invoice.company.province || undefined,
-          economicActivity: invoice.company.economicActivity || undefined,
-        };
 
         // We need totals to build RFCE — recalculate from stored DTO
         const storedMeta = typeof invoice.metadata === 'string'
@@ -164,6 +154,28 @@ export class EcfProcessingProcessor extends WorkerHost {
         if (!originalDto) {
           throw new Error(`Invoice ${invoiceId} missing _originalDto in metadata — cannot rebuild RFCE`);
         }
+
+        // Apply emitterOverride from stored DTO (for CERT/DEV — set de pruebas DGII)
+        const ovr = originalDto?.emitterOverride;
+        const emitterData: EmitterData = {
+          rnc: invoice.company.rnc,
+          businessName: ovr?.businessName ?? invoice.company.businessName,
+          tradeName: ovr?.tradeName ?? invoice.company.tradeName ?? undefined,
+          branchCode: ovr?.branchCode ?? invoice.company.branchCode ?? undefined,
+          address: ovr?.address ?? invoice.company.address ?? undefined,
+          municipality: ovr?.municipality ?? invoice.company.municipality ?? undefined,
+          province: ovr?.province ?? invoice.company.province ?? undefined,
+          phones: ovr?.phones,
+          email: ovr?.email,
+          website: ovr?.website,
+          economicActivity: ovr?.economicActivity ?? invoice.company.economicActivity ?? undefined,
+          vendorCode: ovr?.vendorCode,
+          internalInvoiceNumber: ovr?.internalInvoiceNumber,
+          internalOrderNumber: ovr?.internalOrderNumber,
+          salesZone: ovr?.salesZone,
+          salesRoute: ovr?.salesRoute,
+          additionalInfo: ovr?.additionalEmitterInfo,
+        };
 
         const { totals } = this.xmlBuilder.buildEcfXml(
           originalDto,

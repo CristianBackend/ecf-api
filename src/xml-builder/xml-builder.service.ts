@@ -523,7 +523,7 @@ export class XmlBuilderService {
       xml += `      <NombreComercial>${escapeXml(emitter.tradeName)}</NombreComercial>\n`;
     }
 
-    // M1: Sucursal (optional, after NombreComercial per XSD sequence)
+    // Sucursal (optional, after NombreComercial per XSD sequence)
     if (emitter.branchCode) {
       xml += `      <Sucursal>${escapeXml(emitter.branchCode)}</Sucursal>\n`;
     }
@@ -540,9 +540,49 @@ export class XmlBuilderService {
       xml += `      <Provincia>${escapeXml(emitter.province)}</Provincia>\n`;
     }
 
-    // M2: ActividadEconomica (optional, after Provincia per XSD sequence)
+    // TablaTelefonoEmisor: 1-3 phone numbers
+    if (emitter.phones && emitter.phones.length > 0) {
+      xml += `      <TablaTelefonoEmisor>\n`;
+      for (const phone of emitter.phones.slice(0, 3)) {
+        xml += `        <TelefonoEmisor>${escapeXml(phone)}</TelefonoEmisor>\n`;
+      }
+      xml += `      </TablaTelefonoEmisor>\n`;
+    }
+
+    if (emitter.email) {
+      xml += `      <CorreoEmisor>${escapeXml(emitter.email)}</CorreoEmisor>\n`;
+    }
+
+    if (emitter.website) {
+      xml += `      <WebSite>${escapeXml(emitter.website)}</WebSite>\n`;
+    }
+
     if (emitter.economicActivity) {
       xml += `      <ActividadEconomica>${escapeXml(emitter.economicActivity)}</ActividadEconomica>\n`;
+    }
+
+    if (emitter.vendorCode) {
+      xml += `      <CodigoVendedor>${escapeXml(emitter.vendorCode)}</CodigoVendedor>\n`;
+    }
+
+    if (emitter.internalInvoiceNumber) {
+      xml += `      <NumeroFacturaInterna>${escapeXml(emitter.internalInvoiceNumber)}</NumeroFacturaInterna>\n`;
+    }
+
+    if (emitter.internalOrderNumber) {
+      xml += `      <NumeroPedidoInterno>${escapeXml(emitter.internalOrderNumber)}</NumeroPedidoInterno>\n`;
+    }
+
+    if (emitter.salesZone) {
+      xml += `      <ZonaVenta>${escapeXml(emitter.salesZone)}</ZonaVenta>\n`;
+    }
+
+    if (emitter.salesRoute) {
+      xml += `      <RutaVenta>${escapeXml(emitter.salesRoute)}</RutaVenta>\n`;
+    }
+
+    if (emitter.additionalInfo) {
+      xml += `      <InformacionAdicionalEmisor>${escapeXml(emitter.additionalInfo)}</InformacionAdicionalEmisor>\n`;
     }
 
     // Use override date (e.g., for contingency resubmission) or current date
@@ -1448,8 +1488,26 @@ export interface EmitterData {
   address?: string;
   municipality?: string;
   province?: string;
+  /** TelefonoEmisor: up to 3 phone numbers (TelefonoValidationType, exactly 10 digits) */
+  phones?: string[];
+  /** CorreoEmisor: email of the emitter (CorreoValidationType) */
+  email?: string;
+  /** WebSite: company website URL (AlfNum50Type, max 50 chars) */
+  website?: string;
   /** ActividadEconomica: economic activity description (AlfNum100Type, max 100 chars) */
   economicActivity?: string;
+  /** CodigoVendedor: vendor/seller code (AlfNum60Type, max 60 chars) */
+  vendorCode?: string;
+  /** NumeroFacturaInterna: internal invoice number (AlfNum20Type, max 20 chars) */
+  internalInvoiceNumber?: string;
+  /** NumeroPedidoInterno: internal order number (Integer20ValidationType, max 20 digits) */
+  internalOrderNumber?: string;
+  /** ZonaVenta: sales zone (AlfNum20Type, max 20 chars) */
+  salesZone?: string;
+  /** RutaVenta: sales route (AlfNum20Type, max 20 chars) */
+  salesRoute?: string;
+  /** InformacionAdicionalEmisor: additional emitter info (AlfNum250Type, max 250 chars) */
+  additionalInfo?: string;
 }
 
 /** Escape XML special characters and control chars per DGII Descripción Técnica p.63 */

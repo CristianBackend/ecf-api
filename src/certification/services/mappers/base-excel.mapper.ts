@@ -133,6 +133,7 @@ export function mapCurrency(row: ExcelRow) {
  */
 export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Record<string, unknown> {
   const encf = s(row.eNCF ?? row.ENCF);
+  const emitterOverride = mapEmitter(row);
 
   return {
     companyId,
@@ -146,6 +147,7 @@ export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Reco
     idempotencyKey:  `cert-${encf ?? Date.now()}`,
     indicadorMontoGravado:  int(row.IndicadorMontoGravado),
     indicadorEnvioDiferido: int(row.IndicadorEnvioDiferido),
+    ...(emitterOverride ? { emitterOverride } : {}),
     metadata: { certificationRow: true, casoPrueba: s(row.CasoPrueba) },
   };
 }
@@ -160,4 +162,57 @@ export function mapReference(row: ExcelRow) {
     rncOtroContribuyente: s(row.RNCOtroContribuyente),
     reason:             s(row.RazonModificacion),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Emitter override (CERT/DEV only)
+// ---------------------------------------------------------------------------
+
+/**
+ * DGII certification test set has FIXED expected values for Emisor fields
+ * (RazonSocial, Direccion, etc.) that don't match the real company in DB.
+ * For each row, lift these values from the Excel into an `emitterOverride`
+ * that the backend will merge over the Company data when building the XML.
+ *
+ * This is only honored when the company is in CERT/DEV environment.
+ * In PROD it is rejected by InvoicesService.create().
+ */
+export function mapEmitter(row: ExcelRow) {
+  // Normalize phones: Excel may give "809-472-7676", DGII XSD requires exactly 10 digits.
+  const rawPhones = Array.isArray(row.TelefonoEmisor)
+    ? (row.TelefonoEmisor as unknown[])
+    : [];
+  const phones = rawPhones
+    .map(p => s(p))
+    .filter((p): p is string => !!p)
+    .map(p => p.replace(/\D/g, ''))
+    .filter(p => p.length === 10);
+
+  const override = {
+    businessName:           s(row.RazonSocialEmisor),
+    tradeName:              s(row.NombreComercial),
+    branchCode:             s(row.Sucursal),
+    address:                s(row.DireccionEmisor),
+    municipality:           s(row.Municipio),
+    province:               s(row.Provincia),
+    phones:                 phones.length > 0 ? phones : undefined,
+    email:                  s(row.CorreoEmisor),
+    website:                s(row.WebSite),
+    economicActivity:       s(row.ActividadEconomica),
+    vendorCode:             s(row.CodigoVendedor),
+    internalInvoiceNumber:  s(row.NumeroFacturaInterna),
+    internalOrderNumber:    s(row.NumeroPedidoInterno),
+    salesZone:              s(row.ZonaVenta),
+    salesRoute:             s(row.RutaVenta),
+    additionalEmitterInfo:  s(row.InformacionAdicionalEmisor),
+  };
+
+  // Strip undefined keys so the DTO validator doesn't see empty strings.
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(override)) {
+    if (val !== undefined) cleaned[k] = val;
+  }
+
+  // If no overridable field is present, return undefined (no override sent).
+  return Object.keys(cleaned).length > 0 ? cleaned : undefined;
 }
