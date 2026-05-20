@@ -405,13 +405,33 @@ export class ExportInfoDto {
   @IsOptional() @IsNumber()
   grossWeight?: number;
 
+  @ApiPropertyOptional({ description: 'Unidad de medida del peso bruto (código DGII UnidadMedidaType)', example: 23 })
+  @IsOptional() @IsInt()
+  grossWeightUnit?: number;
+
   @ApiPropertyOptional({ description: 'Peso neto (kg)', example: 90 })
   @IsOptional() @IsNumber()
   netWeight?: number;
 
+  @ApiPropertyOptional({ description: 'Unidad de medida del peso neto (código DGII UnidadMedidaType)', example: 23 })
+  @IsOptional() @IsInt()
+  netWeightUnit?: number;
+
+  @ApiPropertyOptional({ description: 'Cantidad de bultos', example: 1 })
+  @IsOptional() @IsNumber()
+  packageCount?: number;
+
+  @ApiPropertyOptional({ description: 'Unidad de bulto (código DGII UnidadMedidaType)', example: 6 })
+  @IsOptional() @IsInt()
+  packageUnit?: number;
+
   @ApiPropertyOptional({ description: 'Volumen del bulto', example: 2.5 })
   @IsOptional() @IsNumber()
   packageVolume?: number;
+
+  @ApiPropertyOptional({ description: 'Unidad de volumen (código DGII UnidadMedidaType)', example: 6 })
+  @IsOptional() @IsInt()
+  volumeUnit?: number;
 
   @ApiPropertyOptional({ description: 'Número de referencia aduanera', example: 'REF-2026-001' })
   @IsOptional() @IsString()

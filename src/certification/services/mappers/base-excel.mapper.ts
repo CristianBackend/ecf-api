@@ -102,17 +102,18 @@ export function mapItem(item: ExcelItem) {
     surcharge:            n(item.RecargoMonto),
     itbisRate:            n(item.TasaITBIS),
     indicadorFacturacion: int(item.IndicadorFacturacion),
-    goodService:          int(item.BienOServicio),
-    code:                 s(item.CodigoProducto),
+    // DGII Excel header is `IndicadorBienoServicio[N]` (one 'o', not "BienOServicio").
+    // Reading the wrong header silently returned undefined, the builder omitted
+    // the tag, and DGII rejected E43/E44/E47 with:
+    //   "valor enviado (1) no coincide con valor (2)" (servicio)
+    goodService:          int(item.IndicadorBienoServicio),
     unit:                 s(item.UnidadMedida),
     incomeType:           tipoIngresos,
     manufacturingDate:    s(item.FechaElaboracion),
     // ISC fields
-    additionalTaxCode:    s(item.CodigoImpuestoAdicional),
     additionalTaxRate:    n(item.TasaImpuestoAdicional),
     alcoholDegrees:       n(item.GradosAlcohol),
     referenceQuantity:    n(item.CantidadReferencia),
-    subQuantity:          n(item.Subcantidad),
     referenceUnitPrice:   n(item.PrecioUnitarioReferencia),
     // Retention (E41)
     retencionIndicador:   int(item.IndicadorAgenteRetencionoPercepcion),
@@ -135,6 +136,40 @@ export function mapCurrency(row: ExcelRow) {
 }
 
 // ---------------------------------------------------------------------------
+// InformacionesAdicionales (Peso, Bulto, Volumen) — XSD optional for E31/E32/E33/E34
+// ---------------------------------------------------------------------------
+
+/**
+ * Lift weight/package/volume fields from the certification Excel into the
+ * additionalInfo block. These are root-level columns (PesoBruto, PesoNeto,
+ * CantidadBulto, VolumenBulto and their unit codes), not per-item.
+ *
+ * Without this, the XML omits PesoNeto entirely but DGII for E310000000005
+ * expects it filled (the test set has "24.50"). The mismatch causes:
+ *   "El campo PesoNeto del área InformacionesAdicionales no es válido"
+ */
+export function mapAdditionalInfo(row: ExcelRow) {
+  const info = {
+    grossWeight:     n(row.PesoBruto),
+    netWeight:       n(row.PesoNeto),
+    grossWeightUnit: int(row.UnidadPesoBruto),
+    netWeightUnit:   int(row.UnidadPesoNeto),
+    packageCount:    n(row.CantidadBulto),
+    packageUnit:     int(row.UnidadBulto),
+    packageVolume:   n(row.VolumenBulto),
+    volumeUnit:      int(row.UnidadVolumen),
+  };
+
+  // Strip undefined: if Excel sends '#e' for everything, return undefined so
+  // the builder omits the entire InformacionesAdicionales block.
+  const cleaned: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(info)) {
+    if (v !== undefined) cleaned[k] = v;
+  }
+  return Object.keys(cleaned).length > 0 ? cleaned : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Base DTO builder
 // ---------------------------------------------------------------------------
 
@@ -145,6 +180,7 @@ export function mapCurrency(row: ExcelRow) {
 export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Record<string, unknown> {
   const encf = s(row.eNCF ?? row.ENCF);
   const emitterOverride = mapEmitter(row);
+  const additionalInfo = mapAdditionalInfo(row);
 
   return {
     companyId,
@@ -159,6 +195,7 @@ export function mapBase(row: ExcelRow, companyId: string, ecfType: string): Reco
     indicadorMontoGravado:  int(row.IndicadorMontoGravado),
     indicadorEnvioDiferido: int(row.IndicadorEnvioDiferido),
     ...(emitterOverride ? { emitterOverride } : {}),
+    ...(additionalInfo ? { additionalInfo } : {}),
     metadata: { certificationRow: true, casoPrueba: s(row.CasoPrueba) },
   };
 }

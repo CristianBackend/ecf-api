@@ -21,7 +21,7 @@ function makeE32Row(overrides: Partial<Record<string, unknown>> = {}): ExcelRow 
         PrecioUnitarioItem: 35000,
         TasaITBIS: 18,
         IndicadorFacturacion: 1,
-        BienOServicio: 1,
+        IndicadorBienoServicio: 1,
       },
     },
     ...overrides,
