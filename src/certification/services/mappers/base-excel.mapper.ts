@@ -102,22 +102,33 @@ export function mapBuyer(row: ExcelRow) {
 }
 
 export function mapPayment(row: ExcelRow) {
-  // Fix 4h: read multiple FormaPago[N]/MontoPago[N] from the Excel and
-  // package as payment.forms[]. The DGII test set provides per-row payment
-  // breakdowns (e.g. E410000000001 expects MontoPago=9000.00 even though
-  // MontoTotal=11800.00). The builder uses these directly via the new
-  // payment.forms array.
+  // Fix 4h: read multiple FormaPago/MontoPago entries from the Excel and
+  // package them as payment.forms[]. The DGII test set provides per-row
+  // payment breakdowns (e.g. E410000000001 expects MontoPago=9000.00 even
+  // though MontoTotal=11800.00). The builder uses these directly via the
+  // new payment.forms array.
   //
-  // We scan up to 7 form slots per XSD's <TablaFormasPago> max ocurrencia.
-  // Each cell uses rawNum() so we preserve the verbatim string (matches
-  // Fix 4f/4g approach) and only include slots that have a numeric amount.
+  // Bug fix vs initial 4h: ExcelParserService consolidates the indexed
+  // headers FormaPago[1..7]/MontoPago[1..7] into PARALLEL ARRAYS on the
+  // row (row.FormaPago = [1, 4], row.MontoPago = [1000, 500]) — they are
+  // NOT exposed as separate `FormaPago[1]` keys. The first iteration of
+  // this mapper scanned `r['FormaPago[1]']`, which is always undefined,
+  // so `forms` always came out empty and the builder fell back to the
+  // single-entry path emitting MontoPago=totalAmount.
+  const r = row as unknown as { FormaPago?: unknown; MontoPago?: unknown };
+  const formaArr = Array.isArray(r.FormaPago)
+    ? r.FormaPago
+    : (r.FormaPago !== undefined ? [r.FormaPago] : []);
+  const montoArr = Array.isArray(r.MontoPago)
+    ? r.MontoPago
+    : (r.MontoPago !== undefined ? [r.MontoPago] : []);
+
   const forms: Array<{ method: number; amount: number; rawText?: { MontoPago?: string } }> = [];
-  for (let i = 1; i <= 7; i++) {
-    const r = row as Record<string, unknown>;
-    const formaRaw = v(r[`FormaPago[${i}]`]);
-    const montoRaw = rawNum(r[`MontoPago[${i}]`]);
-    const method = int(r[`FormaPago[${i}]`]);
-    const amount = n(r[`MontoPago[${i}]`]);
+  const slots = Math.max(formaArr.length, montoArr.length);
+  for (let i = 0; i < slots; i++) {
+    const method = int(formaArr[i]);
+    const amount = n(montoArr[i]);
+    const montoRaw = rawNum(montoArr[i]);
     if (method !== undefined && amount !== undefined) {
       forms.push({
         method,
@@ -125,12 +136,17 @@ export function mapPayment(row: ExcelRow) {
         ...(montoRaw !== undefined ? { rawText: { MontoPago: montoRaw } } : {}),
       });
     }
-    void formaRaw; // unused, kept for symmetry
   }
+
+  // Expose the FIRST FormaPago as `method` to preserve the legacy
+  // single-entry path used by callers that don't know about forms[].
+  const firstMethod = forms.length > 0
+    ? forms[0].method
+    : int(formaArr[0] ?? r.FormaPago);
 
   return {
     type:        n(row.TipoPago) ?? 1,
-    method:      int(row.FormaPago),
+    method:      firstMethod,
     date:        s(row.FechaPago),
     termDays:    int(row.TerminoPago),
     accountType: s(row.TipoCuentaPago),

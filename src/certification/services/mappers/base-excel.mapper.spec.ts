@@ -282,13 +282,14 @@ describe('base-excel.mapper', () => {
   describe('mapPayment forms (Fix 4h)', () => {
     const { mapPayment } = jest.requireActual('./base-excel.mapper');
 
-    it('packages FormaPago[N]/MontoPago[N] into payment.forms[] array', () => {
+    it('packages FormaPago/MontoPago arrays into payment.forms[]', () => {
+      // ExcelParserService consolidates FormaPago[1..N]/MontoPago[1..N]
+      // into PARALLEL ARRAYS on the row (per excel-parser.service.ts's
+      // NON_ITEM_INDEXED_FIELDS handling), NOT as separate indexed keys.
       const row = {
         TipoPago: 1,
-        'FormaPago[1]': '1',
-        'MontoPago[1]': '9000.00',
-        'FormaPago[2]': '2',
-        'MontoPago[2]': '2800.00',
+        FormaPago: [1, 2],
+        MontoPago: ['9000.00', '2800.00'],
       };
       const p = mapPayment(row) as any;
       expect(p.forms).toEqual([
@@ -297,14 +298,30 @@ describe('base-excel.mapper', () => {
       ]);
     });
 
+    it('handles a single-element FormaPago/MontoPago array (1 form of payment)', () => {
+      const row = {
+        TipoPago: 1,
+        FormaPago: [1],
+        MontoPago: ['14350.00'],
+      };
+      const p = mapPayment(row) as any;
+      expect(p.forms).toEqual([
+        { method: 1, amount: 14350, rawText: { MontoPago: '14350.00' } },
+      ]);
+    });
+
+    it('also accepts a scalar FormaPago (non-array, legacy path)', () => {
+      const row = { TipoPago: 1, FormaPago: 1, MontoPago: '500.00' };
+      const p = mapPayment(row) as any;
+      expect(p.forms).toEqual([
+        { method: 1, amount: 500, rawText: { MontoPago: '500.00' } },
+      ]);
+    });
+
     it('skips form slots where method or amount is missing/"#e"', () => {
       const row = {
-        'FormaPago[1]': '1',
-        'MontoPago[1]': '500.00',
-        'FormaPago[2]': '#e',  // skip
-        'MontoPago[2]': '100.00',
-        'FormaPago[3]': '3',
-        'MontoPago[3]': '#e',  // skip
+        FormaPago: [1, '#e', 3],
+        MontoPago: ['500.00', '100.00', '#e'],
       };
       const p = mapPayment(row) as any;
       expect(p.forms).toEqual([
@@ -312,20 +329,25 @@ describe('base-excel.mapper', () => {
       ]);
     });
 
-    it('omits payment.forms entirely when no FormaPago[N] is present', () => {
+    it('omits payment.forms entirely when no FormaPago is present', () => {
       const row = { TipoPago: 1 };
       const p = mapPayment(row) as any;
       expect(p.forms).toBeUndefined();
     });
 
     it('preserves verbatim decimal precision from the Excel for MontoPago', () => {
-      // The certification flow needs verbatim strings to match DGII byte-for-byte.
       const row = {
-        'FormaPago[1]': '1',
-        'MontoPago[1]': '14350.00',  // exact Excel formatting (not 14350)
+        FormaPago: [1],
+        MontoPago: ['14350.00'],  // exact Excel formatting (not 14350)
       };
       const p = mapPayment(row) as any;
       expect(p.forms[0].rawText.MontoPago).toBe('14350.00');
+    });
+
+    it('exposes the FIRST FormaPago as payment.method for legacy callers', () => {
+      const row = { FormaPago: [3, 1], MontoPago: ['100.00', '50.00'] };
+      const p = mapPayment(row) as any;
+      expect(p.method).toBe(3);
     });
   });
 
