@@ -49,6 +49,18 @@ export class CertificationController {
       properties: {
         file:      { type: 'string', format: 'binary' },
         companyId: { type: 'string', format: 'uuid' },
+        // Fix 4q: optional list of eNCF sequences to skip from the upload.
+        // Comma-separated, case-insensitive. Whitespace tolerated. Use case:
+        // DGII certification has consumed a sequence in a prior submission,
+        // so re-sending it would fail with "secuencia ya utilizada" and
+        // reset the entire portal counter. Skipping those rows lets the
+        // remaining viable invoices process cleanly in a single upload.
+        skipEncfs: {
+          type: 'string',
+          description: 'eNCFs a omitir (separados por coma). Ej: E320000000006,E460000000009',
+          example: 'E320000000006,E460000000009,E330000000001,E340000000018',
+          required: false,
+        } as any,
       },
       required: ['file', 'companyId'],
     },
@@ -57,6 +69,7 @@ export class CertificationController {
     @CurrentTenant() tenant: RequestTenant,
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body('companyId') companyId: string,
+    @Body('skipEncfs') skipEncfs?: string,
   ) {
     if (!file) {
       return { success: false, message: 'Archivo no encontrado en el request (campo: file)' };
@@ -65,11 +78,21 @@ export class CertificationController {
       return { success: false, message: 'companyId es obligatorio' };
     }
 
+    // Parse and normalize: trim, uppercase, drop empties. Keep raw string
+    // out of the service layer — pass a clean Set for O(1) lookup.
+    const skipSet = new Set<string>(
+      (skipEncfs ?? '')
+        .split(',')
+        .map(s => s.trim().toUpperCase())
+        .filter(Boolean),
+    );
+
     return this.certService.uploadExcel(
       tenant.id,
       companyId,
       file.buffer,
       file.originalname,
+      skipSet,
     );
   }
 

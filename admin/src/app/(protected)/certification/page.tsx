@@ -50,10 +50,13 @@ async function fetchCompanies(): Promise<Company[]> {
   return res.data.data;
 }
 
-async function uploadExcel(params: { companyId: string; file: File }): Promise<UploadResult> {
+async function uploadExcel(params: { companyId: string; file: File; skipEncfs?: string }): Promise<UploadResult> {
   const form = new FormData();
   form.append('file', params.file);
   form.append('companyId', params.companyId);
+  if (params.skipEncfs && params.skipEncfs.trim()) {
+    form.append('skipEncfs', params.skipEncfs.trim());
+  }
 
   // For multipart, let axios/browser compute the Content-Type with the correct
   // boundary by passing `undefined` — passing 'multipart/form-data' without
@@ -119,6 +122,10 @@ export default function CertificationPage() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  // Fix 4q: optional comma-separated eNCFs to skip. Use for DGII
+  // certification when prior submissions consumed sequences that would
+  // now fail with "secuencia ya utilizada", contaminating the upload.
+  const [skipEncfs, setSkipEncfs] = useState<string>('');
 
   const { data: companies = [], isLoading: companiesLoading } = useQuery({
     queryKey: ['my', 'companies'],
@@ -163,12 +170,18 @@ export default function CertificationPage() {
       toast.error('Seleccioná el archivo Excel');
       return;
     }
-    uploadMutation.mutate({ companyId: selectedCompanyId, file: selectedFile });
+    uploadMutation.mutate({
+      companyId: selectedCompanyId,
+      file: selectedFile,
+      skipEncfs: skipEncfs.trim() || undefined,
+    });
   }
 
   function handleReset() {
     setUploadResult(null);
     setSelectedFile(null);
+    // Note: skipEncfs is intentionally NOT reset — it's typically the same
+    // across retries within a certification attempt.
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
@@ -230,6 +243,24 @@ export default function CertificationPage() {
                   Listo: {selectedFile.name} — {(selectedFile.size / 1024).toFixed(1)} KB
                 </p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                eNCFs a omitir <span className="text-muted-foreground font-normal">(opcional)</span>
+              </label>
+              <input
+                type="text"
+                value={skipEncfs}
+                onChange={(e) => setSkipEncfs(e.target.value)}
+                placeholder="E320000000006,E460000000009"
+                className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+              <p className="text-xs text-muted-foreground">
+                Separados por coma. Útil cuando una secuencia ya fue consumida en DGII (errores
+                &quot;Este número de secuencia ya ha sido utilizado&quot;) y un nuevo envío la
+                rechazaría, reiniciando el contador del portal.
+              </p>
             </div>
 
             <div className="flex items-center gap-2 pt-2">

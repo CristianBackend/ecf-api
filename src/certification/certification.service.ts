@@ -49,11 +49,35 @@ export class CertificationService {
     companyId: string,
     fileBuffer: Buffer,
     fileName: string,
+    skipEncfs: Set<string> = new Set(),
   ): Promise<UploadResult> {
-    const rows = this.excelParser.parseBuffer(fileBuffer);
+    const allRows = this.excelParser.parseBuffer(fileBuffer);
+
+    if (allRows.length === 0) {
+      throw new BadRequestException('El Excel no contiene filas de datos');
+    }
+
+    // Fix 4q: filter rows whose eNCF appears in skipEncfs. The skip set is
+    // case-normalized to uppercase in the controller; we compare uppercase
+    // here too. Rows with a missing/empty eNCF are never skipped (no key to
+    // match against). The filter happens before we touch the upload record
+    // so totalRows reflects what we will actually try to process.
+    const rows = skipEncfs.size === 0
+      ? allRows
+      : allRows.filter(row => {
+          const encf = String((row.eNCF ?? row.ENCF) ?? '').trim().toUpperCase();
+          if (!encf) return true; // no eNCF → keep
+          const skip = skipEncfs.has(encf);
+          if (skip) {
+            this.logger.info(`Skipping row with eNCF ${encf} (in skipEncfs list)`);
+          }
+          return !skip;
+        });
 
     if (rows.length === 0) {
-      throw new BadRequestException('El Excel no contiene filas de datos');
+      throw new BadRequestException(
+        `El Excel tiene ${allRows.length} filas pero todas fueron omitidas por skipEncfs`,
+      );
     }
 
     // Create the upload record
