@@ -5,7 +5,7 @@
  * certification Excel set, where mismatches silently dropped data
  * before Fix 4a (e.g. `BienOServicio` vs the real `IndicadorBienoServicio`).
  */
-import { mapItem, mapAdditionalInfo, mapBase } from './base-excel.mapper';
+import { mapItem, mapItems, mapAdditionalInfo, mapBase } from './base-excel.mapper';
 
 describe('base-excel.mapper', () => {
   describe('mapItem', () => {
@@ -443,6 +443,60 @@ describe('base-excel.mapper', () => {
       const mapped = mapItem(item) as any;
       expect(mapped.subDescuentos).toHaveLength(1);
       expect(mapped.subDescuentos[0]).toEqual({ tipo: '$', monto: '50' });
+    });
+  });
+
+  // Fix 4o: mapItems lifts the row-level TipoIngresos column onto the first
+  // item, which the XML builder reads as items[0].incomeType. Prior to this
+  // fix, the row-level value was silently lost and the builder relied on a
+  // default '01' that Fix 4n removed.
+  describe('Fix 4o — mapItems propagates row-level TipoIngresos', () => {
+    it('lifts row.TipoIngresos into items[0].incomeType', () => {
+      const row: any = {
+        TipoIngresos: '01',
+        _items: {
+          1: { NombreItem: 'A', CantidadItem: 1, PrecioUnitarioItem: 100 },
+          2: { NombreItem: 'B', CantidadItem: 2, PrecioUnitarioItem: 50 },
+        },
+      };
+      const items = mapItems(row);
+      expect(items[0].incomeType).toBe(1);
+      // Only the first item receives the lifted value
+      expect((items[1] as any).incomeType).toBeUndefined();
+    });
+
+    it('parses TipoIngresos "06" into integer 6', () => {
+      const row: any = {
+        TipoIngresos: '06',
+        _items: { 1: { NombreItem: 'A', CantidadItem: 1, PrecioUnitarioItem: 100 } },
+      };
+      const items = mapItems(row);
+      expect(items[0].incomeType).toBe(6);
+    });
+
+    it('omits incomeType when the row has no TipoIngresos column', () => {
+      // Matches the E340000000015 case in the DGII set: blank TipoIngresos
+      // → builder will omit the <TipoIngresos> element entirely (Fix 4n).
+      const row: any = {
+        _items: { 1: { NombreItem: 'A', CantidadItem: 1, PrecioUnitarioItem: 100 } },
+      };
+      const items = mapItems(row);
+      expect(items[0].incomeType).toBeUndefined();
+    });
+
+    it('does not overwrite an item-level incomeType if the item already has one', () => {
+      // Some legacy mappers may set incomeType directly on the item. Don't
+      // clobber explicit values.
+      const row: any = {
+        TipoIngresos: '01',
+        _items: {
+          1: { NombreItem: 'A', CantidadItem: 1, PrecioUnitarioItem: 100, TipoIngresos: '03' },
+        },
+      };
+      const items = mapItems(row);
+      // mapItem reads item.TipoIngresos and returns incomeType=3; the lift
+      // step sees incomeType is already defined and leaves it alone.
+      expect(items[0].incomeType).toBe(3);
     });
   });
 });

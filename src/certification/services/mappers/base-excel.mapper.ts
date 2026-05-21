@@ -277,9 +277,29 @@ function mapSubArray(
 }
 
 export function mapItems(row: ExcelRow) {
-  return Object.entries(row._items)
+  const items = Object.entries(row._items)
     .sort(([a], [b]) => Number(a) - Number(b))
     .map(([, item]) => mapItem(item));
+
+  // Fix 4o: TipoIngresos in the certification Excel is a ROW-LEVEL column
+  // (header `TipoIngresos`, no [N] suffix), but the XML builder reads it
+  // from items[0].incomeType. Before Fix 4n the builder defaulted to '01'
+  // when items[0].incomeType was absent, masking that mapItems never wired
+  // the row-level header into the items array. Fix 4n removed that default
+  // (correctly, to fix E34:15 where DGII expects an absent TipoIngresos),
+  // which exposed this pre-existing bug: all E31/E32/E44/E45/E46 invoices
+  // started emitting XML without TipoIngresos, failing XSD validation
+  // because those types still have minOccurs="1" for TipoIngresos.
+  //
+  // Lift the row-level value onto the first item if the item itself didn't
+  // already carry one. This keeps the builder API stable and matches the
+  // Excel layout (single TipoIngresos per row, not per line item).
+  const rowTipoIngresos = row.TipoIngresos !== undefined ? int(row.TipoIngresos) : undefined;
+  if (items.length > 0 && items[0].incomeType === undefined && rowTipoIngresos !== undefined) {
+    items[0] = { ...items[0], incomeType: rowTipoIngresos };
+  }
+
+  return items;
 }
 
 export function mapCurrency(row: ExcelRow) {
