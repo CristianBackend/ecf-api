@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ConfigService } from '@nestjs/config';
+import FormData from 'form-data';
 import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
 import { DGII_ENDPOINTS, DGII_SERVICES, DGII_STATUS, DGII_STATUS_SERVICE_URL, buildDgiiUrl } from '../xml-builder/ecf-types';
@@ -144,10 +145,22 @@ export class DgiiService {
 
     // FC uses fc.dgii.gov.do domain with same service/resource pattern
     const url = buildDgiiUrl(endpoints.fc, DGII_SERVICES.FC_RECEIVE);
-    this.logger.debug(`Submitting RFCE to DGII FC service: ${fileName}`);
+    this.logger.info(`Submitting RFCE to DGII FC: url=${url} file=${fileName} xmlBytes=${Buffer.byteLength(rfceXml, 'utf-8')}`);
 
-    const response = await this.httpPostMultipart(url, rfceXml, token, fileName);
+    // Fix 4k: use the FC-specific multipart builder (form-data package with
+    // explicit Content-Length). The generic httpPostMultipart works for the
+    // e-CF endpoint but the FC endpoint at fc.dgii.gov.do rejects requests
+    // built that way with a generic HTML error page.
+    const response = await this.httpPostMultipartFC(url, rfceXml, token, fileName);
     const responseText = await response.text();
+
+    this.logger.info(
+      `RFCE response: status=${response.status} contentType=${response.headers.get('content-type') ?? 'n/a'} bodyLen=${responseText.length}`,
+    );
+    if (responseText.length < 1000) {
+      // RFCE responses are short JSON/XML; log them verbatim for diagnostics.
+      this.logger.info(`RFCE response body: ${responseText}`);
+    }
 
     // Parse full RFCE response: { codigo, estado, mensajes, encf, secuenciaUtilizada }
     const parsed = this.parseRfceResponse(responseText);
@@ -817,6 +830,83 @@ export class DgiiService {
       this.logger.error(`HTTP POST failed: ${url} - ${error.message}`);
       throw new ServiceUnavailableException(
         `No se pudo conectar con DGII: ${error.message}`,
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Variant of httpPostMultipart specifically for the FC (Resumen de Factura
+   * de Consumo) endpoint at fc.dgii.gov.do.
+   *
+   * Fix 4k: the FC endpoint rejects requests built with the same hand-rolled
+   * multipart that works fine for the e-CF endpoint. It responds with a
+   * generic HTML error page ("Multipart cannot be empty" or just
+   * "<html>...ERROR...</html>") and no diagnostic. The official dgii-ecf
+   * library (which MSeller — a certified PSFE — uses in production) goes
+   * out of its way to:
+   *   1. Use the `form-data` package to build the multipart body
+   *   2. Explicitly set Content-Length to formData.getLengthSync()
+   *   3. Pass the XML as a stream/buffer (not a raw joined string)
+   *
+   * The library's source actually leaves a comment on this line:
+   *   'Content-Length': formData.getLengthSync()
+   *   // Super important calculate dynamically! OHHHHHH I'm dead!
+   *
+   * Reproducing that exact shape here so the FC endpoint accepts our
+   * payload. Kept as a separate method so the e-CF flow keeps using the
+   * existing httpPostMultipart that is already certified-working.
+   */
+  private async httpPostMultipartFC(
+    url: string,
+    xmlContent: string,
+    token: string,
+    fileName = 'rfce.xml',
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DgiiService.HTTP_TIMEOUT_MS);
+    try {
+      const formData = new FormData();
+      // Buffer so form-data knows the exact byte length; required for
+      // getLengthSync() to return a deterministic value.
+      const xmlBuffer = Buffer.from(xmlContent, 'utf-8');
+      formData.append('xml', xmlBuffer, {
+        filename: fileName,
+        contentType: 'text/xml',
+        knownLength: xmlBuffer.length,
+      });
+
+      const contentLength = formData.getLengthSync();
+      const formHeaders = formData.getHeaders();
+
+      const headers: Record<string, string> = {
+        ...formHeaders,
+        'Content-Length': String(contentLength),
+        Accept: 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      // form-data's getBuffer() returns the complete multipart body as a
+      // single Buffer matching the Content-Length we just declared.
+      const body = formData.getBuffer();
+
+      this.logger.debug(
+        `FC POST: url=${url} contentLength=${contentLength} bodyBytes=${body.length}`,
+      );
+
+      return await fetch(url, {
+        method: 'POST',
+        headers,
+        body: body as unknown as BodyInit,
+        signal: controller.signal,
+      });
+    } catch (error: any) {
+      this.logger.error(`HTTP POST (FC) failed: ${url} - ${error.message}`);
+      throw new ServiceUnavailableException(
+        `No se pudo conectar con DGII (FC): ${error.message}`,
       );
     } finally {
       clearTimeout(timeout);
