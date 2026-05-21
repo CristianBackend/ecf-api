@@ -12,6 +12,16 @@ import { EcfProcessingProcessor } from './ecf-processing.processor';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 import { makeTestLogger } from '../common/logger/test-logger';
 
+// Fix 4j: convertECF32ToRFCE is imported directly (not injected). Mock it
+// at the module level so RFCE tests don't need a real signed e-CF input.
+jest.mock('dgii-ecf', () => ({
+  ...jest.requireActual('dgii-ecf'),
+  convertECF32ToRFCE: jest.fn(() => ({
+    xml: '<RFCE><Encabezado><Version>1.0</Version></Encabezado></RFCE>',
+    securityCode: 'ABC123',
+  })),
+}));
+
 type Mock = jest.Mock;
 
 function makeInvoice(overrides: Partial<any> = {}) {
@@ -408,7 +418,8 @@ describe('EcfProcessingProcessor', () => {
         xml: '<ECF/>',
         totals: { subtotalBeforeTax: 249999.99, totalDiscount: 0, totalItbis: 0, totalIsc: 0, totalAmount: 249999.99 },
       });
-      m.xmlBuilder.buildRfceXml.mockReturnValue('<RFCE/>');
+      // Fix 4j: no longer mocking buildRfceXml — convertECF32ToRFCE is
+      // mocked at module level (top of file) so it returns a fixed RFCE.
       m.dgiiService.submitRfce.mockResolvedValue({
         status: 1, trackId: null, message: 'RFCE aceptado',
       });
@@ -417,6 +428,8 @@ describe('EcfProcessingProcessor', () => {
 
       expect(m.dgiiService.submitRfce).toHaveBeenCalledTimes(1);
       expect(m.dgiiService.submitEcf).not.toHaveBeenCalled();
+      // The signing service should sign TWICE: once for the e-CF, once for the RFCE.
+      expect(m.signingService.signXml).toHaveBeenCalledTimes(2);
     });
 
     it('routes E32 with isRfce=false to submitEcf, never submitRfce', async () => {
@@ -435,6 +448,42 @@ describe('EcfProcessingProcessor', () => {
 
       expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
       expect(m.dgiiService.submitRfce).not.toHaveBeenCalled();
+    });
+
+    // Fix 4j: convertECF32ToRFCE called with the SIGNED e-CF, not the unsigned one.
+    it('Fix 4j: convertECF32ToRFCE is called with the signed e-CF (signedXml)', async () => {
+      const { convertECF32ToRFCE } = jest.requireMock('dgii-ecf');
+      convertECF32ToRFCE.mockClear();
+
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice({
+        ecfType: 'E32',
+        encf: 'E320000000099',
+        isRfce: true,
+        totalAmount: { toNumber: () => 40120, toString: () => '40120.00' },
+        metadata: { _originalDto: {} },
+      }));
+      m.signingService.signXml.mockReturnValueOnce({
+        signedXml: '<ECF><Signature>SIGNED-ECF-FORM</Signature></ECF>',
+        securityCode: 'ABC123',
+        signTime: new Date('2026-04-19T12:00:00Z'),
+        signatureValue: 'sigval',
+      }).mockReturnValueOnce({
+        signedXml: '<RFCE><Signature>SIGNED-RFCE</Signature></RFCE>',
+        securityCode: 'ABC123',
+        signTime: new Date('2026-04-19T12:00:00Z'),
+        signatureValue: 'sigval',
+      });
+      m.dgiiService.submitRfce.mockResolvedValue({
+        status: 1, trackId: null, message: 'RFCE aceptado',
+      });
+
+      await m.processor.process(makeJob());
+
+      // convertECF32ToRFCE should receive the FIRST signedXml (the e-CF), not
+      // the original unsigned XML, because we need the SignatureValue inside
+      // it to extract the first 6 chars as CodigoSeguridadeCF.
+      expect(convertECF32ToRFCE).toHaveBeenCalledWith('<ECF><Signature>SIGNED-ECF-FORM</Signature></ECF>');
     });
   });
 });

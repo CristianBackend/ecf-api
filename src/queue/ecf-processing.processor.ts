@@ -1,8 +1,9 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Job } from 'bullmq';
+import { convertECF32ToRFCE } from 'dgii-ecf';
 import { PrismaService } from '../prisma/prisma.service';
-import { XmlBuilderService, EmitterData } from '../xml-builder/xml-builder.service';
+import { XmlBuilderService } from '../xml-builder/xml-builder.service';
 import { SigningService } from '../signing/signing.service';
 import { DgiiService } from '../dgii/dgii.service';
 import { CertificatesService } from '../certificates/certificates.service';
@@ -143,74 +144,32 @@ export class EcfProcessingProcessor extends WorkerHost {
       const isRfce = invoice.isRfce;
 
       if (isRfce) {
-        // RFCE flow: build summary, submit to FC endpoint
+        // RFCE flow: derive summary FROM the signed e-CF and submit to FC endpoint.
+        //
+        // Fix 4j: use dgii-ecf's official `convertECF32ToRFCE` instead of
+        // our hand-built `buildRfceXml`. The official flow is:
+        //   1. Build E32 e-CF and sign it (already done above, `signedXml`)
+        //   2. Convert signed E32 → RFCE (xml2Json → manipulate → json2xml)
+        //   3. Sign the RFCE
+        //   4. POST to /CerteCF/RecepcionFC
+        //
+        // Why the previous Fix 4i RFCE rebuild from InvoiceInput failed:
+        // DGII responded with a generic "ERROR" HTML page (no diagnostic)
+        // for all four E32 < 250K submissions. After comparing my output
+        // against `convertECF32ToRFCE`'s implementation, mine had:
+        //   - extra `xmlns:xsi`/`xmlns:xsd` on the root <RFCE>
+        //   - <CantidadeNCF> tag (not in the library's RFCE shape)
+        //   - hand-reassembled <TablaFormasPago> (vs. library's verbatim copy)
+        //   - generally different element ordering and quoting from json2xml
+        // The library is what MSeller (a certified PSFE) uses successfully;
+        // reusing it removes guesswork and matches what DGII validates.
+        //
+        // Note: convertECF32ToRFCE extracts the CodigoSeguridadeCF from the
+        // first 6 digits of the e-CF's <SignatureValue>, so we don't pass
+        // securityCode in — it's computed from `signedXml` directly.
+        const { xml: rfceXml } = convertECF32ToRFCE(signedXml);
 
-        // We need totals to build RFCE — recalculate from stored DTO
-        const storedMeta = typeof invoice.metadata === 'string'
-          ? JSON.parse(invoice.metadata)
-          : (invoice.metadata as any) || {};
-        const originalDto = storedMeta._originalDto;
-
-        if (!originalDto) {
-          throw new Error(`Invoice ${invoiceId} missing _originalDto in metadata — cannot rebuild RFCE`);
-        }
-
-        // Apply emitterOverride from stored DTO (for CERT/DEV — set de pruebas DGII)
-        // When override is present, NO fallback to company for optional fields:
-        // the Excel set is the absolute truth for cert (DGII matches exact values).
-        const ovr = originalDto?.emitterOverride;
-        const emitterData: EmitterData = ovr
-          ? {
-              rnc: invoice.company.rnc,
-              businessName: ovr.businessName ?? invoice.company.businessName,
-              tradeName: ovr.tradeName,
-              branchCode: ovr.branchCode,
-              address: ovr.address ?? invoice.company.address ?? undefined,
-              municipality: ovr.municipality,
-              province: ovr.province,
-              phones: ovr.phones,
-              email: ovr.email,
-              website: ovr.website,
-              economicActivity: ovr.economicActivity,
-              vendorCode: ovr.vendorCode,
-              internalInvoiceNumber: ovr.internalInvoiceNumber,
-              internalOrderNumber: ovr.internalOrderNumber,
-              salesZone: ovr.salesZone,
-              salesRoute: ovr.salesRoute,
-              additionalInfo: ovr.additionalEmitterInfo,
-            }
-          : {
-              rnc: invoice.company.rnc,
-              businessName: invoice.company.businessName,
-              tradeName: invoice.company.tradeName ?? undefined,
-              branchCode: invoice.company.branchCode ?? undefined,
-              address: invoice.company.address ?? undefined,
-              municipality: invoice.company.municipality ?? undefined,
-              province: invoice.company.province ?? undefined,
-              economicActivity: invoice.company.economicActivity ?? undefined,
-            };
-
-        const { totals } = this.xmlBuilder.buildEcfXml(
-          originalDto,
-          emitterData,
-          invoice.encf!,
-        );
-
-        const rfceXml = this.xmlBuilder.buildRfceXml(
-          originalDto,
-          emitterData,
-          invoice.encf!,
-          totals,
-          securityCode,
-        );
-
-        // Fix 4i: RFCE must be digitally signed before submission. Pre-Fix 4i
-        // the code sent the unsigned RFCE directly, which DGII rejected with
-        // a generic HTML error page (no diagnostic) because the request body
-        // failed signature verification at the receive endpoint, so the four
-        // E32 RFCE submissions (E320000000011..14) ended up in ERROR with
-        // no trackId. The same private key/certificate used to sign the
-        // E-CF is also used here per DGII p.59.
+        // Sign the RFCE with the same certificate used for the e-CF.
         const { signedXml: signedRfceXml } = this.signingService.signXml(
           rfceXml, privateKey, certificate,
         );
