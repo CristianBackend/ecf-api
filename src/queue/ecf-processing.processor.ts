@@ -93,16 +93,20 @@ export class EcfProcessingProcessor extends WorkerHost {
     // emitido" and the rejection is permanent for that submission.
     //
     // When this happens we throw to trigger BullMQ's exponential retry
-    // (5s → 10s → 20s, configured in QueueService.enqueueEcfProcessing).
-    // By the third attempt (~35s in), the referenced e-CF has typically
-    // been processed and accepted, and our retry goes through. The
-    // referenced invoice is identified by referenceEncf within the same
-    // tenant/company.
+    // (5s → 10s → 20s → 40s → 80s with hasReference=true, ~155s budget).
+    // By the time the retry fires, the referenced e-CF has typically
+    // been processed and accepted, and our retry goes through.
     //
-    // Only block on REJECTED references — PENDING/PROCESSING/CONTINGENCY
-    // we keep waiting on, ACCEPTED proceeds. If the reference itself was
-    // rejected, no retry can save us; we fail fast so the user sees the
-    // root cause quickly.
+    // Fix 4p: if the referenced invoice is NOT yet in our DB, we also
+    // throw to retry rather than proceeding. The previous "proceed" branch
+    // assumed the missing reference was an externally-issued e-CF (not in
+    // our system), but for bulk uploads like the certification Excel, ALL
+    // 25 invoices are created within a ~250ms window: E33:1 (row 2) gets
+    // its processor job fired before E32:6 (row 3) is even inserted, the
+    // FK-style lookup fails, and we send the modifier to DGII prematurely.
+    // The retry handles both cases: bulk-upload timing OR truly external
+    // reference. In the truly-external case we exhaust retries and let
+    // DGII surface the real error.
     if (invoice.referenceEncf) {
       const referenced = await this.prisma.invoice.findFirst({
         where: {
@@ -114,12 +118,16 @@ export class EcfProcessingProcessor extends WorkerHost {
       });
 
       if (!referenced) {
-        // Reference not in our system at all — DGII will reject anyway.
-        // Continue normally so the rejection is surfaced with DGII's exact
-        // error message rather than us synthesizing one.
-        this.logger.warn(
-          `${invoice.encf} references ${invoice.referenceEncf} which is not in our DB; proceeding`,
-        );
+        // Reference not yet in our DB. Could be:
+        //   (a) bulk-upload timing — referenced invoice is being inserted
+        //       right now in a parallel request and will appear shortly.
+        //   (b) truly external e-CF that won't appear at all.
+        // We throw to retry: case (a) self-resolves by retry #2 or #3;
+        // case (b) exhausts retries and the job fails. DGII would reject
+        // (b) with code 614 anyway, so the user sees the same final error.
+        const msg = `${invoice.encf} waiting for referenced ${invoice.referenceEncf} (not yet in DB)`;
+        this.logger.info(msg);
+        throw new Error(msg);
       } else if (referenced.status !== InvoiceStatus.ACCEPTED) {
         // Referenced e-CF is in flight or contingent. Throw to retry; by the
         // next attempt it should be ACCEPTED.

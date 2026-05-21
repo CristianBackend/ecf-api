@@ -531,9 +531,15 @@ describe('EcfProcessingProcessor', () => {
       expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
     });
 
-    it('proceeds normally when the referenced invoice is not in our DB at all', async () => {
-      // If the user references an external e-CF we don't have a record for,
-      // we let DGII handle the validation rather than block forever.
+    it('Fix 4p: throws to retry when the referenced invoice is not yet in our DB', async () => {
+      // The previous Fix 4n behavior was "proceed" when the reference was
+      // absent — assuming it was an external e-CF. But for bulk uploads
+      // (certification Excel) all 25 invoices are inserted within a few
+      // hundred milliseconds, so when E33:1's processor job runs, E32:6
+      // may not yet exist in the DB. Proceeding sent the modifier to DGII
+      // before its parent and got rejected with code 614. Fix 4p throws
+      // in this case too; by retry #2 or #3 the referenced invoice has
+      // been inserted by the upload's parallel transactions.
       const m = makeProcessor();
       m.prisma.invoice.findFirst
         .mockResolvedValueOnce(makeInvoice({
@@ -542,12 +548,10 @@ describe('EcfProcessingProcessor', () => {
           referenceEncf: 'E990000000001',
         }))
         .mockResolvedValueOnce(null);
-      m.dgiiService.submitEcf.mockResolvedValue({
-        status: 1, trackId: 'TRACK-OK', message: 'Aceptado',
-      });
 
-      await m.processor.process(makeJob());
-      expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
+      await expect(m.processor.process(makeJob())).rejects.toThrow(/not yet in DB/);
+      expect(m.dgiiService.submitEcf).not.toHaveBeenCalled();
+      expect(m.signingService.signXml).not.toHaveBeenCalled();
     });
 
     it('does NOT check reference for invoices without referenceEncf', async () => {
