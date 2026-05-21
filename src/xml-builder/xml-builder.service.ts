@@ -165,25 +165,191 @@ export class XmlBuilderService {
     totals: InvoiceTotals,
     securityCode: string,
   ): string {
-    const typeCode = 32;
+    // Fix 4i: full RFCE (Resumen Factura Consumo Electrónica) per DGII XSD.
+    //
+    // The pre-Fix 4i builder generated a tiny ad-hoc XML with only ~7 tags,
+    // no <Encabezado> wrapper, no <Emisor>/<Comprador>/<Totales> sections,
+    // and no digital signature placeholder. DGII responded with a generic
+    // "ERROR" HTML page (no diagnostic) because the request body could not
+    // even be parsed against the RFCE schema. As a result E32 < $250K
+    // submissions never made it past the receive endpoint, and the four
+    // E320000000011..14 ended up in our ERROR state.
+    //
+    // Reference: official "Formato Resumen Factura Consumo Electrónica v1.0"
+    // PDF and the corresponding RFCE 32 v1.0 XSD on dgii.gov.do.
+    //
+    // Structure (per XSD):
+    //   <RFCE>
+    //     <Encabezado>
+    //       <Version>1.0</Version>
+    //       <IdDoc>
+    //         <TipoeCF>32</TipoeCF>
+    //         <eNCF>...</eNCF>
+    //         <TipoIngresos>...</TipoIngresos>
+    //         <TipoPago>...</TipoPago>
+    //         <TablaFormasPago>...</TablaFormasPago>   (if TipoPago=1)
+    //       </IdDoc>
+    //       <Emisor>
+    //         <RNCEmisor>
+    //         <RazonSocialEmisor>
+    //         <FechaEmision>
+    //       </Emisor>
+    //       <Comprador>                 (opcional)
+    //         <RNCComprador>
+    //         <IdentificadorExtranjero> (opcional)
+    //         <RazonSocialComprador>    (opcional)
+    //       </Comprador>
+    //       <Totales>
+    //         <MontoGravadoTotal>       (condicional)
+    //         <MontoGravadoI1/I2/I3>    (condicional)
+    //         <MontoExento>             (condicional)
+    //         <TotalITBIS>              (condicional)
+    //         <TotalITBIS1/2/3>         (condicional)
+    //         <MontoImpuestoAdicional>  (condicional)
+    //         <MontoTotal>              (obligatorio)
+    //       </Totales>
+    //       <CantidadeNCF>1</CantidadeNCF>
+    //       <CodigoSeguridadeCF>...</CodigoSeguridadeCF>
+    //     </Encabezado>
+    //     <!-- Firma digital se inserta posteriormente por el signing service -->
+    //   </RFCE>
 
-    // S3 fix: Use input.fechaEmision when available (contingency resends preserve original date)
     const fechaEmision = input.fechaEmision || formatDate(new Date());
+    const raw = input.totalsRawText;
+    // TipoIngresos for RFCE comes from the first item (E32 items carry it).
+    // Default 1 (ingreso por operaciones - bienes) if not specified.
+    const tipoIngresos = input.items[0]?.incomeType ?? 1;
 
-    const xml = [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<RFCE>',
-      `  <RNCEmisor>${escapeXml(emitter.rnc)}</RNCEmisor>`,
-      `  <eNCF>${escapeXml(encf)}</eNCF>`,
-      `  <FechaEmision>${fechaEmision}</FechaEmision>`,
-      `  <MontoTotal>${fmt(totals.totalAmount)}</MontoTotal>`,
-      totals.totalItbis > 0 ? `  <TotalITBIS>${fmt(totals.totalItbis)}</TotalITBIS>` : '',
-      totals.totalIsc > 0 ? `  <MontoImpuestoAdicional>${fmt(totals.totalIsc)}</MontoImpuestoAdicional>` : '',
-      `  <CantidadItems>${input.items.length}</CantidadItems>`,
-      `  <CodigoSeguridad>${escapeXml(securityCode)}</CodigoSeguridad>`,
-      input.buyer?.rnc ? `  <RNCComprador>${escapeXml(input.buyer.rnc)}</RNCComprador>` : '',
-      '</RFCE>',
-    ].filter(Boolean).join('\n');
+    // TipoIngresos as 2-digit string per XSD pattern.
+    const tipoIngresosStr = String(tipoIngresos).padStart(2, '0');
+
+    // --- IdDoc body ---
+    let idDoc = '';
+    idDoc += `      <TipoeCF>32</TipoeCF>\n`;
+    idDoc += `      <eNCF>${escapeXml(encf)}</eNCF>\n`;
+    idDoc += `      <TipoIngresos>${tipoIngresosStr}</TipoIngresos>\n`;
+    idDoc += `      <TipoPago>${input.payment.type ?? 1}</TipoPago>\n`;
+
+    // TablaFormasPago: required when TipoPago = 1 (Contado). We mirror the
+    // logic from buildIdDoc (single-entry fallback unless payment.forms[]
+    // is provided by the certification mapper).
+    if ((input.payment.type ?? 1) === 1) {
+      idDoc += `      <TablaFormasPago>\n`;
+      if (input.payment.forms && input.payment.forms.length > 0) {
+        for (const form of input.payment.forms) {
+          idDoc += `        <FormaDePago>\n`;
+          idDoc += `          <FormaPago>${form.method}</FormaPago>\n`;
+          const monto = form.rawText?.MontoPago ?? fmt(form.amount);
+          idDoc += `          <MontoPago>${monto}</MontoPago>\n`;
+          idDoc += `        </FormaDePago>\n`;
+        }
+      } else {
+        idDoc += `        <FormaDePago>\n`;
+        idDoc += `          <FormaPago>${input.payment.method || 1}</FormaPago>\n`;
+        idDoc += `          <MontoPago>${fmt(totals.totalAmount)}</MontoPago>\n`;
+        idDoc += `        </FormaDePago>\n`;
+      }
+      idDoc += `      </TablaFormasPago>\n`;
+    }
+
+    // --- Emisor body (RFCE only requires the core 3) ---
+    let emisor = '';
+    emisor += `      <RNCEmisor>${escapeXml(emitter.rnc)}</RNCEmisor>\n`;
+    emisor += `      <RazonSocialEmisor>${escapeXml(emitter.businessName)}</RazonSocialEmisor>\n`;
+    emisor += `      <FechaEmision>${fechaEmision}</FechaEmision>\n`;
+
+    // --- Comprador (opcional) ---
+    let comprador = '';
+    if (input.buyer?.rnc || input.buyer?.foreignId || input.buyer?.name) {
+      comprador += `    <Comprador>\n`;
+      if (input.buyer.rnc) {
+        comprador += `      <RNCComprador>${escapeXml(input.buyer.rnc)}</RNCComprador>\n`;
+      } else if (input.buyer.foreignId) {
+        comprador += `      <IdentificadorExtranjero>${escapeXml(input.buyer.foreignId)}</IdentificadorExtranjero>\n`;
+      }
+      if (input.buyer.name) {
+        comprador += `      <RazonSocialComprador>${escapeXml(input.buyer.name)}</RazonSocialComprador>\n`;
+      }
+      comprador += `    </Comprador>\n`;
+    }
+
+    // --- Totales (each tag honors totalsRawText, falls back to computed) ---
+    let totales = '';
+    if (raw?.MontoGravadoTotal !== undefined) {
+      totales += `      <MontoGravadoTotal>${raw.MontoGravadoTotal}</MontoGravadoTotal>\n`;
+    } else {
+      const mgt = r2(totals.taxableAmount18 + totals.taxableAmount16 + totals.taxableAmount0);
+      if (mgt > 0) totales += `      <MontoGravadoTotal>${fmt(mgt)}</MontoGravadoTotal>\n`;
+    }
+    if (raw?.MontoGravadoI1 !== undefined) {
+      totales += `      <MontoGravadoI1>${raw.MontoGravadoI1}</MontoGravadoI1>\n`;
+    } else if (totals.taxableAmount18 > 0) {
+      totales += `      <MontoGravadoI1>${fmt(totals.taxableAmount18)}</MontoGravadoI1>\n`;
+    }
+    if (raw?.MontoGravadoI2 !== undefined) {
+      totales += `      <MontoGravadoI2>${raw.MontoGravadoI2}</MontoGravadoI2>\n`;
+    } else if (totals.taxableAmount16 > 0) {
+      totales += `      <MontoGravadoI2>${fmt(totals.taxableAmount16)}</MontoGravadoI2>\n`;
+    }
+    if (raw?.MontoGravadoI3 !== undefined) {
+      totales += `      <MontoGravadoI3>${raw.MontoGravadoI3}</MontoGravadoI3>\n`;
+    } else if (totals.taxableAmount0 > 0) {
+      totales += `      <MontoGravadoI3>${fmt(totals.taxableAmount0)}</MontoGravadoI3>\n`;
+    }
+    if (raw?.MontoExento !== undefined) {
+      totales += `      <MontoExento>${raw.MontoExento}</MontoExento>\n`;
+    } else if (totals.exemptAmount > 0) {
+      totales += `      <MontoExento>${fmt(totals.exemptAmount)}</MontoExento>\n`;
+    }
+    if (raw?.TotalITBIS !== undefined) {
+      totales += `      <TotalITBIS>${raw.TotalITBIS}</TotalITBIS>\n`;
+    } else if (totals.totalItbis > 0) {
+      totales += `      <TotalITBIS>${fmt(totals.totalItbis)}</TotalITBIS>\n`;
+    }
+    if (raw?.TotalITBIS1 !== undefined) {
+      totales += `      <TotalITBIS1>${raw.TotalITBIS1}</TotalITBIS1>\n`;
+    } else if (totals.itbis18 > 0) {
+      totales += `      <TotalITBIS1>${fmt(totals.itbis18)}</TotalITBIS1>\n`;
+    }
+    if (raw?.TotalITBIS2 !== undefined) {
+      totales += `      <TotalITBIS2>${raw.TotalITBIS2}</TotalITBIS2>\n`;
+    } else if (totals.itbis16 > 0) {
+      totales += `      <TotalITBIS2>${fmt(totals.itbis16)}</TotalITBIS2>\n`;
+    }
+    if (raw?.TotalITBIS3 !== undefined) {
+      totales += `      <TotalITBIS3>${raw.TotalITBIS3}</TotalITBIS3>\n`;
+    }
+    if (raw?.MontoImpuestoAdicional !== undefined) {
+      totales += `      <MontoImpuestoAdicional>${raw.MontoImpuestoAdicional}</MontoImpuestoAdicional>\n`;
+    } else if (totals.totalIsc > 0 || totals.totalOtrosImpuestos > 0) {
+      totales += `      <MontoImpuestoAdicional>${fmt(r2(totals.totalIsc + totals.totalOtrosImpuestos))}</MontoImpuestoAdicional>\n`;
+    }
+    // MontoTotal is obligatorio
+    if (raw?.MontoTotal !== undefined) {
+      totales += `      <MontoTotal>${raw.MontoTotal}</MontoTotal>\n`;
+    } else {
+      totales += `      <MontoTotal>${fmt(totals.totalAmount)}</MontoTotal>\n`;
+    }
+
+    // --- Assemble ---
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+    xml += '<RFCE xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">\n';
+    xml += '  <Encabezado>\n';
+    xml += '    <Version>1.0</Version>\n';
+    xml += '    <IdDoc>\n';
+    xml += idDoc;
+    xml += '    </IdDoc>\n';
+    xml += '    <Emisor>\n';
+    xml += emisor;
+    xml += '    </Emisor>\n';
+    xml += comprador;
+    xml += '    <Totales>\n';
+    xml += totales;
+    xml += '    </Totales>\n';
+    xml += `    <CantidadeNCF>1</CantidadeNCF>\n`;
+    xml += `    <CodigoSeguridadeCF>${escapeXml(securityCode)}</CodigoSeguridadeCF>\n`;
+    xml += '  </Encabezado>\n';
+    xml += '</RFCE>';
 
     return xml;
   }
@@ -1471,84 +1637,93 @@ export class XmlBuilderService {
   // ============================================================
 
   private buildInformacionesAdicionales(info: any, typeCode: number): string {
-    let xml = '    <InformacionesAdicionales>\n';
+    // Fix 4i: build the body first, then ONLY wrap with the parent tag if we
+    // actually produced any children. An empty <InformacionesAdicionales/>
+    // is XSD-invalid (DGII rejected E460000000009/10 with "El formato del XML
+    // no es válido"). The wrapper is optional in the e-CF XSD, so if we have
+    // nothing to put in it we must omit it entirely.
+    let body = '';
 
     // Common fields (present in both E31 and E46 XSDs)
     if (info.shipmentDate) {
-      xml += `      <FechaEmbarque>${info.shipmentDate}</FechaEmbarque>\n`;
+      body += `      <FechaEmbarque>${info.shipmentDate}</FechaEmbarque>\n`;
     }
     if (info.shipmentNumber) {
-      xml += `      <NumeroEmbarque>${escapeXml(info.shipmentNumber)}</NumeroEmbarque>\n`;
+      body += `      <NumeroEmbarque>${escapeXml(info.shipmentNumber)}</NumeroEmbarque>\n`;
     }
     if (info.containerNumber) {
-      xml += `      <NumeroContenedor>${escapeXml(info.containerNumber)}</NumeroContenedor>\n`;
+      body += `      <NumeroContenedor>${escapeXml(info.containerNumber)}</NumeroContenedor>\n`;
     }
     if (info.referenceNumber) {
-      xml += `      <NumeroReferencia>${escapeXml(info.referenceNumber)}</NumeroReferencia>\n`;
+      body += `      <NumeroReferencia>${escapeXml(info.referenceNumber)}</NumeroReferencia>\n`;
     }
 
     // E31 XSD fields (PesoBruto, PesoNeto, Unidades, CantidadBulto, VolumenBulto)
     if (info.grossWeight) {
-      xml += `      <PesoBruto>${fmt(info.grossWeight)}</PesoBruto>\n`;
+      body += `      <PesoBruto>${fmt(info.grossWeight)}</PesoBruto>\n`;
     }
     if (info.netWeight) {
-      xml += `      <PesoNeto>${fmt(info.netWeight)}</PesoNeto>\n`;
+      body += `      <PesoNeto>${fmt(info.netWeight)}</PesoNeto>\n`;
     }
     if (info.grossWeightUnit) {
-      xml += `      <UnidadPesoBruto>${info.grossWeightUnit}</UnidadPesoBruto>\n`;
+      body += `      <UnidadPesoBruto>${info.grossWeightUnit}</UnidadPesoBruto>\n`;
     }
     if (info.netWeightUnit) {
-      xml += `      <UnidadPesoNeto>${info.netWeightUnit}</UnidadPesoNeto>\n`;
+      body += `      <UnidadPesoNeto>${info.netWeightUnit}</UnidadPesoNeto>\n`;
     }
     if (info.packageCount) {
-      xml += `      <CantidadBulto>${fmt(info.packageCount)}</CantidadBulto>\n`;
+      body += `      <CantidadBulto>${fmt(info.packageCount)}</CantidadBulto>\n`;
     }
     if (info.packageUnit) {
-      xml += `      <UnidadBulto>${info.packageUnit}</UnidadBulto>\n`;
+      body += `      <UnidadBulto>${info.packageUnit}</UnidadBulto>\n`;
     }
     if (info.packageVolume) {
-      xml += `      <VolumenBulto>${fmt(info.packageVolume)}</VolumenBulto>\n`;
+      body += `      <VolumenBulto>${fmt(info.packageVolume)}</VolumenBulto>\n`;
     }
     if (info.volumeUnit) {
-      xml += `      <UnidadVolumen>${info.volumeUnit}</UnidadVolumen>\n`;
+      body += `      <UnidadVolumen>${info.volumeUnit}</UnidadVolumen>\n`;
     }
 
     // E46-only export fields (NOT in E31 XSD — guarded by typeCode)
     if (typeCode === 46) {
       if (info.portOfShipment) {
-        xml += `      <NombrePuertoEmbarque>${escapeXml(info.portOfShipment)}</NombrePuertoEmbarque>\n`;
+        body += `      <NombrePuertoEmbarque>${escapeXml(info.portOfShipment)}</NombrePuertoEmbarque>\n`;
       }
       if (info.deliveryConditions) {
-        xml += `      <CondicionesEntrega>${escapeXml(info.deliveryConditions)}</CondicionesEntrega>\n`;
+        body += `      <CondicionesEntrega>${escapeXml(info.deliveryConditions)}</CondicionesEntrega>\n`;
       }
       if (info.totalFob) {
-        xml += `      <TotalFob>${fmt(info.totalFob)}</TotalFob>\n`;
+        body += `      <TotalFob>${fmt(info.totalFob)}</TotalFob>\n`;
       }
       if (info.insurance) {
-        xml += `      <Seguro>${fmt(info.insurance)}</Seguro>\n`;
+        body += `      <Seguro>${fmt(info.insurance)}</Seguro>\n`;
       }
       if (info.freight) {
-        xml += `      <Flete>${fmt(info.freight)}</Flete>\n`;
+        body += `      <Flete>${fmt(info.freight)}</Flete>\n`;
       }
       if (info.otherExpenses) {
-        xml += `      <OtrosGastos>${fmt(info.otherExpenses)}</OtrosGastos>\n`;
+        body += `      <OtrosGastos>${fmt(info.otherExpenses)}</OtrosGastos>\n`;
       }
       if (info.totalCif) {
-        xml += `      <TotalCif>${fmt(info.totalCif)}</TotalCif>\n`;
+        body += `      <TotalCif>${fmt(info.totalCif)}</TotalCif>\n`;
       }
       if (info.customsRegime) {
-        xml += `      <RegimenAduanero>${escapeXml(info.customsRegime)}</RegimenAduanero>\n`;
+        body += `      <RegimenAduanero>${escapeXml(info.customsRegime)}</RegimenAduanero>\n`;
       }
       if (info.departurePort) {
-        xml += `      <NombrePuertoSalida>${escapeXml(info.departurePort)}</NombrePuertoSalida>\n`;
+        body += `      <NombrePuertoSalida>${escapeXml(info.departurePort)}</NombrePuertoSalida>\n`;
       }
       if (info.arrivalPort) {
-        xml += `      <NombrePuertoDesembarque>${escapeXml(info.arrivalPort)}</NombrePuertoDesembarque>\n`;
+        body += `      <NombrePuertoDesembarque>${escapeXml(info.arrivalPort)}</NombrePuertoDesembarque>\n`;
       }
     }
 
-    xml += '    </InformacionesAdicionales>';
-    return xml;
+    // Fix 4i: omit the wrapper entirely if no children were emitted.
+    // Empty <InformacionesAdicionales/> is not allowed by the e-CF XSD.
+    if (body === '') {
+      return '';
+    }
+    return `    <InformacionesAdicionales>\n${body}    </InformacionesAdicionales>`;
   }
 
   private buildTransporte(transport: any, typeCode: number): string {

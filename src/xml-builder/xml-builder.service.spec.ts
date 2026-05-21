@@ -1277,6 +1277,26 @@ describe('XmlBuilderService', () => {
   // ============================================================
 
   describe('E46 Exportaciones', () => {
+    it('Fix 4i: omits empty <InformacionesAdicionales> wrapper entirely', () => {
+      // Pre-Fix 4i bug: when additionalInfo was an empty object (or all its
+      // values were falsy), the builder still emitted
+      //   <InformacionesAdicionales>\n    </InformacionesAdicionales>
+      // which is XSD-invalid. DGII rejected E460000000009/10 with the
+      // generic "El formato del XML no es válido". The wrapper must be
+      // skipped when there's nothing to put in it.
+      const input = makeInput('E46', {
+        buyer: { ...basicBuyer, country: 'US' },
+        additionalInfo: {} as any, // all fields empty
+        transport: {
+          viaTransporte: 1,
+          countryDestination: 'US',
+        },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E460000000001');
+      expect(xml).not.toContain('<InformacionesAdicionales>');
+      expect(xml).not.toContain('</InformacionesAdicionales>');
+    });
+
     it('should emit InformacionesAdicionales with export fields', () => {
       const input = makeInput('E46', {
         buyer: { ...basicBuyer, country: 'United States' },
@@ -1457,8 +1477,149 @@ describe('XmlBuilderService', () => {
   // ============================================================
 
   describe('RFCE (Resumen Factura Consumo < 250K)', () => {
+    const mockEmitterRfce = {
+      rnc: '133158744',
+      businessName: 'TEST EMPRESA SRL',
+      address: 'Calle Test #1',
+    };
+    const baseTotals = {
+      taxableAmount18: 1000,
+      taxableAmount16: 0,
+      taxableAmount0: 0,
+      exemptAmount: 0,
+      itbis18: 180,
+      itbis16: 0,
+      itbis0: 0,
+      totalItbis: 180,
+      totalIsc: 0,
+      totalOtrosImpuestos: 0,
+      totalAmount: 1180,
+      montoNoFacturable: 0,
+      additionalTaxEntries: [],
+      toleranciaGlobal: 1,
+    };
+
     it('should have buildRfceXml method available', () => {
       expect(typeof service.buildRfceXml).toBe('function');
+    });
+
+    it('Fix 4i: emits full RFCE structure with Encabezado/IdDoc/Emisor/Totales', () => {
+      const input = makeInput('E32', {
+        buyer: { rnc: '131880681', name: 'Cliente SRL' },
+      });
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'F5E5DE');
+
+      // Top-level structure
+      expect(xml).toContain('<RFCE');
+      expect(xml).toContain('<Encabezado>');
+      expect(xml).toContain('<Version>1.0</Version>');
+      expect(xml).toContain('<IdDoc>');
+      expect(xml).toContain('<Emisor>');
+      expect(xml).toContain('<Totales>');
+      expect(xml).toContain('<CodigoSeguridadeCF>F5E5DE</CodigoSeguridadeCF>');
+      expect(xml).toContain('<CantidadeNCF>1</CantidadeNCF>');
+      expect(xml).toContain('</RFCE>');
+    });
+
+    it('Fix 4i: emits TipoeCF, eNCF, TipoIngresos, TipoPago in IdDoc', () => {
+      const input = makeInput('E32', {
+        buyer: { rnc: '131880681', name: 'X' },
+      });
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'ABC123');
+      expect(xml).toContain('<TipoeCF>32</TipoeCF>');
+      expect(xml).toContain('<eNCF>E320000000011</eNCF>');
+      expect(xml).toContain('<TipoIngresos>01</TipoIngresos>');
+      expect(xml).toContain('<TipoPago>1</TipoPago>');
+    });
+
+    it('Fix 4i: emits TablaFormasPago for TipoPago=1', () => {
+      const input = makeInput('E32', {
+        buyer: { rnc: '131880681', name: 'X' },
+        payment: { type: 1, method: 1 },
+      });
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'ABC');
+      expect(xml).toContain('<TablaFormasPago>');
+      expect(xml).toContain('<FormaPago>1</FormaPago>');
+      expect(xml).toContain('<MontoPago>1180.00</MontoPago>');
+    });
+
+    it('Fix 4i: respects payment.forms[] for multi-form payments', () => {
+      const input = makeInput('E32', {
+        buyer: { rnc: '131880681', name: 'X' },
+        payment: {
+          type: 1,
+          forms: [
+            { method: 1, amount: 500, rawText: { MontoPago: '500.00' } },
+            { method: 3, amount: 680, rawText: { MontoPago: '680.00' } },
+          ],
+        },
+      } as any);
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'ABC');
+      const formaCount = (xml.match(/<FormaDePago>/g) || []).length;
+      expect(formaCount).toBe(2);
+      expect(xml).toContain('<MontoPago>500.00</MontoPago>');
+      expect(xml).toContain('<MontoPago>680.00</MontoPago>');
+    });
+
+    it('Fix 4i: emits Comprador when buyer.rnc is present', () => {
+      const input = makeInput('E32', {
+        buyer: { rnc: '131880681', name: 'Cliente Final' },
+      });
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'ABC');
+      expect(xml).toContain('<Comprador>');
+      expect(xml).toContain('<RNCComprador>131880681</RNCComprador>');
+      expect(xml).toContain('<RazonSocialComprador>Cliente Final</RazonSocialComprador>');
+    });
+
+    it('Fix 4i: omits Comprador when buyer has neither rnc nor foreignId nor name', () => {
+      const input = makeInput('E32', {
+        buyer: {} as any,
+      });
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'ABC');
+      expect(xml).not.toContain('<Comprador>');
+    });
+
+    it('Fix 4i: honors totalsRawText for verbatim total emission', () => {
+      const input = makeInput('E32', {
+        buyer: { rnc: '131880681', name: 'X' },
+        totalsRawText: {
+          MontoGravadoTotal: '34000.00',
+          MontoGravadoI1: '34000.00',
+          ITBIS1: '18',
+          TotalITBIS: '6120.00',
+          TotalITBIS1: '6120.00',
+          MontoTotal: '40120.00',
+        },
+      } as any);
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'ABC');
+      expect(tagContent(xml, 'MontoGravadoTotal')).toBe('34000.00');
+      expect(tagContent(xml, 'MontoGravadoI1')).toBe('34000.00');
+      expect(tagContent(xml, 'TotalITBIS')).toBe('6120.00');
+      expect(tagContent(xml, 'MontoTotal')).toBe('40120.00');
+    });
+
+    it('Fix 4i: MontoTotal is always emitted (XSD obligatorio)', () => {
+      const input = makeInput('E32', { buyer: { rnc: '131880681', name: 'X' } });
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'ABC');
+      expect(xml).toContain('<MontoTotal>');
+    });
+
+    it('Fix 4i: RFCE XML lacks the old pre-Fix 4i flat structure', () => {
+      // Regression guard: ensure we did NOT keep the previous incomplete shape.
+      const input = makeInput('E32', { buyer: { rnc: '131880681', name: 'X' } });
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'ABC');
+      // Old RFCE had RNCEmisor as a top-level child of <RFCE> (no <Encabezado>).
+      // The new schema-compliant version places it inside <Encabezado>/<Emisor>.
+      const matchTop = xml.match(/<RFCE[^>]*>\s*<RNCEmisor>/);
+      expect(matchTop).toBeNull();
+    });
+
+    it('Fix 4i: emits Emisor with all three required fields', () => {
+      const input = makeInput('E32', { buyer: { rnc: '131880681', name: 'X' } });
+      const xml = service.buildRfceXml(input, mockEmitterRfce, 'E320000000011', baseTotals as any, 'ABC');
+      expect(xml).toContain('<RNCEmisor>133158744</RNCEmisor>');
+      expect(xml).toContain('<RazonSocialEmisor>TEST EMPRESA SRL</RazonSocialEmisor>');
+      expect(xml).toContain('<FechaEmision>');
     });
   });
 

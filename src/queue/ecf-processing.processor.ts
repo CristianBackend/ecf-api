@@ -204,14 +204,26 @@ export class EcfProcessingProcessor extends WorkerHost {
           securityCode,
         );
 
+        // Fix 4i: RFCE must be digitally signed before submission. Pre-Fix 4i
+        // the code sent the unsigned RFCE directly, which DGII rejected with
+        // a generic HTML error page (no diagnostic) because the request body
+        // failed signature verification at the receive endpoint, so the four
+        // E32 RFCE submissions (E320000000011..14) ended up in ERROR with
+        // no trackId. The same private key/certificate used to sign the
+        // E-CF is also used here per DGII p.59.
+        const { signedXml: signedRfceXml } = this.signingService.signXml(
+          rfceXml, privateKey, certificate,
+        );
+        this.logger.info(`RFCE signed: ${invoice.encf}`);
+
         await this.prisma.invoice.update({
           where: { id: invoiceId },
-          data: { xmlRfce: rfceXml },
+          data: { xmlRfce: signedRfceXml },
         });
 
         // Per DGII p.59: RFCE filename = {RNCEmisor}{eNCF}.xml
         submissionResult = await this.dgiiService.submitRfce(
-          rfceXml, token, invoice.company.dgiiEnv,
+          signedRfceXml, token, invoice.company.dgiiEnv,
           `${invoice.company.rnc}${invoice.encf}.xml`,
         );
       } else {
@@ -251,7 +263,18 @@ export class EcfProcessingProcessor extends WorkerHost {
       }
 
       // 8. If IN_PROCESS, schedule status poll
-      if (newStatus === InvoiceStatus.PROCESSING || newStatus === InvoiceStatus.SENT) {
+      //
+      // Fix 4i: RFCE submissions never receive a trackId from DGII (the FC
+      // receive endpoint returns the final status synchronously). Encolar
+      // un polling para RFCE garantiza el ERROR final tras reintentos
+      // ("No trackId disponible y reconciliación DGII falló"). Si el RFCE
+      // quedó en SENT/PROCESSING por un error transitorio del parser, lo
+      // dejamos en ese estado para revisión manual en vez de hacer polling
+      // sin sentido.
+      if (
+        (newStatus === InvoiceStatus.PROCESSING || newStatus === InvoiceStatus.SENT) &&
+        !(isRfce && !submissionResult.trackId)
+      ) {
         await this.queueService.enqueueStatusPoll({
           invoiceId,
           tenantId,
@@ -259,6 +282,8 @@ export class EcfProcessingProcessor extends WorkerHost {
           attempt: 1,
         });
         this.logger.info(`${invoice.encf} scheduled for status polling (${newStatus})`);
+      } else if (isRfce && !submissionResult.trackId) {
+        this.logger.info(`${invoice.encf} is RFCE — skipping status poll (no trackId expected)`);
       }
 
       // 9. Fire webhook for final statuses
