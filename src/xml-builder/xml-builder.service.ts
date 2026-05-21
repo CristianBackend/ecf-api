@@ -1284,9 +1284,52 @@ export class XmlBuilderService {
         xml += `      <DescuentoMonto>${item.rawText?.DescuentoMonto ?? fmt(discount)}</DescuentoMonto>\n`;
       }
 
+      // Fix 4m: 19. TablaSubDescuento (optional, 1..12 entries per XSD).
+      // Order per XSD: DescuentoMonto → TablaSubDescuento → RecargoMonto.
+      // DGII test E460000000010 has 10 items × {tipo:'$', monto:'500.00'} and
+      // previously rejected with "El campo TablaSubDescuento de la sección
+      // DetallesItems de la línea 1 no es válido". The field is required when
+      // DescuentoMonto > 0 in the test set; emitting it unlocks E46:10.
+      if (item.subDescuentos && item.subDescuentos.length > 0 && typeCode !== 47) {
+        xml += `      <TablaSubDescuento>\n`;
+        for (const sub of item.subDescuentos) {
+          xml += `        <SubDescuento>\n`;
+          xml += `          <TipoSubDescuento>${escapeXml(sub.tipo)}</TipoSubDescuento>\n`;
+          if (sub.porcentaje !== undefined) {
+            xml += `          <SubDescuentoPorcentaje>${sub.porcentaje}</SubDescuentoPorcentaje>\n`;
+          }
+          if (sub.monto !== undefined) {
+            xml += `          <MontoSubDescuento>${sub.monto}</MontoSubDescuento>\n`;
+          }
+          xml += `        </SubDescuento>\n`;
+        }
+        xml += `      </TablaSubDescuento>\n`;
+      }
+
       // M3: RecargoMonto (optional, after DescuentoMonto/TablaSubDescuento per XSD)
       if (surcharge > 0) {
         xml += `      <RecargoMonto>${item.rawText?.RecargoMonto ?? fmt(surcharge)}</RecargoMonto>\n`;
+      }
+
+      // Fix 4m: 21. TablaSubRecargo (optional, 1..12 entries per XSD).
+      // Order per XSD: RecargoMonto → TablaSubRecargo → TablaImpuestoAdicional.
+      // DGII test E410000000007 has 5 items × {tipo:'%', porcentaje:'1.00',
+      // monto:varies} and previously rejected with "El campo TablaSubRecargo
+      // de la sección DetallesItems de la línea 1 no es válido".
+      if (item.subRecargos && item.subRecargos.length > 0) {
+        xml += `      <TablaSubRecargo>\n`;
+        for (const sub of item.subRecargos) {
+          xml += `        <SubRecargo>\n`;
+          xml += `          <TipoSubRecargo>${escapeXml(sub.tipo)}</TipoSubRecargo>\n`;
+          if (sub.porcentaje !== undefined) {
+            xml += `          <SubRecargoPorcentaje>${sub.porcentaje}</SubRecargoPorcentaje>\n`;
+          }
+          if (sub.monto !== undefined) {
+            xml += `          <MontoSubRecargo>${sub.monto}</MontoSubRecargo>\n`;
+          }
+          xml += `        </SubRecargo>\n`;
+        }
+        xml += `      </TablaSubRecargo>\n`;
       }
 
       // 22. TablaImpuestoAdicional — per XSD: contains ImpuestoAdicional > TipoImpuesto ONLY

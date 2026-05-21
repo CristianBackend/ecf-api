@@ -3,7 +3,15 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as XLSX from 'xlsx';
 import { ExcelRow, ExcelItem } from './mappers/excel-mapper.interface';
 
+// Fix 4m: support both single-index item fields (`Name[N]`) and double-index
+// sub-item fields (`Name[N][M]`). The double-index pattern is used by the
+// DGII test set for TablaSubDescuento and TablaSubRecargo:
+//   TipoSubDescuento[1][1], SubDescuentoPorcentaje[1][1], MontoSubDescuento[1][1]
+//   TipoSubDescuento[1][2], ... etc.
+// where the first index is the item line number and the second is the
+// sub-discount/recharge entry within that item (1..12 per XSD).
 const ITEM_FIELD_RE = /^(.+)\[(\d+)\]$/;
+const SUB_ITEM_FIELD_RE = /^(.+)\[(\d+)\]\[(\d+)\]$/;
 const EXCLUDED_VALUE = '#e';
 const ECF_SHEET_NAME = 'ECF';
 
@@ -21,6 +29,32 @@ const NON_ITEM_INDEXED_FIELDS = new Set<string>([
   'FormaPago',
   'MontoPago',
 ]);
+
+/**
+ * Fix 4m: map double-indexed `field[N][M]` headers to the per-item sub-array
+ * name where they are accumulated.
+ *
+ * The Excel headers in the DGII certification set use SubDescuento/SubRecargo
+ * fields with a double index, where [N] is the parent item line and [M] is the
+ * 1-based entry within the table for that item. We collect them into
+ * `_items[N].subDescuentos[M-1]` / `_items[N].subRecargos[M-1]` so the mapper
+ * can emit a proper array.
+ *
+ * The Excel uses `MontosubRecargo` (lowercase 's') instead of the XSD's
+ * `MontoSubRecargo` for the amount field — we read what the Excel actually
+ * has and normalize the key when storing.
+ */
+const SUB_ITEM_TARGETS: Record<string, { arrayName: string; key: string }> = {
+  TipoSubDescuento:        { arrayName: 'subDescuentos', key: 'TipoSubDescuento' },
+  SubDescuentoPorcentaje:  { arrayName: 'subDescuentos', key: 'SubDescuentoPorcentaje' },
+  MontoSubDescuento:       { arrayName: 'subDescuentos', key: 'MontoSubDescuento' },
+  TipoSubRecargo:          { arrayName: 'subRecargos',   key: 'TipoSubRecargo' },
+  SubRecargoPorcentaje:    { arrayName: 'subRecargos',   key: 'SubRecargoPorcentaje' },
+  MontoSubRecargo:         { arrayName: 'subRecargos',   key: 'MontoSubRecargo' },
+  // The Excel header is misspelled (`MontosubRecargo` with lowercase s in
+  // 'sub'); accept it and normalize to the XSD-correct `MontoSubRecargo`.
+  MontosubRecargo:         { arrayName: 'subRecargos',   key: 'MontoSubRecargo' },
+};
 
 @Injectable()
 export class ExcelParserService {
@@ -104,6 +138,37 @@ export class ExcelParserService {
       const raw = cells[col];
       // Treat '#e', empty, and missing as "not included"
       if (raw === undefined || raw === null || raw === '' || raw === EXCLUDED_VALUE) continue;
+
+      // Fix 4m: check for double-index `field[N][M]` BEFORE the single-index
+      // regex (which would otherwise greedily match "field[N]" as the prefix
+      // and "[M]" as the index for some headers). When matched, the value
+      // goes into a per-item sub-array (subDescuentos / subRecargos).
+      const subItemMatch = SUB_ITEM_FIELD_RE.exec(header);
+      if (subItemMatch) {
+        const fieldName = subItemMatch[1];
+        const lineNum = parseInt(subItemMatch[2], 10);
+        const subIdx = parseInt(subItemMatch[3], 10);
+
+        const target = SUB_ITEM_TARGETS[fieldName];
+        if (!target) {
+          // Unknown double-index header — fall through to base-string path
+          // to preserve old behavior for any unexpected fields.
+          row[header] = raw;
+          continue;
+        }
+
+        if (!row._items[lineNum]) row._items[lineNum] = {};
+        const item = row._items[lineNum] as Record<string, unknown>;
+        let arr = item[target.arrayName] as Array<Record<string, unknown>> | undefined;
+        if (!arr) {
+          arr = [];
+          item[target.arrayName] = arr;
+        }
+        const entryIdx = subIdx - 1; // Excel is 1-based, our array is 0-based
+        if (!arr[entryIdx]) arr[entryIdx] = {};
+        arr[entryIdx][target.key] = raw;
+        continue;
+      }
 
       const itemMatch = ITEM_FIELD_RE.exec(header);
       if (itemMatch) {

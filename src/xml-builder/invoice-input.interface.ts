@@ -337,6 +337,35 @@ export interface InvoiceItemInput {
     RecargoMonto?: string;
     CantidadReferencia?: string;
   };
+
+  /**
+   * Fix 4m: TablaSubDescuento entries per XSD. Each item can have 1..12.
+   * - tipo: '%' for percentage, '$' for fixed amount (TipoDescuentoRecargoType)
+   * - porcentaje: optional verbatim Excel string (e.g. "10.00")
+   * - monto: optional verbatim Excel string (e.g. "500.00")
+   *
+   * When present, the builder emits a <TablaSubDescuento>…</TablaSubDescuento>
+   * block right after <DescuentoMonto> for the item. The DGII test case
+   * E460000000010 has 10 items × {tipo:'$', monto:'500.00'} which previously
+   * caused: "El campo TablaSubDescuento de la sección DetallesItems de la
+   * línea 1 no es válido" because the field was omitted entirely.
+   */
+  subDescuentos?: Array<{
+    tipo: string;
+    porcentaje?: string;
+    monto?: string;
+  }>;
+
+  /**
+   * Fix 4m: TablaSubRecargo entries per XSD. Same shape as subDescuentos but
+   * for surcharges; emitted after <RecargoMonto>. The DGII test case
+   * E410000000007 has 5 items × {tipo:'%', porcentaje:'1.00', monto:varies}.
+   */
+  subRecargos?: Array<{
+    tipo: string;
+    porcentaje?: string;
+    monto?: string;
+  }>;
 }
 
 /** Payment information */

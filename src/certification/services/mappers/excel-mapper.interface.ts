@@ -10,8 +10,27 @@
  *   a DTO-compatible object that InvoicesService.create() accepts.
  */
 
+/**
+ * Fix 4m: A single entry inside an item's TablaSubDescuento or TablaSubRecargo.
+ * Per DGII XSD each item can have 1..12 of these. All three fields are typed
+ * as optional because XSD declares Porcentaje and Monto as optional and the
+ * Excel may carry partial entries.
+ */
+export interface ExcelSubAdjustment {
+  TipoSubDescuento?: string | number;
+  SubDescuentoPorcentaje?: string | number;
+  MontoSubDescuento?: string | number;
+  TipoSubRecargo?: string | number;
+  SubRecargoPorcentaje?: string | number;
+  MontoSubRecargo?: string | number;
+}
+
 export interface ExcelItem {
-  [field: string]: string | number | undefined;
+  [field: string]:
+    | string
+    | number
+    | undefined
+    | ExcelSubAdjustment[]; // subDescuentos / subRecargos populated by Fix 4m
 }
 
 export interface ExcelRow {

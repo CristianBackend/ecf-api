@@ -175,6 +175,29 @@ export function mapItem(item: ExcelItem) {
   };
   const hasAnyRaw = Object.values(rawText).some(v => v !== undefined);
 
+  // Fix 4m: extract sub-discount and sub-surcharge entries that the parser
+  // accumulated from `Field[N][M]` Excel columns. Each entry has at most
+  // three optional fields per XSD; emit only the keys that have a value.
+  //
+  // The DGII test set populates:
+  //   E460000000010: 10 items × {Tipo='$', Monto=500.00}
+  //   E410000000007:  5 items × {Tipo='%', Porcentaje=1.00, Monto=varies}
+  //
+  // We preserve the verbatim Excel string for the amounts so DGII's exact
+  // string comparison passes (e.g. "500.00" not "500").
+  const subDescuentos = mapSubArray(
+    item.subDescuentos as Array<Record<string, unknown>> | undefined,
+    'TipoSubDescuento',
+    'SubDescuentoPorcentaje',
+    'MontoSubDescuento',
+  );
+  const subRecargos = mapSubArray(
+    item.subRecargos as Array<Record<string, unknown>> | undefined,
+    'TipoSubRecargo',
+    'SubRecargoPorcentaje',
+    'MontoSubRecargo',
+  );
+
   return {
     description:          s(item.NombreItem) ?? 'Item',
     quantity:             n(item.CantidadItem) ?? 1,
@@ -207,9 +230,50 @@ export function mapItem(item: ExcelItem) {
     retencionIndicador:   int(item.IndicadorAgenteRetencionoPercepcion),
     montoItbisRetenido:   n(item.MontoITBISRetenido),
     montoIsrRetenido:     n(item.MontoISRRetenido),
+    // Fix 4m: sub-tables. Only emit when there's at least one entry; the
+    // builder reads these to produce <TablaSubDescuento> / <TablaSubRecargo>.
+    ...(subDescuentos.length > 0 ? { subDescuentos } : {}),
+    ...(subRecargos.length   > 0 ? { subRecargos }   : {}),
     // Verbatim Excel strings for decimal fields (Fix 4f).
     ...(hasAnyRaw ? { rawText } : {}),
   };
+}
+
+/**
+ * Fix 4m: helper for mapItem. Converts a sparse, possibly-undefined sub-array
+ * from the parser into a clean array of structured entries.
+ *
+ * Each entry's Tipo/Porcentaje/Monto come from headers like:
+ *   TipoSubDescuento[N][M], SubDescuentoPorcentaje[N][M], MontoSubDescuento[N][M]
+ * The parser already grouped these into item.subDescuentos / item.subRecargos.
+ * Here we:
+ *   - skip null/undefined slots (sparse arrays from the parser)
+ *   - skip entries with no values at all
+ *   - preserve Monto as a verbatim string (rawNum) so DGII string compare passes
+ *   - return only entries that have at least Tipo (which is required by XSD)
+ */
+function mapSubArray(
+  raw: Array<Record<string, unknown>> | undefined,
+  tipoKey: string,
+  porcentajeKey: string,
+  montoKey: string,
+): Array<{ tipo: string; porcentaje?: string; monto?: string }> {
+  if (!raw) return [];
+  const out: Array<{ tipo: string; porcentaje?: string; monto?: string }> = [];
+  for (const entry of raw) {
+    if (!entry) continue; // sparse slot
+    const tipo = s(entry[tipoKey]);
+    if (!tipo) continue; // XSD requires Tipo
+    const porcentaje = rawNum(entry[porcentajeKey]);
+    const monto = rawNum(entry[montoKey]);
+    if (porcentaje === undefined && monto === undefined && !tipo) continue;
+    out.push({
+      tipo,
+      ...(porcentaje !== undefined ? { porcentaje } : {}),
+      ...(monto !== undefined ? { monto } : {}),
+    });
+  }
+  return out;
 }
 
 export function mapItems(row: ExcelRow) {

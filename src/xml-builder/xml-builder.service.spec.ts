@@ -1838,4 +1838,74 @@ describe('XmlBuilderService', () => {
       expect(xml).toContain('<IndicadorFacturacion>1</IndicadorFacturacion>');
     });
   });
+
+  // Fix 4m — TablaSubDescuento and TablaSubRecargo emission per XSD.
+  describe('Fix 4m — TablaSubDescuento and TablaSubRecargo', () => {
+    it('emits TablaSubDescuento after DescuentoMonto with one $-typed entry', () => {
+      // E460000000010: 10 items × {tipo:'$', monto:'500.00'}; here a minimal
+      // single-item version to verify shape and ordering.
+      const input = makeInput('E46', {
+        items: [basicItem({
+          discount: 500,
+          rawText: { DescuentoMonto: '500.00' },
+          subDescuentos: [{ tipo: '$', monto: '500.00' }],
+        }) as any],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E460000000010');
+      // DescuentoMonto comes first
+      const descMontoIdx = xml.indexOf('<DescuentoMonto>500.00</DescuentoMonto>');
+      const tablaIdx = xml.indexOf('<TablaSubDescuento>');
+      expect(descMontoIdx).toBeGreaterThan(-1);
+      expect(tablaIdx).toBeGreaterThan(descMontoIdx);
+      expect(xml).toContain('<TipoSubDescuento>$</TipoSubDescuento>');
+      expect(xml).toContain('<MontoSubDescuento>500.00</MontoSubDescuento>');
+      // No Porcentaje for '$' entries
+      expect(xml).not.toContain('<SubDescuentoPorcentaje>');
+    });
+
+    it('emits TablaSubRecargo after RecargoMonto with %-typed entry including porcentaje', () => {
+      const input = makeInput('E41', {
+        items: [basicItem({
+          surcharge: 57.75,
+          rawText: { RecargoMonto: '57.75' },
+          subRecargos: [{ tipo: '%', porcentaje: '1.00', monto: '57.75' }],
+        }) as any],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E410000000007');
+      const recIdx = xml.indexOf('<RecargoMonto>57.75</RecargoMonto>');
+      const tablaIdx = xml.indexOf('<TablaSubRecargo>');
+      expect(recIdx).toBeGreaterThan(-1);
+      expect(tablaIdx).toBeGreaterThan(recIdx);
+      expect(xml).toContain('<TipoSubRecargo>%</TipoSubRecargo>');
+      expect(xml).toContain('<SubRecargoPorcentaje>1.00</SubRecargoPorcentaje>');
+      expect(xml).toContain('<MontoSubRecargo>57.75</MontoSubRecargo>');
+    });
+
+    it('omits TablaSubDescuento when item has no subDescuentos', () => {
+      const input = makeInput('E32', {
+        items: [basicItem({ discount: 100, rawText: { DescuentoMonto: '100.00' } })],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E320000000099');
+      expect(xml).toContain('<DescuentoMonto>100.00</DescuentoMonto>');
+      expect(xml).not.toContain('<TablaSubDescuento>');
+    });
+
+    it('emits multiple SubDescuento entries in order', () => {
+      const input = makeInput('E32', {
+        items: [basicItem({
+          discount: 60,
+          subDescuentos: [
+            { tipo: '%', porcentaje: '10.00', monto: '50.00' },
+            { tipo: '$', monto: '10.00' },
+          ],
+        }) as any],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E320000000099');
+      // Both entries present, percentage one first
+      const pctIdx = xml.indexOf('<SubDescuentoPorcentaje>10.00</SubDescuentoPorcentaje>');
+      const dolarIdx = xml.indexOf('<TipoSubDescuento>$</TipoSubDescuento>');
+      expect(pctIdx).toBeGreaterThan(-1);
+      expect(dolarIdx).toBeGreaterThan(pctIdx);
+    });
+  });
 });

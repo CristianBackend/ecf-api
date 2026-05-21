@@ -382,4 +382,67 @@ describe('base-excel.mapper', () => {
       expect(mapped.expirationDate).toBeUndefined();
     });
   });
+
+  // Fix 4m: sub-tables read from per-item sub-arrays the parser populates
+  // from `Field[N][M]` Excel columns. mapItem strips empty entries and
+  // preserves verbatim Excel decimal strings.
+  describe('Fix 4m — subDescuentos and subRecargos mapping', () => {
+    it('forwards subDescuentos with verbatim monto strings', () => {
+      const item: any = {
+        NombreItem: 'X',
+        CantidadItem: 1,
+        PrecioUnitarioItem: 5000,
+        DescuentoMonto: 500,
+        subDescuentos: [
+          { TipoSubDescuento: '$', MontoSubDescuento: 500 },
+        ],
+      };
+      const mapped = mapItem(item) as any;
+      expect(mapped.subDescuentos).toEqual([
+        { tipo: '$', monto: '500' },
+      ]);
+    });
+
+    it('forwards subRecargos with tipo, porcentaje and monto when present', () => {
+      const item: any = {
+        NombreItem: 'X',
+        CantidadItem: 1,
+        PrecioUnitarioItem: 5775,
+        RecargoMonto: 57.75,
+        subRecargos: [
+          { TipoSubRecargo: '%', SubRecargoPorcentaje: 1, MontoSubRecargo: 57.75 },
+        ],
+      };
+      const mapped = mapItem(item) as any;
+      expect(mapped.subRecargos).toEqual([
+        { tipo: '%', porcentaje: '1', monto: '57.75' },
+      ]);
+    });
+
+    it('omits subDescuentos and subRecargos when the parser provided no entries', () => {
+      const item: any = {
+        NombreItem: 'X',
+        CantidadItem: 1,
+        PrecioUnitarioItem: 100,
+      };
+      const mapped = mapItem(item) as any;
+      expect(mapped.subDescuentos).toBeUndefined();
+      expect(mapped.subRecargos).toBeUndefined();
+    });
+
+    it('drops sub-entries that lack the required Tipo field per XSD', () => {
+      const item: any = {
+        NombreItem: 'X',
+        CantidadItem: 1,
+        PrecioUnitarioItem: 100,
+        subDescuentos: [
+          { TipoSubDescuento: '$', MontoSubDescuento: 50 },
+          { MontoSubDescuento: 99 }, // missing Tipo → drop
+        ],
+      };
+      const mapped = mapItem(item) as any;
+      expect(mapped.subDescuentos).toHaveLength(1);
+      expect(mapped.subDescuentos[0]).toEqual({ tipo: '$', monto: '50' });
+    });
+  });
 });

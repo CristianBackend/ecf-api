@@ -168,4 +168,88 @@ describe('ExcelParserService', () => {
     // No item entries should be created from these
     expect(Object.keys(rows[0]._items)).toHaveLength(0);
   });
+
+  // Fix 4m: TablaSubDescuento and TablaSubRecargo Excel headers use a double
+  // index `Field[N][M]`. The parser must group those entries into per-item
+  // sub-arrays so downstream mappers can emit the XSD-required tables.
+  describe('Fix 4m — sub-indexed sub-discount/sub-recharge headers', () => {
+    it('groups TipoSubDescuento[1][1..2] into _items[1].subDescuentos', () => {
+      const buf = buildXlsx([
+        {
+          TipoeCF: 46,
+          eNCF: 'E460000000010',
+          'NombreItem[1]': 'Item A',
+          'DescuentoMonto[1]': 500.00,
+          'TipoSubDescuento[1][1]': '$',
+          'MontoSubDescuento[1][1]': 500.00,
+          'TipoSubDescuento[1][2]': '%',
+          'SubDescuentoPorcentaje[1][2]': 10,
+          'MontoSubDescuento[1][2]': 50.00,
+        },
+      ]);
+
+      const rows = parser.parseBuffer(buf);
+      const item1 = rows[0]._items[1] as any;
+      expect(Array.isArray(item1.subDescuentos)).toBe(true);
+      expect(item1.subDescuentos).toHaveLength(2);
+      expect(item1.subDescuentos[0]).toEqual({
+        TipoSubDescuento: '$',
+        MontoSubDescuento: 500,
+      });
+      expect(item1.subDescuentos[1]).toEqual({
+        TipoSubDescuento: '%',
+        SubDescuentoPorcentaje: 10,
+        MontoSubDescuento: 50,
+      });
+    });
+
+    it('normalizes the Excel typo `MontosubRecargo` to XSD-correct `MontoSubRecargo`', () => {
+      // The official DGII certification Excel ships with the lowercase-s
+      // typo. The parser's SUB_ITEM_TARGETS table accepts both spellings
+      // and stores under the XSD-correct key.
+      const buf = buildXlsx([
+        {
+          TipoeCF: 41,
+          eNCF: 'E410000000007',
+          'NombreItem[1]': 'Item A',
+          'RecargoMonto[1]': 57.75,
+          'TipoSubRecargo[1][1]': '%',
+          'SubRecargoPorcentaje[1][1]': 1.00,
+          'MontosubRecargo[1][1]': 57.75,   // <-- typo
+        },
+      ]);
+
+      const rows = parser.parseBuffer(buf);
+      const item1 = rows[0]._items[1] as any;
+      expect(Array.isArray(item1.subRecargos)).toBe(true);
+      expect(item1.subRecargos).toHaveLength(1);
+      // The XSD-correct key, not the Excel typo:
+      expect(item1.subRecargos[0]).toEqual({
+        TipoSubRecargo: '%',
+        SubRecargoPorcentaje: 1,
+        MontoSubRecargo: 57.75,
+      });
+    });
+
+    it('keeps sub-arrays separate per item line', () => {
+      const buf = buildXlsx([
+        {
+          TipoeCF: 41,
+          eNCF: 'E410000000007',
+          'NombreItem[1]': 'Item A',
+          'TipoSubRecargo[1][1]': '%',
+          'MontoSubRecargo[1][1]': 10,
+          'NombreItem[2]': 'Item B',
+          'TipoSubRecargo[2][1]': '$',
+          'MontoSubRecargo[2][1]': 20,
+        },
+      ]);
+
+      const rows = parser.parseBuffer(buf);
+      expect((rows[0]._items[1] as any).subRecargos).toHaveLength(1);
+      expect((rows[0]._items[2] as any).subRecargos).toHaveLength(1);
+      expect((rows[0]._items[1] as any).subRecargos[0].TipoSubRecargo).toBe('%');
+      expect((rows[0]._items[2] as any).subRecargos[0].TipoSubRecargo).toBe('$');
+    });
+  });
 });
