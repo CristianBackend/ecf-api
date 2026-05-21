@@ -5,7 +5,20 @@ import {
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ConfigService } from '@nestjs/config';
-import FormData from 'form-data';
+// Fix 4l: form-data is a CommonJS module that exports the FormData class
+// directly via `module.exports = FormData` — there is no `.default` export.
+// Using `import FormData from 'form-data'` compiles (allowSyntheticDefaultImports
+// is on) but at runtime resolves to `form_data_1.default` which is undefined,
+// throwing "form_data_1.default is not a constructor" the moment we call
+// `new FormData()`. The `require` form gives us the actual constructor.
+//
+// We could also fix this by enabling esModuleInterop in tsconfig.json, but
+// that's a project-wide change with broader implications. Using require
+// here keeps the fix scoped to this single use case while `import type`
+// preserves type-checking.
+import type FormDataType from 'form-data';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const FormData: typeof FormDataType = require('form-data');
 import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
 import { DGII_ENDPOINTS, DGII_SERVICES, DGII_STATUS, DGII_STATUS_SERVICE_URL, buildDgiiUrl } from '../xml-builder/ecf-types';
