@@ -210,6 +210,7 @@ describe('InvoicesService.create — async pipeline', () => {
       invoiceId: 'invoice-uuid-1',
       tenantId: 'tenant-1',
       companyId: 'company-uuid-1',
+      hasReference: false,
     });
 
     // Response contains the QUEUED status

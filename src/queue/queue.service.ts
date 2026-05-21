@@ -27,20 +27,31 @@ export class QueueService {
   /**
    * Enqueue an invoice for async processing (sign + submit to DGII).
    * Uses invoiceId as jobId for deduplication.
+   *
+   * Fix 4n: invoices with a referenceEncf (E33/E34 notes that modify another
+   * e-CF) get more retry budget — DGII validates the referenced e-CF was
+   * accepted, so if the modifier is enqueued before the referenced e-CF has
+   * finished polling its trackId (up to ~30s), the processor self-throws
+   * to wait for it. With 5 attempts at exponential backoff (5s, 10s, 20s,
+   * 40s, 80s = ~155s total) the modifier rides out most reference latencies.
+   * Regular e-CF keep the original 3-attempt budget.
    */
-  async enqueueEcfProcessing(data: EcfProcessingJobData) {
+  async enqueueEcfProcessing(data: EcfProcessingJobData & { hasReference?: boolean }) {
+    const attempts = data.hasReference ? 5 : 3;
     const job = await this.ecfQueue.add('process', data, {
       jobId: `ecf-${data.invoiceId}`,
-      attempts: 3,
+      attempts,
       backoff: {
         type: 'exponential',
-        delay: 5000, // 5s, 10s, 20s
+        delay: 5000, // 5s, 10s, 20s (, 40s, 80s with 5 attempts)
       },
       removeOnComplete: { age: 86400 },
       removeOnFail: { age: 604800 },
     });
 
-    this.logger.info(`Enqueued ECF processing: ${job.id} for invoice ${data.invoiceId}`);
+    this.logger.info(
+      `Enqueued ECF processing: ${job.id} for invoice ${data.invoiceId} (attempts=${attempts})`,
+    );
     return job;
   }
 

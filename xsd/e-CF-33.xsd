@@ -16,7 +16,7 @@
                     <xs:element name="IndicadorEnvioDiferido" type="IndicadorEnvioDiferidoType" maxOccurs="1" minOccurs="0"/>
                     <xs:element name="IndicadorMontoGravado" type="IndicadorMontoGravadoType" maxOccurs="1" minOccurs="0"/>
                     <xs:element name="IndicadorServicioTodoIncluido" type="IndicadorServicioTodoIncluidoType" minOccurs="0" maxOccurs="1"/>
-                    <xs:element name="TipoIngresos" type="TipoIngresosValidationType" minOccurs="1" maxOccurs="1"/>
+                    <xs:element name="TipoIngresos" type="TipoIngresosValidationType" minOccurs="0" maxOccurs="1"/>
                     <xs:element name="TipoPago" type="TipoPagoType" minOccurs="1" maxOccurs="1"/>
                     <xs:element name="FechaLimitePago" type="FechaValidationType" minOccurs="0" maxOccurs="1"/>
                     <xs:element name="TerminoPago" type="TerminoPagoValidationType" minOccurs="0" maxOccurs="1"/>

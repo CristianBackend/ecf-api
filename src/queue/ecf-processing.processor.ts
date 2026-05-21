@@ -84,6 +84,52 @@ export class EcfProcessingProcessor extends WorkerHost {
       return { status: invoice.status };
     }
 
+    // Fix 4n: ordering check for credit/debit notes.
+    //
+    // E33 (Nota de Débito) and E34 (Nota de Crédito) carry a `referenceEncf`
+    // pointing at the e-CF they modify. DGII validates that the referenced
+    // e-CF was *previously* submitted and accepted; if the modifier arrives
+    // first, DGII rejects with code 614 "El eNCF modificado no ha sido
+    // emitido" and the rejection is permanent for that submission.
+    //
+    // When this happens we throw to trigger BullMQ's exponential retry
+    // (5s → 10s → 20s, configured in QueueService.enqueueEcfProcessing).
+    // By the third attempt (~35s in), the referenced e-CF has typically
+    // been processed and accepted, and our retry goes through. The
+    // referenced invoice is identified by referenceEncf within the same
+    // tenant/company.
+    //
+    // Only block on REJECTED references — PENDING/PROCESSING/CONTINGENCY
+    // we keep waiting on, ACCEPTED proceeds. If the reference itself was
+    // rejected, no retry can save us; we fail fast so the user sees the
+    // root cause quickly.
+    if (invoice.referenceEncf) {
+      const referenced = await this.prisma.invoice.findFirst({
+        where: {
+          tenantId,
+          companyId,
+          encf: invoice.referenceEncf,
+        },
+        select: { id: true, status: true, encf: true },
+      });
+
+      if (!referenced) {
+        // Reference not in our system at all — DGII will reject anyway.
+        // Continue normally so the rejection is surfaced with DGII's exact
+        // error message rather than us synthesizing one.
+        this.logger.warn(
+          `${invoice.encf} references ${invoice.referenceEncf} which is not in our DB; proceeding`,
+        );
+      } else if (referenced.status !== InvoiceStatus.ACCEPTED) {
+        // Referenced e-CF is in flight or contingent. Throw to retry; by the
+        // next attempt it should be ACCEPTED.
+        const msg = `${invoice.encf} waiting for referenced ${invoice.referenceEncf} (status: ${referenced.status})`;
+        this.logger.info(msg);
+        throw new Error(msg);
+      }
+      // status === ACCEPTED → proceed
+    }
+
     try {
       // 2. Get certificate
       const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(

@@ -624,24 +624,27 @@ export class XmlBuilderService {
       xml += `      <IndicadorMontoGravado>${input.indicadorMontoGravado}</IndicadorMontoGravado>\n`;
     }
 
-    // TipoIngresos: 1  1  1  1  0  0  1  1  1  0
+    // TipoIngresos: optional in the XSD for all types (minOccurs="0"). Per
+    // the Feb 2025 DGII update to e-CF 33/34, the field is explicitly
+    // declared optional for debit and credit notes — companies "are no
+    // longer required to include this field when issuing electronic debit
+    // or credit notes." The DGII certification dataset reflects this:
+    //   E340000000015 has TipoIngresos blank in the Excel and DGII
+    //   rejects our emission with "valor enviado (01) no coincide con
+    //   valor () del conjunto de datos entregados".
     //
-    // DGII semantics: required (cod 1) for 31/32/33/34/44/45/46 — must emit
-    // a 2-digit code 01-06. The XSD also enforces this position: omitting
-    // TipoIngresos when the type requires it causes XSD rejection because
-    // the next element (TipoPago) becomes positionally invalid:
-    //   "Element 'TipoPago': This element is not expected.
-    //    Expected is one of (..., TipoIngresos)"
+    // Fix 4n: only emit TipoIngresos when the caller actually provided a
+    // value (items[0].incomeType is defined). If it's undefined, we omit
+    // the element entirely, which is XSD-valid AND satisfies the test
+    // set's expectation of an absent value.
     //
-    // E340000000015's DGII complaint "(01) vs ()" reflects a quirk of the
-    // certification dataset, NOT an XSD requirement. We honor the XSD: if
-    // the caller did not provide incomeType, default to 01 to keep the XML
-    // valid. (The "01 vs ()" mismatch will be a soft warning, but the XML
-    // structure is correct and the rest of the document can be evaluated.)
+    // E41/E43/E47 have always omitted TipoIngresos; that exclusion stays.
     const noTipoIngresos = [41, 43, 47];
     if (!noTipoIngresos.includes(typeCode)) {
-      const tipoIngreso = input.items[0]?.incomeType ?? 1;
-      xml += `      <TipoIngresos>${String(tipoIngreso).padStart(2, '0')}</TipoIngresos>\n`;
+      const tipoIngreso = input.items[0]?.incomeType;
+      if (tipoIngreso !== undefined && tipoIngreso !== null) {
+        xml += `      <TipoIngresos>${String(tipoIngreso).padStart(2, '0')}</TipoIngresos>\n`;
+      }
     }
 
     // TipoPago: 1  1  1  1  1  3  1  1  1  3

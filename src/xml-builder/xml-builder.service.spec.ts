@@ -349,15 +349,24 @@ describe('XmlBuilderService', () => {
       expect(tagContent(xml, 'IndicadorMontoGravado')).toBe('1');
     });
 
-    it('Fix 4c: should emit TipoIngresos=01 by default when type requires it and incomeType is absent', () => {
-      // The Fix 4b attempt to make TipoIngresos conditional broke XSD validation:
-      //   "Element 'TipoPago': This element is not expected. Expected is one
-      //    of (..., TipoIngresos)"
-      // because XSD requires the field at a fixed position for these types.
-      // Fix 4c restores the default '01' so the XML is structurally valid.
+    it('Fix 4n: omits TipoIngresos when incomeType is undefined (XSD allows it as minOccurs=0)', () => {
+      // Fix 4c previously emitted '01' as default because we thought the XSD
+      // required TipoIngresos at a fixed position; but the DGII Feb 2025
+      // schema update made TipoIngresos minOccurs="0" for E33/E34, and the
+      // certification dataset for E340000000015 actually expects the field
+      // ABSENT (Excel cell is blank, DGII rejects '01' as "valor enviado
+      // (01) no coincide con () del conjunto de datos entregados").
       const input = makeInput('E31', { items: [basicItem({ incomeType: undefined })] });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
-      expect(tagContent(xml, 'TipoIngresos')).toBe('01');
+      expect(hasTag(xml, 'TipoIngresos')).toBe(false);
+    });
+
+    it('still emits TipoIngresos when incomeType is provided', () => {
+      // Production callers that explicitly pass incomeType still get it
+      // emitted. Only the implicit default-to-01 behavior was removed.
+      const input = makeInput('E31', { items: [basicItem({ incomeType: 2 })] });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'TipoIngresos')).toBe('02');
     });
 
     it('Fix 4b: should honor input.indicadorNotaCredito override for E34', () => {

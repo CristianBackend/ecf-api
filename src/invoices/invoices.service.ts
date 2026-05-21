@@ -304,6 +304,10 @@ export class InvoicesService {
       invoiceId: invoice.id,
       tenantId,
       companyId: dto.companyId,
+      // Fix 4n: signal that this invoice modifies another e-CF (E33/E34
+      // typically), so the queue grants extra retry budget while waiting
+      // for the referenced e-CF to reach ACCEPTED in DGII.
+      hasReference: !!dto.reference?.encf,
     });
 
     await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_QUEUED, {

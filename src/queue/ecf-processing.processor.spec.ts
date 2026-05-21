@@ -486,4 +486,87 @@ describe('EcfProcessingProcessor', () => {
       expect(convertECF32ToRFCE).toHaveBeenCalledWith('<ECF><Signature>SIGNED-ECF-FORM</Signature></ECF>');
     });
   });
+
+  // ─────────────────────────────────────────────────────────────
+  // Fix 4n — referenceEncf ordering: invoices that modify another e-CF
+  // must wait until the referenced e-CF is ACCEPTED in DGII.
+  // ─────────────────────────────────────────────────────────────
+  describe('Fix 4n — referenceEncf ordering check', () => {
+    it('throws (triggers retry) when referenced invoice is not yet ACCEPTED', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst
+        .mockResolvedValueOnce(makeInvoice({
+          ecfType: 'E33',
+          encf: 'E330000000001',
+          referenceEncf: 'E320000000006',
+        }))
+        // Second findFirst call: looking up the referenced invoice
+        .mockResolvedValueOnce({
+          id: 'ref-id', status: InvoiceStatus.PROCESSING, encf: 'E320000000006',
+        });
+
+      await expect(m.processor.process(makeJob())).rejects.toThrow(/waiting for referenced/);
+      expect(m.dgiiService.submitEcf).not.toHaveBeenCalled();
+      expect(m.signingService.signXml).not.toHaveBeenCalled();
+    });
+
+    it('proceeds normally when referenced invoice is ACCEPTED', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst
+        .mockResolvedValueOnce(makeInvoice({
+          ecfType: 'E33',
+          encf: 'E330000000001',
+          referenceEncf: 'E320000000006',
+        }))
+        .mockResolvedValueOnce({
+          id: 'ref-id', status: InvoiceStatus.ACCEPTED, encf: 'E320000000006',
+        });
+      m.dgiiService.submitEcf.mockResolvedValue({
+        status: 1, trackId: 'TRACK-OK', message: 'Aceptado',
+      });
+
+      await m.processor.process(makeJob());
+
+      expect(m.signingService.signXml).toHaveBeenCalled();
+      expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
+    });
+
+    it('proceeds normally when the referenced invoice is not in our DB at all', async () => {
+      // If the user references an external e-CF we don't have a record for,
+      // we let DGII handle the validation rather than block forever.
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst
+        .mockResolvedValueOnce(makeInvoice({
+          ecfType: 'E33',
+          encf: 'E330000000001',
+          referenceEncf: 'E990000000001',
+        }))
+        .mockResolvedValueOnce(null);
+      m.dgiiService.submitEcf.mockResolvedValue({
+        status: 1, trackId: 'TRACK-OK', message: 'Aceptado',
+      });
+
+      await m.processor.process(makeJob());
+      expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT check reference for invoices without referenceEncf', async () => {
+      // Standard e-CF flow: no extra DB query, no reordering.
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValueOnce(makeInvoice({
+        ecfType: 'E31',
+        encf: 'E310000000001',
+        // No referenceEncf
+      }));
+      m.dgiiService.submitEcf.mockResolvedValue({
+        status: 1, trackId: 'TRACK-OK', message: 'Aceptado',
+      });
+
+      await m.processor.process(makeJob());
+
+      // Only one findFirst (loading the invoice itself), no second lookup
+      expect(m.prisma.invoice.findFirst).toHaveBeenCalledTimes(1);
+      expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
+    });
+  });
 });
