@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as QRCode from 'qrcode';
-import { formatDate, formatDateTimeUrl } from '../helpers/date-formatters';
+import { formatDateDgii, formatDateTimeDgiiUrl } from '../helpers/date-formatters';
 import { formatQrAmount } from '../helpers/currency-formatter';
 
 export type DgiiEnv = 'DEV' | 'CERT' | 'PROD';
@@ -42,9 +42,9 @@ export class QrBuilder {
 
     url +=
       `&ENCF=${input.encf}` +
-      `&FechaEmision=${formatDate(input.fechaEmision)}` +
+      `&FechaEmision=${formatDateDgii(input.fechaEmision)}` +
       `&MontoTotal=${formatQrAmount(input.montoTotal)}` +
-      `&FechaFirma=${formatDateTimeUrl(input.fechaFirma)}` +
+      `&FechaFirma=${formatDateTimeDgiiUrl(input.fechaFirma)}` +
       `&CodigoSeguridad=${input.codigoSeguridad}`;
 
     return url;

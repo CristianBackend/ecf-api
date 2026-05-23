@@ -1,21 +1,29 @@
-export function formatDate(date: Date): string {
-  const d = String(date.getDate()).padStart(2, '0');
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const y = date.getFullYear();
-  return `${d}-${m}-${y}`;
+import { fmtDateTimeGmt4 } from '../../common/utils/date-format.util';
+
+export const DGII_TZ = 'America/Santo_Domingo';
+
+/**
+ * "dd-MM-yyyy" in America/Santo_Domingo.
+ * Matches <FechaElaboracion> in the signed XML — same Intl.DateTimeFormat
+ * path used by signing.service.ts formatDateDgii().
+ */
+export function formatDateDgii(date: Date): string {
+  return fmtDateTimeGmt4(date).split(' ')[0];
 }
 
-export function formatDateTime(date: Date): string {
-  const d = String(date.getDate()).padStart(2, '0');
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const y = date.getFullYear();
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
-  const ss = String(date.getSeconds()).padStart(2, '0');
-  return `${d}-${m}-${y} ${hh}:${mm}:${ss}`;
+/**
+ * "dd-MM-yyyy HH:mm:ss" in America/Santo_Domingo.
+ * Must match <FechaHoraFirma> in the signed XML byte-for-byte so that
+ * the QR's FechaFirma validates against the e-CF on DGII servers.
+ */
+export function formatDateTimeDgii(date: Date): string {
+  return fmtDateTimeGmt4(date);
 }
 
-/** FechaFirma para la URL del QR: espacio codificado como %20. */
-export function formatDateTimeUrl(date: Date): string {
-  return formatDateTime(date).replace(' ', '%20');
+/**
+ * Same as formatDateTimeDgii but with %20 in place of the space,
+ * ready for the ConsultaTimbre QR URL parameter.
+ */
+export function formatDateTimeDgiiUrl(date: Date): string {
+  return fmtDateTimeGmt4(date).replace(' ', '%20');
 }

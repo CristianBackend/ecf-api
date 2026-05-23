@@ -71,6 +71,70 @@ describe('QrBuilder.buildUrl', () => {
   });
 });
 
+describe('QrBuilder — timezone (América/Santo_Domingo = UTC-4)', () => {
+  let qr: QrBuilder;
+  beforeEach(() => { qr = new QrBuilder(); });
+
+  it('uses Dominican timezone (UTC-4) for FechaFirma in QR url', () => {
+    // From production DB: signed_at stored as UTC 2026-05-23T04:44:45Z
+    // → Dominican local time: 2026-05-23 00:44:45
+    const signedAtUtc = new Date('2026-05-23T04:44:45.695Z');
+
+    const url = qr.buildUrl({
+      isRfce: false,
+      dgiiEnv: 'CERT',
+      rncEmisor: '133158744',
+      rncComprador: '131880681',
+      encf: 'E470000000001',
+      fechaEmision: signedAtUtc,
+      montoTotal: 1000.00,
+      fechaFirma: signedAtUtc,
+      codigoSeguridad: 'DF2486',
+    });
+
+    // Must match <FechaHoraFirma> in XML (Dominican local), NOT raw UTC
+    expect(url).toContain('FechaFirma=23-05-2026%2000:44:45');
+    expect(url).not.toContain('FechaFirma=23-05-2026%2004:44:45');
+  });
+
+  it('uses Dominican timezone for FechaEmision in QR url', () => {
+    // createdAt stored as UTC 2026-05-23T04:44:45Z → Dominican: 23-05-2026
+    const createdAtUtc = new Date('2026-05-23T04:44:45Z');
+
+    const url = qr.buildUrl({
+      isRfce: false,
+      dgiiEnv: 'CERT',
+      rncEmisor: '133158744',
+      rncComprador: '131880681',
+      encf: 'E450000000001',
+      fechaEmision: createdAtUtc,
+      montoTotal: 500.00,
+      fechaFirma: createdAtUtc,
+      codigoSeguridad: 'DF2486',
+    });
+
+    expect(url).toContain('FechaEmision=23-05-2026');
+  });
+
+  it('RFCE QR does not include FechaFirma even with UTC date', () => {
+    const signedAtUtc = new Date('2026-05-23T04:44:45Z');
+
+    const url = qr.buildUrl({
+      isRfce: true,
+      dgiiEnv: 'CERT',
+      rncEmisor: '133158744',
+      encf: 'E320000000001',
+      fechaEmision: signedAtUtc,
+      montoTotal: 5000.00,
+      fechaFirma: signedAtUtc,
+      codigoSeguridad: 'DF2486',
+    });
+
+    expect(url).not.toContain('FechaFirma');
+    expect(url).not.toContain('FechaEmision');
+  });
+});
+
 describe('QrBuilder.buildImage', () => {
   it('retorna Buffer PNG válido', async () => {
     const qr = new QrBuilder();

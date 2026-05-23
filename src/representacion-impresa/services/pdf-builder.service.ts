@@ -4,7 +4,7 @@ import type PDFDocumentType from 'pdfkit';
 // ts-jest's ESM interop, which breaks at runtime. Require directly instead.
 const PDFDocument: typeof PDFDocumentType = require('pdfkit');
 import { ECF_TYPE_LABELS, MOD_CODE_LABELS, TYPES_WITHOUT_EXPIRATION } from '../constants';
-import { formatDate, formatDateTime } from '../helpers/date-formatters';
+import { formatDateDgii, formatDateTimeDgii } from '../helpers/date-formatters';
 import { formatCurrency } from '../helpers/currency-formatter';
 
 @Injectable()
@@ -60,7 +60,7 @@ export class PdfBuilder {
       .filter(Boolean)
       .join(', ');
     if (cityLine) doc.text(cityLine);
-    doc.text(`Fecha de Emisión: ${formatDate(invoice.createdAt)}`);
+    doc.text(`Fecha de Emisión: ${formatDateDgii(invoice.createdAt)}`);
 
     // RIGHT — Tipo + e-NCF
     const rightX = 320;
@@ -193,6 +193,6 @@ export class PdfBuilder {
     const textY = qrY + qrSize + 5;
     doc.fontSize(8).font('Helvetica');
     doc.text(`Código de Seguridad: ${invoice.securityCode}`, qrX, textY);
-    doc.text(`Fecha de Firma: ${formatDateTime(invoice.signedAt)}`, qrX, textY + 12);
+    doc.text(`Fecha de Firma: ${formatDateTimeDgii(invoice.signedAt)}`, qrX, textY + 12);
   }
 }
