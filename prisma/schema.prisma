@@ -677,3 +677,48 @@ model CertificationUploadItem {
   @@index([uploadId])
   @@map("certification_upload_items")
 }
+
+// ===========================================
+// CERTIFICATION STEP 3 (ACECF / Aprobaciones Comerciales)
+// ===========================================
+
+enum Step3AcecfStatus {
+  PENDING
+  BUILDING
+  SIGNING
+  SUBMITTING
+  SENT
+  ACCEPTED
+  REJECTED
+  ERROR
+}
+
+model Step3AcecfDocument {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId        String             @map("tenant_id") @db.Uuid
+  companyId       String             @map("company_id") @db.Uuid
+
+  encf            String             @db.VarChar(13)
+  ecfType         String             @map("ecf_type") @db.VarChar(3)
+  emitterRnc      String             @map("emitter_rnc") @db.VarChar(11)
+  receiverRnc     String             @map("receiver_rnc") @db.VarChar(11)
+  totalAmount     Decimal            @map("total_amount") @db.Decimal(18, 2)
+  issueDate       DateTime           @map("issue_date") @db.Date
+  intendedEstado  Int                @map("intended_estado")
+  rejectionReason String?            @map("rejection_reason") @db.Text
+
+  status          Step3AcecfStatus   @default(PENDING)
+  acecfXml        String?            @map("acecf_xml") @db.Text
+  signedXml       String?            @map("signed_xml") @db.Text
+  trackId         String?            @map("track_id") @db.VarChar(100)
+  dgiiResponse    Json?              @map("dgii_response")
+  errorMessage    String?            @map("error_message") @db.Text
+
+  sentAt          DateTime?          @map("sent_at") @db.Timestamptz
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([tenantId, companyId, encf])
+  @@index([tenantId, status])
+  @@map("step3_acecf_documents")
+}
