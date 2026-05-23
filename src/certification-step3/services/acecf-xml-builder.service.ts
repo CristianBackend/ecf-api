@@ -29,7 +29,7 @@ export interface Step3AcecfInput {
   emitterRnc: string;
   receiverRnc: string;
   encf: string;
-  issueDate: Date | string;    // FechaEmision del e-CF original
+  issueDate: string;           // dd-MM-yyyy verbatim — no timezone conversion
   totalAmount: number;
   approved: boolean;           // true → Estado=1, false → Estado=2
   rejectionReason?: string;    // requerido si approved=false
@@ -79,9 +79,7 @@ export class AcecfXmlBuilder {
   buildXml(input: Step3AcecfInput): string {
     const estado = input.approved ? '1' : '2';
 
-    const fechaEmision = typeof input.issueDate === 'string'
-      ? input.issueDate
-      : formatDateDdMmYyyy(input.issueDate);
+    const fechaEmision = input.issueDate;
 
     const lines: string[] = [
       '<?xml version="1.0" encoding="utf-8"?>',

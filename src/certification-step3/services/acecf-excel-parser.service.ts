@@ -17,7 +17,7 @@ export interface ParsedAcecfRow {
   emitterRnc: string;
   receiverRnc: string;
   totalAmount: number;
-  issueDate: Date;
+  issueDate: string;  // dd-MM-yyyy verbatim — no Date/timezone conversion
   intendedEstado: 1 | 2;
   rejectionReason?: string;
   approvalDatetime: string;  // dd-MM-yyyy HH:mm:ss — exact string from Excel
@@ -78,7 +78,16 @@ export class AcecfExcelParser {
           throw new Error(`MontoTotal inválido: ${row['MontoTotal']}`);
         }
 
-        const issueDate = this.parseDate(String(row['FechaEmision'] ?? ''));
+        const issueDateStr = String(row['FechaEmision'] ?? '').trim();
+        if (!issueDateStr) throw new Error('FechaEmision es requerido');
+        if (!/^\d{2}-\d{2}-\d{4}$/.test(issueDateStr)) {
+          throw new Error(`FechaEmision inválido: "${issueDateStr}" (debe ser dd-MM-yyyy)`);
+        }
+        const [dd, mm, yyyy] = issueDateStr.split('-').map(Number);
+        if (mm < 1 || mm > 12 || dd < 1 || dd > 31 || yyyy < 2000 || yyyy > 2099) {
+          throw new Error(`FechaEmision fuera de rango: ${issueDateStr}`);
+        }
+        const issueDate = issueDateStr;
 
         const estadoRaw = parseInt(String(row['Estado'] ?? ''), 10);
         if (![1, 2].includes(estadoRaw)) {

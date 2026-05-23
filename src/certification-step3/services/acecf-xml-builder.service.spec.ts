@@ -79,16 +79,16 @@ describe('AcecfXmlBuilder.buildXml', () => {
     expect(xml).toContain('<MontoTotal>0.00</MontoTotal>');
   });
 
-  it('accepts issueDate as a string (DD-MM-YYYY) passthrough', () => {
+  it('emits issueDate verbatim — no timezone conversion applied', () => {
+    // Previously a Date object was formatted through GMT-4, causing off-by-one
+    // when the DB returned a UTC midnight Date. Now issueDate is always a string.
     const xml = makeBuilder().buildXml(baseInput({ issueDate: '01-04-2020' }));
     expect(xml).toContain('<FechaEmision>01-04-2020</FechaEmision>');
   });
 
-  it('accepts issueDate as a Date object and formats dd-MM-yyyy GMT-4', () => {
-    // Date.UTC(2020, 3, 1) = April 1 2020 00:00 UTC = March 31 / April 1 in GMT-4
-    const d = new Date(Date.UTC(2020, 3, 1, 10, 0, 0)); // 10:00 UTC = 06:00 GMT-4 → April 1
-    const xml = makeBuilder().buildXml(baseInput({ issueDate: d }));
-    expect(xml).toContain('<FechaEmision>01-04-2020</FechaEmision>');
+  it('preserves exact FechaEmision string from input (regression: was shifting by UTC offset)', () => {
+    const xml = makeBuilder().buildXml(baseInput({ issueDate: '02-12-2018' }));
+    expect(xml).toContain('<FechaEmision>02-12-2018</FechaEmision>');
   });
 
   it('emits FechaHoraAprobacionComercial verbatim from input.approvalDatetime', () => {

@@ -50,15 +50,20 @@ describe('AcecfExcelParser', () => {
     expect(rows[0].encf).toBe('E310000000005');
   });
 
-  it('parses FechaEmision as a Date UTC object', () => {
+  it('returns issueDate as verbatim string dd-MM-yyyy (no Date object, no timezone)', () => {
     const parser = makeParser();
     const buf = buildAcecfXlsx([VALID_ROW]);
     const rows = parser.parse(buf);
-    const d = rows[0].issueDate;
-    expect(d).toBeInstanceOf(Date);
-    expect(d.getUTCFullYear()).toBe(2020);
-    expect(d.getUTCMonth()).toBe(3); // April = 3
-    expect(d.getUTCDate()).toBe(1);
+    // Must be a string, not a Date — timezone conversion causes off-by-one
+    expect(typeof rows[0].issueDate).toBe('string');
+    expect(rows[0].issueDate).toBe('01-04-2020');
+  });
+
+  it('issueDate string preserves dd-MM-yyyy exactly (regression: no UTC+offset shift)', () => {
+    const parser = makeParser();
+    const buf = buildAcecfXlsx([{ ...VALID_ROW, FechaEmision: '02-12-2018' }]);
+    const rows = parser.parse(buf);
+    expect(rows[0].issueDate).toBe('02-12-2018');
   });
 
   it('handles Estado=2 with DetalleMotivoRechazo', () => {
@@ -85,10 +90,10 @@ describe('AcecfExcelParser', () => {
     expect(() => parser.parse(buf)).toThrow(/DetalleMotivoRechazo requerido/);
   });
 
-  it('throws BadRequestException for invalid date format', () => {
+  it('throws BadRequestException for invalid date format (ISO format rejected)', () => {
     const parser = makeParser();
     const buf = buildAcecfXlsx([{ ...VALID_ROW, FechaEmision: '2020-04-01' }]);
-    expect(() => parser.parse(buf)).toThrow(/FechaEmision inválida/);
+    expect(() => parser.parse(buf)).toThrow(/FechaEmision inválido/);
   });
 
   it('reads FechaHoraAprobacionComercial verbatim', () => {
