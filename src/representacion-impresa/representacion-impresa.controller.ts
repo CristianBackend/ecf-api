@@ -1,14 +1,17 @@
-import { Controller, Get, Param, Res } from '@nestjs/common';
+import { Controller, Get, Param, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { RepresentacionImpresaService } from './representacion-impresa.service';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
 import { RequireScopes } from '../common/decorators/scopes.decorator';
 import { ApiKeyScope } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ApiKeyGuard } from '../common/guards/api-key.guard';
 
 @ApiTags('representacion-impresa')
 @Controller('representacion-impresa')
+@UseGuards(ApiKeyGuard)
+@ApiBearerAuth('api-key')
 export class RepresentacionImpresaController {
   constructor(
     private readonly service: RepresentacionImpresaService,
