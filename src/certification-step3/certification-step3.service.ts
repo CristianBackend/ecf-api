@@ -59,6 +59,7 @@ export class CertificationStep3Service {
             issueDate: row.issueDate,
             intendedEstado: row.intendedEstado,
             rejectionReason: row.rejectionReason ?? null,
+            approvalDatetime: row.approvalDatetime,
             status: Step3AcecfStatus.PENDING,
           },
           update: {
@@ -66,6 +67,8 @@ export class CertificationStep3Service {
             issueDate: row.issueDate,
             intendedEstado: row.intendedEstado,
             rejectionReason: row.rejectionReason ?? null,
+            approvalDatetime: row.approvalDatetime,
+            status: Step3AcecfStatus.PENDING,
           },
         });
         created.push({ id: doc.id, encf: doc.encf });
@@ -131,6 +134,7 @@ export class CertificationStep3Service {
         totalAmount: Number(doc.totalAmount),
         approved: doc.intendedEstado === 1,
         rejectionReason: doc.rejectionReason ?? undefined,
+        approvalDatetime: doc.approvalDatetime,
       });
 
       // 2. SIGN
@@ -183,6 +187,18 @@ export class CertificationStep3Service {
       }).catch(() => {});
       throw e;
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // Reset (delete all docs for a company — used after DGII resets tests)
+  // -----------------------------------------------------------------------
+
+  async resetDocuments(tenantId: string, companyId: string) {
+    const { count } = await this.prisma.step3AcecfDocument.deleteMany({
+      where: { tenantId, companyId },
+    });
+    this.logger.info(`Step3 reset: deleted ${count} documents for company ${companyId}`);
+    return { reset: true, deleted: count };
   }
 
   // -----------------------------------------------------------------------

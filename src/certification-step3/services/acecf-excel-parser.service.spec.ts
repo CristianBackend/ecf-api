@@ -25,7 +25,7 @@ const VALID_ROW = {
   RNCComprador: '133158744',
   Estado: '1',
   DetalleMotivoRechazo: '',
-  FechaHoraAprobacionComercial: '',
+  FechaHoraAprobacionComercial: '22-05-2026 22:09:37',
 };
 
 describe('AcecfExcelParser', () => {
@@ -89,6 +89,25 @@ describe('AcecfExcelParser', () => {
     const parser = makeParser();
     const buf = buildAcecfXlsx([{ ...VALID_ROW, FechaEmision: '2020-04-01' }]);
     expect(() => parser.parse(buf)).toThrow(/FechaEmision inválida/);
+  });
+
+  it('reads FechaHoraAprobacionComercial verbatim', () => {
+    const parser = makeParser();
+    const buf = buildAcecfXlsx([{ ...VALID_ROW, FechaHoraAprobacionComercial: '22-05-2026 22:09:37' }]);
+    const rows = parser.parse(buf);
+    expect(rows[0].approvalDatetime).toBe('22-05-2026 22:09:37');
+  });
+
+  it('throws when FechaHoraAprobacionComercial is missing', () => {
+    const parser = makeParser();
+    const buf = buildAcecfXlsx([{ ...VALID_ROW, FechaHoraAprobacionComercial: '' }]);
+    expect(() => parser.parse(buf)).toThrow(/FechaHoraAprobacionComercial es requerido/);
+  });
+
+  it('throws when FechaHoraAprobacionComercial has wrong format', () => {
+    const parser = makeParser();
+    const buf = buildAcecfXlsx([{ ...VALID_ROW, FechaHoraAprobacionComercial: '2026-05-22 22:09:37' }]);
+    expect(() => parser.parse(buf)).toThrow(/FechaHoraAprobacionComercial inválido/);
   });
 
   it('parses 11 rows matching the real DGII Paso 3 dataset', () => {

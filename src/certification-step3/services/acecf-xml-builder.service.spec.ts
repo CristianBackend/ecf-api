@@ -19,6 +19,7 @@ function baseInput(overrides: Partial<Step3AcecfInput> = {}): Step3AcecfInput {
     issueDate: '01-04-2020',
     totalAmount: 83320.00,
     approved: true,
+    approvalDatetime: '22-05-2026 22:09:37',
     ...overrides,
   };
 }
@@ -90,9 +91,15 @@ describe('AcecfXmlBuilder.buildXml', () => {
     expect(xml).toContain('<FechaEmision>01-04-2020</FechaEmision>');
   });
 
-  it('emits FechaHoraAprobacionComercial in dd-MM-yyyy HH:mm:ss format', () => {
-    const xml = makeBuilder().buildXml(baseInput());
-    expect(xml).toMatch(/<FechaHoraAprobacionComercial>\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2}<\/FechaHoraAprobacionComercial>/);
+  it('emits FechaHoraAprobacionComercial verbatim from input.approvalDatetime', () => {
+    const xml = makeBuilder().buildXml(baseInput({ approvalDatetime: '22-05-2026 22:09:37' }));
+    expect(xml).toContain('<FechaHoraAprobacionComercial>22-05-2026 22:09:37</FechaHoraAprobacionComercial>');
+  });
+
+  it('uses the exact Excel string for FechaHoraAprobacionComercial (not current time)', () => {
+    const fixed = '01-04-2020 10:09:37';
+    const xml = makeBuilder().buildXml(baseInput({ approvalDatetime: fixed }));
+    expect(xml).toContain(`<FechaHoraAprobacionComercial>${fixed}</FechaHoraAprobacionComercial>`);
   });
 
   it('escapes XML special chars in rejectionReason', () => {

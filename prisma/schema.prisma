@@ -706,6 +706,7 @@ model Step3AcecfDocument {
   issueDate       DateTime           @map("issue_date") @db.Date
   intendedEstado  Int                @map("intended_estado")
   rejectionReason String?            @map("rejection_reason") @db.Text
+  approvalDatetime String            @map("approval_datetime") @db.VarChar(20)
 
   status          Step3AcecfStatus   @default(PENDING)
   acecfXml        String?            @map("acecf_xml") @db.Text

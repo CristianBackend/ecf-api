@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Body,
   Param,
   UploadedFile,
@@ -85,5 +86,15 @@ export class CertificationStep3Controller {
     @Param('companyId') companyId: string,
   ) {
     return this.service.processAll(tenant.id, companyId);
+  }
+
+  @Delete('documents/:companyId/reset')
+  @RequireScopes(ApiKeyScope.INVOICES_WRITE)
+  @ApiOperation({ summary: 'Borrar todos los documentos Step3 (para re-subir el Excel)' })
+  async resetAll(
+    @CurrentTenant() tenant: RequestTenant,
+    @Param('companyId') companyId: string,
+  ) {
+    return this.service.resetDocuments(tenant.id, companyId);
   }
 }

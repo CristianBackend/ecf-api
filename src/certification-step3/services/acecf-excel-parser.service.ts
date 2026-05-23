@@ -20,6 +20,7 @@ export interface ParsedAcecfRow {
   issueDate: Date;
   intendedEstado: 1 | 2;
   rejectionReason?: string;
+  approvalDatetime: string;  // dd-MM-yyyy HH:mm:ss — exact string from Excel
 }
 
 const STEP3_SHEET_NAME = 'ACEECF_Generadas';
@@ -93,7 +94,17 @@ export class AcecfExcelParser {
           }
         }
 
-        result.push({ encf, ecfType, emitterRnc, receiverRnc, totalAmount, issueDate, intendedEstado, rejectionReason });
+        const approvalDatetime = String(row['FechaHoraAprobacionComercial'] ?? '').trim();
+        if (!approvalDatetime) {
+          throw new Error('FechaHoraAprobacionComercial es requerido');
+        }
+        if (!/^\d{2}-\d{2}-\d{4}\s+\d{2}:\d{2}:\d{2}$/.test(approvalDatetime)) {
+          throw new Error(
+            `FechaHoraAprobacionComercial inválido: "${approvalDatetime}" (debe ser dd-MM-yyyy HH:mm:ss)`,
+          );
+        }
+
+        result.push({ encf, ecfType, emitterRnc, receiverRnc, totalAmount, issueDate, intendedEstado, rejectionReason, approvalDatetime });
       } catch (e: any) {
         errors.push(`Fila ${rowNum}: ${e.message}`);
       }

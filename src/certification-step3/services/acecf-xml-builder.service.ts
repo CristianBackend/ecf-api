@@ -29,10 +29,11 @@ export interface Step3AcecfInput {
   emitterRnc: string;
   receiverRnc: string;
   encf: string;
-  issueDate: Date | string;  // FechaEmision del e-CF original
+  issueDate: Date | string;    // FechaEmision del e-CF original
   totalAmount: number;
-  approved: boolean;         // true → Estado=1, false → Estado=2
-  rejectionReason?: string;  // requerido si approved=false
+  approved: boolean;           // true → Estado=1, false → Estado=2
+  rejectionReason?: string;    // requerido si approved=false
+  approvalDatetime: string;    // FechaHoraAprobacionComercial exacta del Excel (dd-MM-yyyy HH:mm:ss)
 }
 
 function escapeXml(str: string): string {
@@ -76,7 +77,6 @@ export class AcecfXmlBuilder {
   ) {}
 
   buildXml(input: Step3AcecfInput): string {
-    const now = new Date();
     const estado = input.approved ? '1' : '2';
 
     const fechaEmision = typeof input.issueDate === 'string'
@@ -102,7 +102,7 @@ export class AcecfXmlBuilder {
     }
 
     lines.push(
-      `    <FechaHoraAprobacionComercial>${formatDateTimeDdMmYyyy(now)}</FechaHoraAprobacionComercial>`,
+      `    <FechaHoraAprobacionComercial>${escapeXml(input.approvalDatetime)}</FechaHoraAprobacionComercial>`,
       '  </DetalleAprobacionComercial>',
       '</ACECF>',
     );
