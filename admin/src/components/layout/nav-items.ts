@@ -13,10 +13,11 @@ export interface NavItem {
 
 /** Items shown to super-admins (scope ADMIN) */
 export const ADMIN_NAV_ITEMS: NavItem[] = [
-  { href: '/dashboard',     label: 'Dashboard',           icon: LayoutDashboard },
-  { href: '/tenants',       label: 'Tenants',              icon: Users },
-  { href: '/invoices',      label: 'Facturas Globales',    icon: FileText },
-  { href: '/certification', label: 'Certificación DGII',   icon: FileCheck2 },
+  { href: '/dashboard',              label: 'Dashboard',             icon: LayoutDashboard },
+  { href: '/tenants',                label: 'Tenants',               icon: Users },
+  { href: '/invoices',               label: 'Facturas Globales',     icon: FileText },
+  { href: '/certification',          label: 'Certificación DGII',    icon: FileCheck2 },
+  { href: '/certification-step3',    label: 'Certificación Paso 3',  icon: FileCheck2 },
   { href: '/webhooks',      label: 'Webhooks Globales',    icon: Webhook },
   { href: '/billing',       label: 'Billing',               icon: CreditCard },
   { href: '/audit-logs',    label: 'Audit Logs',           icon: ClipboardList },
@@ -29,7 +30,8 @@ export const TENANT_NAV_ITEMS: NavItem[] = [
   { href: '/home',          label: 'Inicio',              icon: Home },
   { href: '/companies',     label: 'Mis Empresas',        icon: Building2 },
   { href: '/invoices',      label: 'Mis Facturas',        icon: FileText },
-  { href: '/certification', label: 'Certificación DGII',  icon: FileCheck2 },
+  { href: '/certification',       label: 'Certificación DGII',   icon: FileCheck2 },
+  { href: '/certification-step3', label: 'Certificación Paso 3',  icon: FileCheck2 },
   { href: '/certificates',  label: 'Mis Certificados',    icon: Shield },
   { href: '/api-keys',      label: 'Mis API Keys',        icon: Key },
   { href: '/webhooks',      label: 'Mis Webhooks',        icon: Webhook },
