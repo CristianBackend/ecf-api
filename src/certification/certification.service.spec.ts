@@ -9,6 +9,23 @@ import { CertificationService } from './certification.service';
 import { makeTestLogger } from '../common/logger/test-logger';
 import * as XLSX from 'xlsx';
 
+// archiver uses ESM internally — mock it so require('archiver') doesn't
+// trigger a "Cannot use import statement outside a module" error in Jest.
+// The mock emits a minimal buffer starting with the ZIP magic bytes so
+// tests that inspect the buffer header still pass.
+jest.mock('archiver', () => {
+  const { EventEmitter } = require('events');
+  return jest.fn(() => {
+    const emitter: any = new EventEmitter();
+    emitter.append = jest.fn();
+    emitter.finalize = jest.fn(() => {
+      emitter.emit('data', Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+      emitter.emit('end');
+    });
+    return emitter;
+  });
+});
+
 type Mock = jest.Mock;
 
 function buildXlsx(rows: Record<string, unknown>[]): Buffer {
@@ -313,5 +330,52 @@ describe('CertificationService.getSignedXml', () => {
     });
 
     await expect(service.getSignedXml('t', 'inv-1')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  // ───────────────────────────────────────────────────────────
+  // Fix 4r — buildRfceSourceZip: ZIP de XMLs ECF de E32 que fueron
+  // resumidas como RFCE, para subir al portal DGII como "Facturas
+  // de Consumo < 250 Mil".
+  // ───────────────────────────────────────────────────────────
+  describe('Fix 4r — buildRfceSourceZip', () => {
+    it('returns a ZIP buffer with one XML per E32 with isRfce=true and ACCEPTED', async () => {
+      const { service, prisma } = makeService();
+      prisma.invoice.findMany.mockResolvedValue([
+        { encf: 'E320000000011', xmlSigned: '<?xml version="1.0"?><ECF>11</ECF>' },
+        { encf: 'E320000000012', xmlSigned: '<?xml version="1.0"?><ECF>12</ECF>' },
+        { encf: 'E320000000013', xmlSigned: '<?xml version="1.0"?><ECF>13</ECF>' },
+        { encf: 'E320000000014', xmlSigned: '<?xml version="1.0"?><ECF>14</ECF>' },
+      ]);
+
+      const zip = await service.buildRfceSourceZip('tenant-1', 'company-1');
+      expect(Buffer.isBuffer(zip)).toBe(true);
+      expect(zip.length).toBeGreaterThan(0);
+      // ZIP file signature is "PK\x03\x04" at byte 0
+      expect(zip[0]).toBe(0x50);
+      expect(zip[1]).toBe(0x4b);
+
+      // Verify the query filters properly
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith({
+        where: {
+          tenantId: 'tenant-1',
+          companyId: 'company-1',
+          ecfType: 'E32',
+          isRfce: true,
+          status: 'ACCEPTED',
+          xmlSigned: { not: null },
+        },
+        select: { encf: true, xmlSigned: true },
+        orderBy: { encf: 'asc' },
+      });
+    });
+
+    it('throws NotFoundException when no matching invoices exist', async () => {
+      const { service, prisma } = makeService();
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.buildRfceSourceZip('tenant-1', 'company-1'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
   });
 });

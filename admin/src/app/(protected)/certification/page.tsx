@@ -80,6 +80,38 @@ async function fetchInvoiceStatus(id: string): Promise<InvoiceStatus> {
   return res.data.data;
 }
 
+/**
+ * Fix 4r: Download the ZIP with the ECF (íntegro) XMLs of E32 invoices that
+ * were summarized as RFCE. Used for the second part of DGII Step 2:
+ * "Facturas de Consumo < 250 Mil" requires uploading each E32 invoice's
+ * íntegro XML individually after its RFCE summary was already accepted.
+ *
+ * The backend filters by company + ecfType='E32' + isRfce=true + status='ACCEPTED'.
+ * If no invoices match (no RFCE accepted yet), the backend returns 404 and
+ * the user sees a toast.
+ */
+async function downloadRfceSourceZip(companyId: string): Promise<void> {
+  const res = await apiClient.get(
+    `/certification/rfce-source-xmls/zip`,
+    {
+      params: { companyId },
+      responseType: 'blob',
+      timeout: 60_000,
+    },
+  );
+
+  // Trigger browser download
+  const blob = new Blob([res.data as BlobPart], { type: 'application/zip' });
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'rfce-source-xmls.zip';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -126,6 +158,9 @@ export default function CertificationPage() {
   // certification when prior submissions consumed sequences that would
   // now fail with "secuencia ya utilizada", contaminating the upload.
   const [skipEncfs, setSkipEncfs] = useState<string>('');
+  // Fix 4r: download state for the RFCE-source ZIP
+  const [downloadingRfce, setDownloadingRfce] = useState(false);
+  const [rfceDownloadError, setRfceDownloadError] = useState<string | null>(null);
 
   const { data: companies = [], isLoading: companiesLoading } = useQuery({
     queryKey: ['my', 'companies'],
@@ -285,6 +320,50 @@ export default function CertificationPage() {
                 Esto puede tardar 30-60 segundos. Se va a crear una factura por cada caso del Excel y se encolará para envío a DGII.
               </p>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ---------- Fix 4r: Download RFCE-source XMLs for "Facturas Consumo < 250 Mil" ---------- */}
+      {!uploadResult && selectedCompanyId && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              2. Descargar XMLs para &quot;Facturas de Consumo &lt; 250 Mil&quot;
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Después de que las RFCE estén aceptadas (4/4 Resúmenes), el portal DGII pide subir
+              los XMLs íntegros de cada E32 que fue resumida. Este botón te descarga un ZIP con
+              los XMLs firmados, listos para subir uno por uno al portal en la sección{' '}
+              <span className="font-medium">&quot;Facturas de consumo &lt; 250 Mil&quot;</span>.
+            </p>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                setRfceDownloadError(null);
+                setDownloadingRfce(true);
+                try {
+                  await downloadRfceSourceZip(selectedCompanyId);
+                } catch (err) {
+                  const msg = err instanceof Error ? err.message : 'Error desconocido';
+                  setRfceDownloadError(
+                    msg.includes('404')
+                      ? 'No hay facturas E32 con RFCE aceptado todavía. Primero hacé el upload del Excel y esperá a que pasen.'
+                      : msg,
+                  );
+                } finally {
+                  setDownloadingRfce(false);
+                }
+              }}
+              disabled={downloadingRfce}
+            >
+              {downloadingRfce ? 'Generando ZIP…' : 'Descargar ZIP de XMLs RFCE'}
+            </Button>
+            {rfceDownloadError && (
+              <p className="text-sm text-destructive">{rfceDownloadError}</p>
+            )}
           </CardContent>
         </Card>
       )}

@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Param,
+  Query,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -10,6 +11,7 @@ import {
   Res,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -148,6 +150,42 @@ export class CertificationController {
     res.set({
       'Content-Type': 'application/zip',
       'Content-Disposition': `attachment; filename="certification-${uploadId}.zip"`,
+      'Content-Length': String(zipBuffer.length),
+    });
+    res.send(zipBuffer);
+  }
+
+  // -----------------------------------------------------------------------
+  // Fix 4r: Descargar ZIP con XMLs ECF de las E32 resumidas como RFCE.
+  // -----------------------------------------------------------------------
+  // Usado para la segunda parte del Paso 2 de certificación DGII:
+  // "Facturas de Consumo < 250 Mil" que requiere subir cada XML íntegro
+  // de las E32 cuyo Resumen (RFCE) ya fue aceptado por DGII.
+  //
+  // Selecciona: E32 + isRfce=true + status=ACCEPTED + xmlSigned no nulo.
+  // No modifica datos; pura lectura.
+  // -----------------------------------------------------------------------
+
+  @Get('rfce-source-xmls/zip')
+  @RequireScopes(ApiKeyScope.INVOICES_READ)
+  @ApiOperation({
+    summary:
+      'Descargar ZIP con XMLs íntegros (ECF) de las E32 resumidas como RFCE — para subir al portal DGII "Facturas de Consumo < 250 Mil"',
+  })
+  async downloadRfceSourceZip(
+    @CurrentTenant() tenant: RequestTenant,
+    @Query('companyId') companyId: string,
+    @Res() res: Response,
+  ) {
+    if (!companyId) {
+      throw new BadRequestException('companyId es obligatorio (query param)');
+    }
+
+    const zipBuffer = await this.certService.buildRfceSourceZip(tenant.id, companyId);
+
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="rfce-source-xmls.zip"`,
       'Content-Length': String(zipBuffer.length),
     });
     res.send(zipBuffer);

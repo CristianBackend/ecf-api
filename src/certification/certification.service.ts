@@ -296,4 +296,61 @@ export class CertificationService {
       arc.finalize();
     });
   }
+
+  /**
+   * Fix 4r: Build a ZIP containing the original ECF XMLs (xml_signed) for the
+   * E32 invoices that were summarized as RFCE. These are needed for the second
+   * part of DGII certification Step 2: "Facturas de Consumo < 250 Mil", which
+   * requires uploading the íntegro e-CF XML of each E32 that had its summary
+   * (RFCE) previously accepted by DGII.
+   *
+   * Selection criteria:
+   *   - Same tenant + company
+   *   - ecfType = 'E32'
+   *   - isRfce = true  (only those that were grouped into a RFCE)
+   *   - status = ACCEPTED (only the ones DGII already accepted as summary)
+   *   - xmlSigned IS NOT NULL (we need the signed XML)
+   *
+   * Returns the ZIP buffer ready for HTTP download.
+   *
+   * Does NOT modify any existing data; pure read operation.
+   */
+  async buildRfceSourceZip(tenantId: string, companyId: string): Promise<Buffer> {
+    const invoices = await this.prisma.invoice.findMany({
+      where: {
+        tenantId,
+        companyId,
+        ecfType: 'E32',
+        isRfce: true,
+        status: 'ACCEPTED',
+        xmlSigned: { not: null },
+      },
+      select: { encf: true, xmlSigned: true },
+      orderBy: { encf: 'asc' },
+    });
+
+    if (invoices.length === 0) {
+      throw new NotFoundException(
+        'No hay facturas E32 con RFCE aceptado por DGII para esta empresa',
+      );
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const archiver = require('archiver') as (f: string, o?: object) => import('archiver').Archiver;
+
+    return new Promise<Buffer>((resolve, reject) => {
+      const arc = archiver('zip', { zlib: { level: 6 } });
+      const chunks: Buffer[] = [];
+
+      arc.on('data', (chunk: Buffer) => chunks.push(chunk));
+      arc.on('end', () => resolve(Buffer.concat(chunks)));
+      arc.on('error', reject);
+
+      for (const inv of invoices) {
+        arc.append(inv.xmlSigned as string, { name: `${inv.encf}.xml` });
+      }
+
+      arc.finalize();
+    });
+  }
 }
