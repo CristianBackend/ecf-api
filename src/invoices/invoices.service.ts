@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,6 +18,7 @@ import { RncValidationService } from '../common/services/rnc-validation.service'
 import { QueueService } from '../queue/queue.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { BillingService } from '../billing/billing.service';
+import { UsageService } from '../billing/usage.service';
 import { CreateInvoiceDto, TYPES_REQUIRING_RNC } from './dto/invoice.dto';
 import { InvoiceStatus, EcfType, WebhookEvent } from '@prisma/client';
 import {
@@ -42,6 +44,7 @@ export class InvoicesService {
     private readonly billingService: BillingService,
     @InjectPinoLogger(InvoicesService.name)
     private readonly logger: PinoLogger,
+    @Optional() private readonly usageService?: UsageService,
   ) {}
 
   /**
@@ -309,6 +312,12 @@ export class InvoicesService {
       // for the referenced e-CF to reach ACCEPTED in DGII.
       hasReference: !!dto.reference?.encf,
     });
+
+    this.usageService
+      ?.incrementUsage(dto.companyId)
+      .catch((err) =>
+        this.logger.error({ err }, 'Company usage increment failed — invoice already created'),
+      );
 
     await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_QUEUED, {
       invoiceId: invoice.id,

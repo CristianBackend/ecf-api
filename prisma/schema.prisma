@@ -94,6 +94,22 @@ enum ApiKeyScope {
   WEBHOOKS_MANAGE
   ADMIN
   FULL_ACCESS
+  BILLING_READ
+  BILLING_WRITE
+}
+
+enum CompanyPlanStatus {
+  ACTIVE
+  EXHAUSTED
+  EXPIRED
+  CANCELLED
+}
+
+enum BillingAlertLevel {
+  INFO
+  WARNING
+  CRITICAL
+  BLOCKED
 }
 
 enum TenantPlanStatus {
@@ -159,6 +175,10 @@ model Company {
   invoices      Invoice[]
   dgiiTokens    DgiiToken[]
   receivedDocuments ReceivedDocument[]
+  companyPlan   CompanyPlan?
+  companyUsages CompanyUsage[]
+  topupPurchases TopupPurchase[]
+  billingAlerts BillingAlert[]
 
   @@unique([tenantId, rnc])
   @@index([tenantId])
@@ -603,7 +623,8 @@ model BillingPlan {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  tenantPlans TenantPlan[]
+  tenantPlans  TenantPlan[]
+  companyPlans CompanyPlan[]
 
   @@map("billing_plans")
 }
@@ -643,6 +664,93 @@ model MonthlyUsage {
 
   @@index([tenantId, periodEnd])
   @@map("monthly_usages")
+}
+
+// ===========================================
+// COMPANY-LEVEL BILLING
+// ===========================================
+
+model CompanyPlan {
+  id             String            @id @default(uuid()) @db.Uuid
+  companyId      String            @unique @map("company_id") @db.Uuid
+  planCode       String            @map("plan_code")
+  cycleStartDate DateTime          @map("cycle_start_date") @db.Timestamptz
+  cycleEndDate   DateTime          @map("cycle_end_date") @db.Timestamptz
+  autoRenew      Boolean           @default(true) @map("auto_renew")
+  status         CompanyPlanStatus @default(ACTIVE)
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  company Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  plan    BillingPlan @relation(fields: [planCode], references: [code])
+
+  @@index([cycleEndDate, status])
+  @@map("company_plans")
+}
+
+model CompanyUsage {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  cycleStartDate DateTime @map("cycle_start_date") @db.Timestamptz
+  baseUsed       Int      @default(0) @map("base_used")
+  topupUsed      Int      @default(0) @map("topup_used")
+  totalQuota     Int      @map("total_quota")
+  notified70     Boolean  @default(false) @map("notified_70")
+  notified85     Boolean  @default(false) @map("notified_85")
+  notified95     Boolean  @default(false) @map("notified_95")
+  notified100    Boolean  @default(false) @map("notified_100")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, cycleStartDate])
+  @@map("company_usages")
+}
+
+model TopupPack {
+  id           String   @id @default(uuid()) @db.Uuid
+  code         String   @unique
+  invoiceCount Int      @map("invoice_count")
+  priceUsd     Decimal  @map("price_usd") @db.Decimal(10, 2)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  topupPurchases TopupPurchase[]
+
+  @@map("topup_packs")
+}
+
+model TopupPurchase {
+  id             String   @id @default(uuid()) @db.Uuid
+  companyId      String   @map("company_id") @db.Uuid
+  topupPackCode  String   @map("topup_pack_code")
+  cycleStartDate DateTime @map("cycle_start_date") @db.Timestamptz
+  cycleEndDate   DateTime @map("cycle_end_date") @db.Timestamptz
+  invoicesUsed   Int      @default(0) @map("invoices_used")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  topupPack TopupPack @relation(fields: [topupPackCode], references: [code])
+
+  @@index([companyId, cycleStartDate])
+  @@map("topup_purchases")
+}
+
+model BillingAlert {
+  id         String            @id @default(uuid()) @db.Uuid
+  companyId  String            @map("company_id") @db.Uuid
+  level      BillingAlertLevel
+  message    String            @db.Text
+  percentage Int
+  isRead     Boolean           @default(false) @map("is_read")
+  createdAt  DateTime          @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, isRead])
+  @@map("billing_alerts")
 }
 
 // ===========================================

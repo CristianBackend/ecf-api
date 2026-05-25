@@ -37,6 +37,12 @@ const PLANS = [
   },
 ];
 
+const TOPUP_PACKS = [
+  { code: 'TOPUP_500', invoiceCount: 500, priceUsd: 25 },
+  { code: 'TOPUP_1000', invoiceCount: 1000, priceUsd: 45 },
+  { code: 'TOPUP_5000', invoiceCount: 5000, priceUsd: 200 },
+];
+
 async function main() {
   console.log('Seeding billing plans...');
   for (const plan of PLANS) {
@@ -55,7 +61,20 @@ async function main() {
       `  ✓ ${result.code} — ${result.name} ($${result.monthlyFee}/mes, ${result.includedInvoices} facturas)`,
     );
   }
-  console.log('\nSeed completado: 4 planes creados/actualizados');
+
+  console.log('\nSeeding topup packs...');
+  for (const pack of TOPUP_PACKS) {
+    const result = await prisma.topupPack.upsert({
+      where: { code: pack.code },
+      create: pack,
+      update: { invoiceCount: pack.invoiceCount, priceUsd: pack.priceUsd },
+    });
+    console.log(
+      `  ✓ ${result.code} — ${result.invoiceCount} facturas ($${result.priceUsd})`,
+    );
+  }
+
+  console.log('\nSeed completado: 4 planes + 3 topup packs creados/actualizados');
 }
 
 main()

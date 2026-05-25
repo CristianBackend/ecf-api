@@ -117,3 +117,97 @@ describe('ActivePlanGuard', () => {
     expect(billingService.canEmitInvoice).toHaveBeenCalledWith('tenant-1');
   });
 });
+
+// ── company-level billing (CompanyBillingService wired) ─────────────────────
+
+function makeCtxWithBody(
+  tenantId: string,
+  companyId?: string,
+  scopes: string[] = [],
+): ExecutionContext {
+  return {
+    switchToHttp: () => ({
+      getRequest: () => ({
+        tenant: { id: tenantId, scopes },
+        body: companyId ? { companyId } : {},
+      }),
+    }),
+  } as unknown as ExecutionContext;
+}
+
+function makeCompanyBillingService(
+  result: { allowed: boolean; reason?: string; fallback?: boolean },
+) {
+  return { canEmitInvoice: jest.fn().mockResolvedValue(result) };
+}
+
+describe('ActivePlanGuard — company-level billing', () => {
+  it('allows when company billing returns allowed=true', async () => {
+    const billingService = makeBillingService({ allowed: true });
+    const companyBillingService = makeCompanyBillingService({ allowed: true });
+    const guard = new ActivePlanGuard(billingService as any, companyBillingService as any);
+
+    const result = await guard.canActivate(makeCtxWithBody('tenant-1', 'company-1'));
+    expect(result).toBe(true);
+    expect(companyBillingService.canEmitInvoice).toHaveBeenCalledWith('company-1', 'tenant-1');
+    expect(billingService.canEmitInvoice).not.toHaveBeenCalled();
+  });
+
+  it('throws 402 when company billing returns allowed=false', async () => {
+    const billingService = makeBillingService({ allowed: true });
+    const companyBillingService = makeCompanyBillingService({
+      allowed: false,
+      reason: 'Cuota agotada — adquiere un topup para continuar',
+    });
+    const guard = new ActivePlanGuard(billingService as any, companyBillingService as any);
+
+    await expect(
+      guard.canActivate(makeCtxWithBody('tenant-1', 'company-1')),
+    ).rejects.toThrow(HttpException);
+    expect(billingService.canEmitInvoice).not.toHaveBeenCalled();
+  });
+
+  it('falls back to tenant billing when company has no plan (fallback=true)', async () => {
+    const billingService = makeBillingService({ allowed: true });
+    const companyBillingService = makeCompanyBillingService({ allowed: true, fallback: true });
+    const guard = new ActivePlanGuard(billingService as any, companyBillingService as any);
+
+    const result = await guard.canActivate(makeCtxWithBody('tenant-1', 'company-1'));
+    expect(result).toBe(true);
+    expect(companyBillingService.canEmitInvoice).toHaveBeenCalled();
+    expect(billingService.canEmitInvoice).toHaveBeenCalledWith('tenant-1');
+  });
+
+  it('falls back to tenant path when tenant billing is denied and fallback=true', async () => {
+    const billingService = makeBillingService({ allowed: false, reason: 'Sin plan activo' });
+    const companyBillingService = makeCompanyBillingService({ allowed: true, fallback: true });
+    const guard = new ActivePlanGuard(billingService as any, companyBillingService as any);
+
+    await expect(
+      guard.canActivate(makeCtxWithBody('tenant-1', 'company-1')),
+    ).rejects.toThrow(HttpException);
+  });
+
+  it('uses tenant path when no companyId in body', async () => {
+    const billingService = makeBillingService({ allowed: true });
+    const companyBillingService = makeCompanyBillingService({ allowed: true });
+    const guard = new ActivePlanGuard(billingService as any, companyBillingService as any);
+
+    const result = await guard.canActivate(makeCtxWithBody('tenant-1'));
+    expect(result).toBe(true);
+    expect(companyBillingService.canEmitInvoice).not.toHaveBeenCalled();
+    expect(billingService.canEmitInvoice).toHaveBeenCalledWith('tenant-1');
+  });
+
+  it('ADMIN scope bypasses company billing check', async () => {
+    const billingService = makeBillingService({ allowed: false });
+    const companyBillingService = makeCompanyBillingService({ allowed: false });
+    const guard = new ActivePlanGuard(billingService as any, companyBillingService as any);
+
+    const result = await guard.canActivate(
+      makeCtxWithBody('admin-tenant', 'company-1', [ApiKeyScope.ADMIN]),
+    );
+    expect(result).toBe(true);
+    expect(companyBillingService.canEmitInvoice).not.toHaveBeenCalled();
+  });
+});
