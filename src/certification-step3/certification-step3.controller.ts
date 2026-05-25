@@ -35,7 +35,17 @@ export class CertificationStep3Controller {
   @Post('upload-excel')
   @HttpCode(HttpStatus.CREATED)
   @RequireScopes(ApiKeyScope.INVOICES_WRITE)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+      fileFilter: (_req, file, cb) => {
+        if (!file.originalname.match(/\.xlsx$/i)) {
+          return cb(new Error('Solo archivos .xlsx permitidos'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
   @ApiOperation({ summary: 'Subir Excel ACEECF_Generadas — carga documentos ACECF del Paso 3' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

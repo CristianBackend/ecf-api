@@ -42,7 +42,17 @@ export class CertificationController {
   @Post('upload-excel')
   @HttpCode(HttpStatus.CREATED)
   @RequireScopes(ApiKeyScope.INVOICES_WRITE)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+      fileFilter: (_req, file, cb) => {
+        if (!file.originalname.match(/\.xlsx$/i)) {
+          return cb(new Error('Solo archivos .xlsx permitidos'), false);
+        }
+        cb(null, true);
+      },
+    }),
+  )
   @ApiOperation({ summary: 'Subir Excel de set de pruebas DGII y crear facturas' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({

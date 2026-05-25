@@ -11,6 +11,7 @@ import {
   Patch,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { CreateApiKeyDto, LoginDto, ChangePasswordDto } from './dto/auth.dto';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
@@ -31,6 +32,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Patch('change-password')
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
   @UseGuards(ApiKeyGuard)
   @ApiBearerAuth('api-key')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -77,6 +79,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Login con email y contraseña',

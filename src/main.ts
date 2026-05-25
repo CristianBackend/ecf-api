@@ -18,8 +18,29 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const logger = app.get(Logger);
 
-  // Security
-  app.use(helmet());
+  // Security — explicit CSP; 'unsafe-inline'/'unsafe-eval' on scriptSrc
+  // is required by SwaggerUI (it ships with inline event handlers and eval).
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'https:'],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'", 'data:'],
+        },
+      },
+      crossOriginResourcePolicy: { policy: 'same-origin' },
+      referrerPolicy: { policy: 'no-referrer' },
+      strictTransportSecurity: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true,
+      },
+    }),
+  );
   // CORS_ORIGIN is a comma-separated list of allowed origins (e.g.
   // "https://app.example.com,http://localhost:3000"). The dynamic callback
   // reflects the caller's exact origin back instead of echoing the whole

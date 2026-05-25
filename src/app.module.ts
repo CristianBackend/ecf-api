@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import { BullModule } from '@nestjs/bullmq';
 import { PrismaModule } from './prisma/prisma.module';
@@ -132,7 +133,10 @@ import { LoggerModule } from './common/logger/logger.module';
     AdminModule,
     DownloadsModule,
   ],
-  providers: [HttpExceptionFilter],
+  providers: [
+    HttpExceptionFilter,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
   exports: [HttpExceptionFilter],
 })
 export class AppModule {}
