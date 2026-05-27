@@ -148,7 +148,7 @@ function pickInvoiceForSlot(
     })
     .sort(
       (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
   return matching[0] ?? null;
 }

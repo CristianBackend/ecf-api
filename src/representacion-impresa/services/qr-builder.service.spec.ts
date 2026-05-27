@@ -29,10 +29,10 @@ describe('QrBuilder.buildUrl', () => {
       expect(url).toContain('https://ecf.dgii.gov.do/ecf/ConsultaTimbre?');
     });
 
-    it('FechaFirma contiene espacio literal (no %20)', () => {
+    it('FechaFirma codifica el espacio como %20 (DGII spec v1.6 pág. 58)', () => {
       const url = qr.buildUrl({ isRfce: false, dgiiEnv: 'CERT', rncEmisor: '133', encf: 'E31001', fechaEmision: FIXED_DATE, montoTotal: 100, fechaFirma: FIXED_FIRMA, codigoSeguridad: 'x' });
-      expect(url).not.toContain('%20');
-      expect(url).toMatch(/FechaFirma=\d{2}-\d{2}-\d{4} /); // espacio literal requerido por DGII
+      expect(url).toContain('%20');
+      expect(url).not.toMatch(/FechaFirma=\d{2}-\d{2}-\d{4} /); // no espacio literal
     });
 
     it('omite RncComprador cuando no se proporciona', () => {
@@ -93,8 +93,8 @@ describe('QrBuilder — timezone (América/Santo_Domingo = UTC-4)', () => {
     });
 
     // Must match <FechaHoraFirma> in XML (Dominican local), NOT raw UTC
-    expect(url).toContain('FechaFirma=23-05-2026 00:44:45');
-    expect(url).not.toContain('FechaFirma=23-05-2026 04:44:45');
+    expect(url).toContain('FechaFirma=23-05-2026%2000:44:45');
+    expect(url).not.toContain('FechaFirma=23-05-2026%2004:44:45');
   });
 
   it('uses Dominican timezone for FechaEmision in QR url', () => {

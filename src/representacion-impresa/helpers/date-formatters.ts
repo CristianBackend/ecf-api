@@ -21,9 +21,10 @@ export function formatDateTimeDgii(date: Date): string {
 }
 
 /**
- * Same as formatDateTimeDgii with a literal space between date and time.
- * DGII's ConsultaTimbre does a literal string match — %20 is not decoded.
+ * Same as formatDateTimeDgii but with the space percent-encoded as %20.
+ * DGII spec v1.6 page 58 lists space as a reserved character that must be
+ * encoded, and page 37 shows the official example with %20 in FechaFirma.
  */
 export function formatDateTimeDgiiUrl(date: Date): string {
-  return fmtDateTimeGmt4(date);
+  return fmtDateTimeGmt4(date).replace(' ', '%20');
 }
