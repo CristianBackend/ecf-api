@@ -21,9 +21,9 @@ export function formatDateTimeDgii(date: Date): string {
 }
 
 /**
- * Same as formatDateTimeDgii but with %20 in place of the space,
- * ready for the ConsultaTimbre QR URL parameter.
+ * Same as formatDateTimeDgii with a literal space between date and time.
+ * DGII's ConsultaTimbre does a literal string match — %20 is not decoded.
  */
 export function formatDateTimeDgiiUrl(date: Date): string {
-  return fmtDateTimeGmt4(date).replace(' ', '%20');
+  return fmtDateTimeGmt4(date);
 }
