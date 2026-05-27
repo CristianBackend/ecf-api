@@ -10,6 +10,7 @@ import { PurchaseTopupDto } from './dto/purchase-topup.dto';
 import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('billing')
+@Controller()
 @UseGuards(ApiKeyGuard)
 @ApiBearerAuth('api-key')
 export class CompanyBillingController {
