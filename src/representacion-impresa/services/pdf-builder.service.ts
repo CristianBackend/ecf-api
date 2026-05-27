@@ -11,6 +11,7 @@ import {
 } from '../constants';
 import { formatDateDgii, formatDateTimeDgii } from '../helpers/date-formatters';
 import { formatCurrency } from '../helpers/currency-formatter';
+import { extractXmlField, parseDgiiDate } from '../helpers/xml-extractors';
 
 // ─── Layout constants ────────────────────────────────────────────────────────
 const M = 40;          // page margin (pt)
@@ -121,7 +122,9 @@ export class PdfBuilder {
     doc.text(`RNC: ${company.rnc}`, M, lY, { width: HDR_L_W });
     lY = doc.y;
 
-    doc.text(`Fecha de Emisión: ${formatDateDgii(invoice.createdAt)}`, M, lY, { width: HDR_L_W });
+    const xmlFechaEmision = parseDgiiDate(extractXmlField(invoice.xmlSigned ?? '', 'FechaEmision'));
+    const fechaEmisionDate = xmlFechaEmision ?? invoice.createdAt;
+    doc.text(`Fecha de Emisión: ${formatDateDgii(fechaEmisionDate)}`, M, lY, { width: HDR_L_W });
     lY = doc.y;
 
     // ── Right column (drawn at same startY) ──────────────────────────────────
@@ -170,6 +173,11 @@ export class PdfBuilder {
   }
 
   private getFechaVencimiento(invoice: any): string {
+    // Read directly from the signed XML — that is what DGII has on file.
+    const xmlValue = extractXmlField(invoice.xmlSigned ?? '', 'FechaVencimientoSecuencia');
+    if (xmlValue) return xmlValue;
+
+    // Fallback: derive from createdAt (should never be reached for signed invoices).
     const year = invoice.createdAt
       ? new Date(invoice.createdAt).getFullYear()
       : new Date().getFullYear();

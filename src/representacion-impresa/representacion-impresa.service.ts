@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InvoiceDataService } from './services/invoice-data.service';
 import { QrBuilder, DgiiEnv } from './services/qr-builder.service';
 import { PdfBuilder } from './services/pdf-builder.service';
+import { extractXmlField, parseDgiiDate } from './helpers/xml-extractors';
 
 @Injectable()
 export class RepresentacionImpresaService {
@@ -14,7 +15,19 @@ export class RepresentacionImpresaService {
   async generatePdf(tenantId: string, invoiceId: string): Promise<Buffer> {
     const invoice = await this.invoiceData.getInvoiceForRi(tenantId, invoiceId);
 
+    if (!invoice.xmlSigned) {
+      throw new Error('Invoice has no signed XML — cannot generate RI');
+    }
+
     const dgiiEnv: DgiiEnv = this.mapEnv(invoice.company.dgiiEnv);
+
+    // FechaEmision comes from the signed XML — that is what DGII stored.
+    // Using invoice.createdAt diverges from the signed document and causes
+    // the QR consultation to return "No fue encontrada la factura e-CF".
+    const xmlFechaEmision = parseDgiiDate(extractXmlField(invoice.xmlSigned, 'FechaEmision'));
+    if (!xmlFechaEmision) {
+      throw new Error('Could not extract FechaEmision from signed XML');
+    }
 
     const qrUrl = this.qrBuilder.buildUrl({
       isRfce: invoice.isRfce,
@@ -22,7 +35,7 @@ export class RepresentacionImpresaService {
       rncEmisor: invoice.company.rnc,
       rncComprador: invoice.buyer?.rnc || invoice.buyerRnc || undefined,
       encf: invoice.encf!,
-      fechaEmision: invoice.createdAt,
+      fechaEmision: xmlFechaEmision,
       montoTotal: invoice.totalAmount,
       fechaFirma: invoice.signedAt!,
       codigoSeguridad: invoice.securityCode!,

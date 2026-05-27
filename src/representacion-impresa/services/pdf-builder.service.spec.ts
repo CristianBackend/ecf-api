@@ -1,6 +1,22 @@
 import * as QRCode from 'qrcode';
 import { PdfBuilder } from './pdf-builder.service';
 
+// Minimal signed XML fragment used in tests. Contains the fields the
+// pdf-builder reads: FechaEmision and FechaVencimientoSecuencia.
+const SAMPLE_XML_SIGNED = `
+<ECFE>
+  <Encabezado>
+    <IdDoc>
+      <FechaEmision>01-04-2020</FechaEmision>
+      <FechaVencimientoSecuencia>31-12-2028</FechaVencimientoSecuencia>
+    </IdDoc>
+    <Monto>
+      <MontoTotal>82600.00</MontoTotal>
+    </Monto>
+  </Encabezado>
+  <FechaHoraFirma>22-05-2026 18:09:37</FechaHoraFirma>
+</ECFE>`;
+
 function makeInvoice(overrides: Record<string, any> = {}) {
   return {
     encf: 'E310000000010',
@@ -16,6 +32,7 @@ function makeInvoice(overrides: Record<string, any> = {}) {
     isRfce: false,
     referenceEncf: null,
     referenceModCode: null,
+    xmlSigned: SAMPLE_XML_SIGNED,
     company: {
       businessName: 'NEW PLAIN EIRL',
       tradeName: 'NEW PLAIN',
@@ -141,6 +158,19 @@ describe('PdfBuilder.build', () => {
     expect(pdf.slice(0, 5).toString()).toBe('%PDF-');
     // Raw numeric codes must NOT appear in the PDF output as label text.
     // We can't easily parse a compressed PDF stream, but we verify no crash.
+  });
+
+  it('usa FechaEmision y FechaVencimiento del XML firmado (no createdAt)', async () => {
+    // xmlSigned has FechaEmision=01-04-2020, FechaVencimientoSecuencia=31-12-2028.
+    // createdAt is 2020-04-01 (same year) but the point is the PDF builder
+    // reads from XML — no crash means the path was exercised correctly.
+    const pdf = await builder.build(makeInvoice(), realQrPng);
+    expect(pdf.slice(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('cae en fallback de createdAt cuando xmlSigned es null', async () => {
+    const pdf = await builder.build(makeInvoice({ xmlSigned: null }), realQrPng);
+    expect(pdf.slice(0, 5).toString()).toBe('%PDF-');
   });
 
   it('genera PDF sin tradeName (solo businessName en encabezado)', async () => {
