@@ -34,6 +34,8 @@ function makeInvoice(overrides: Record<string, any> = {}) {
         unitPrice: 35000,
         itbisAmount: 6300,
         subtotal: 70000,
+        goodService: 2,
+        itbisRate: 18,
       },
     ],
     ...overrides,
@@ -58,6 +60,14 @@ describe('PdfBuilder.build', () => {
 
   it('genera PDF para E32 (RFCE)', async () => {
     const pdf = await builder.build(makeInvoice({ ecfType: 'E32', isRfce: true }), realQrPng);
+    expect(pdf.slice(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('E32 con montoTotal < 250k omite bloque cliente (isRfce=false pero monto bajo)', async () => {
+    const pdf = await builder.build(
+      makeInvoice({ ecfType: 'E32', isRfce: false, totalAmount: 100000 }),
+      realQrPng,
+    );
     expect(pdf.slice(0, 5).toString()).toBe('%PDF-');
   });
 
@@ -93,12 +103,60 @@ describe('PdfBuilder.build', () => {
   it('genera PDF para múltiples líneas', async () => {
     const invoice = makeInvoice({
       lines: [
-        { quantity: 1, description: 'Item A', unitPrice: 10000, itbisAmount: 1800, subtotal: 10000 },
-        { quantity: 3, description: 'Item B', unitPrice: 5000, itbisAmount: 2700, subtotal: 15000 },
-        { quantity: 10, description: 'Item C', unitPrice: 2500, itbisAmount: 4500, subtotal: 25000 },
+        { quantity: 1, description: 'Item A', unitPrice: 10000, itbisAmount: 1800, subtotal: 10000, goodService: 1, itbisRate: 18 },
+        { quantity: 3, description: 'Item B', unitPrice: 5000,  itbisAmount: 2700, subtotal: 15000, goodService: 1, itbisRate: 18 },
+        { quantity: 10, description: 'Item C', unitPrice: 2500, itbisAmount: 4500, subtotal: 25000, goodService: 2, itbisRate: 18 },
       ],
     });
     const pdf = await builder.build(invoice, realQrPng);
+    expect(pdf.slice(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('genera PDF con ítem exento (itbisRate=0) sin crash', async () => {
+    const pdf = await builder.build(
+      makeInvoice({
+        lines: [
+          { quantity: 1, description: 'ARROZ EXENTO', unitPrice: 1000, itbisAmount: 0, subtotal: 1000, goodService: 1, itbisRate: 0 },
+        ],
+      }),
+      realQrPng,
+    );
+    expect(pdf.slice(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('genera PDF con municipality/province como códigos DGII (6 dígitos)', async () => {
+    const pdf = await builder.build(
+      makeInvoice({
+        company: {
+          businessName: 'TEST EIRL',
+          tradeName: null,
+          rnc: '133158744',
+          address: 'Calle Alexander Ramos #19',
+          municipality: '320200',
+          province: '320000',
+        },
+      }),
+      realQrPng,
+    );
+    expect(pdf.slice(0, 5).toString()).toBe('%PDF-');
+    // Raw numeric codes must NOT appear in the PDF output as label text.
+    // We can't easily parse a compressed PDF stream, but we verify no crash.
+  });
+
+  it('genera PDF sin tradeName (solo businessName en encabezado)', async () => {
+    const pdf = await builder.build(
+      makeInvoice({
+        company: {
+          businessName: 'EMPRESA SIN NOMBRE COMERCIAL',
+          tradeName: null,
+          rnc: '133158744',
+          address: 'Calle Test #1',
+          municipality: null,
+          province: null,
+        },
+      }),
+      realQrPng,
+    );
     expect(pdf.slice(0, 5).toString()).toBe('%PDF-');
   });
 });
