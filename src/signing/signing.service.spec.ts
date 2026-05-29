@@ -41,7 +41,9 @@ describe('SigningService', () => {
       expect(result.signedXml).toContain('<SignedInfo');
       expect(result.signedXml).toContain('<SignatureValue');
       expect(result.signedXml).toContain('<X509Certificate');
-      expect(result.securityCode).toMatch(/^[0-9A-F]{6}$/);
+      // CodigoSeguridad is the first 6 chars of the SignatureValue (base64, mixed case)
+      expect(result.securityCode).toHaveLength(6);
+      expect(result.securityCode).toEqual(result.signatureValue.substring(0, 6));
       expect(result.signatureValue.length).toBeGreaterThan(0);
       expect(result.signTime).toBeInstanceOf(Date);
     });
@@ -202,7 +204,8 @@ describe('SigningService', () => {
       expect(result.signedXml).toContain('<Signature');
       expect(result.signedXml).toContain('<SignatureValue');
       expect(result.signedXml).toContain('xmlns:ext="http://example.com/ext"');
-      expect(result.securityCode).toMatch(/^[0-9A-F]{6}$/);
+      expect(result.securityCode).toHaveLength(6);
+      expect(result.securityCode).toEqual(result.signatureValue.substring(0, 6));
     });
   });
 

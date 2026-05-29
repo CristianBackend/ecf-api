@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import * as crypto from 'crypto';
 import { SignedXml } from 'xml-crypto';
 import { DOMParser } from '@xmldom/xmldom';
 import { Signature as DgiiSignature } from 'dgii-ecf';
@@ -28,7 +27,7 @@ const DSIG_NS = 'http://www.w3.org/2000/09/xmldsig#';
  * FechaHoraFirma is inserted only for <ECF> documents (DGII XSD Section G/H);
  * other document types (SemillaModel, ARECF, ACECF, ANECF) don't use it.
  *
- * Security Code per DGII: first 6 hex digits of SHA-256(SignatureValue base64).
+ * Security Code per DGII: first 6 characters of the SignatureValue (base64).
  */
 @Injectable()
 export class SigningService {
@@ -248,13 +247,12 @@ export class SigningService {
   // ============================================================
 
   private generateSecurityCode(signatureValueBase64: string): string {
+    // DGII expects the first 6 characters of the SignatureValue directly
+    // (base64, e.g. "Qb4wZh"), NOT a SHA-256 hash of it. Verified against
+    // real production invoices whose CodigoSeguridad is base64 (mixed case),
+    // which a hex digest can never produce.
     const cleanSig = signatureValueBase64.replace(/\s/g, '');
-    return crypto
-      .createHash('sha256')
-      .update(cleanSig)
-      .digest('hex')
-      .substring(0, 6)
-      .toUpperCase();
+    return cleanSig.substring(0, 6);
   }
 
   private extractSignatureValue(signedXml: string): string {
