@@ -21,13 +21,16 @@ export interface QrInput {
 export class QrBuilder {
   buildUrl(input: QrInput): string {
     const base = this.getBaseUrl(input.isRfce, input.dgiiEnv);
+    const montoStr = typeof input.montoTotal === 'string'
+      ? input.montoTotal
+      : formatQrAmount(input.montoTotal);
 
     if (input.isRfce) {
       return (
         base +
         `RncEmisor=${input.rncEmisor}` +
         `&ENCF=${input.encf}` +
-        `&MontoTotal=${formatQrAmount(input.montoTotal)}` +
+        `&MontoTotal=${montoStr}` +
         `&CodigoSeguridad=${input.codigoSeguridad}`
       );
     }
@@ -43,7 +46,7 @@ export class QrBuilder {
     url +=
       `&ENCF=${input.encf}` +
       `&FechaEmision=${formatDateDgii(input.fechaEmision)}` +
-      `&MontoTotal=${formatQrAmount(input.montoTotal)}` +
+      `&MontoTotal=${montoStr}` +
       `&FechaFirma=${formatDateTimeDgiiUrl(input.fechaFirma)}` +
       `&CodigoSeguridad=${input.codigoSeguridad}`;
 

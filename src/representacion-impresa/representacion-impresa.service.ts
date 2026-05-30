@@ -29,6 +29,14 @@ export class RepresentacionImpresaService {
       throw new Error('Could not extract FechaEmision from signed XML');
     }
 
+    // Extract MontoTotal from the signed XML — this is what DGII has on file.
+    // The DB column invoice.totalAmount can differ when exempt items are present,
+    // causing "No fue encontrada la factura" on QR consultation.
+    const xmlMontoTotal = extractXmlField(invoice.xmlSigned, 'MontoTotal');
+    if (!xmlMontoTotal) {
+      throw new Error('Could not extract MontoTotal from signed XML');
+    }
+
     const qrUrl = this.qrBuilder.buildUrl({
       isRfce: invoice.isRfce,
       dgiiEnv,
@@ -36,7 +44,7 @@ export class RepresentacionImpresaService {
       rncComprador: invoice.buyer?.rnc || invoice.buyerRnc || undefined,
       encf: invoice.encf!,
       fechaEmision: xmlFechaEmision,
-      montoTotal: invoice.totalAmount,
+      montoTotal: xmlMontoTotal,
       fechaFirma: invoice.signedAt!,
       codigoSeguridad: invoice.securityCode!,
     });

@@ -44,6 +44,12 @@ describe('QrBuilder.buildUrl', () => {
       const url = qr.buildUrl({ isRfce: false, dgiiEnv: 'CERT', rncEmisor: '133', encf: 'E31001', fechaEmision: FIXED_DATE, montoTotal: 1500, fechaFirma: FIXED_FIRMA, codigoSeguridad: 'x' });
       expect(url).toContain('MontoTotal=1500.00');
     });
+
+    it('MontoTotal string del XML se usa byte-por-byte sin reformatear', () => {
+      // Simulates the XML value extracted when exempt items differ from totalAmount
+      const url = qr.buildUrl({ isRfce: false, dgiiEnv: 'CERT', rncEmisor: '133', encf: 'E310000000005', fechaEmision: FIXED_DATE, montoTotal: '83320.00', fechaFirma: FIXED_FIRMA, codigoSeguridad: 'abc' });
+      expect(url).toContain('MontoTotal=83320.00');
+    });
   });
 
   describe('RFCE E32 <250mil (isRfce=true)', () => {
