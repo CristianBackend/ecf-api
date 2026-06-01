@@ -98,9 +98,10 @@ describe('QrBuilder — timezone (América/Santo_Domingo = UTC-4)', () => {
       codigoSeguridad: 'DF2486',
     });
 
-    // Must match <FechaHoraFirma> in XML (Dominican local), NOT raw UTC
-    expect(url).toContain('FechaFirma=23-05-2026%2000:44:45');
-    expect(url).not.toContain('FechaFirma=23-05-2026%2004:44:45');
+    // Must match <FechaHoraFirma> in XML (Dominican local), NOT raw UTC.
+    // Fully encodeURIComponent'd like the official dgii-ecf lib: space → %20, ':' → %3A.
+    expect(url).toContain('FechaFirma=23-05-2026%2000%3A44%3A45');
+    expect(url).not.toContain('FechaFirma=23-05-2026%2004%3A44%3A45');
   });
 
   it('uses Dominican timezone for FechaEmision in QR url', () => {
