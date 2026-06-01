@@ -147,8 +147,10 @@ function pickInvoiceForSlot(
       return true;
     })
     .sort(
+      // DESC: pick the MOST RECENT invoice per slot. The older batch was
+      // accepted but is NOT indexed in DGII's ConsultaTimbre; the newer one is.
       (a, b) =>
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
   return matching[0] ?? null;
 }

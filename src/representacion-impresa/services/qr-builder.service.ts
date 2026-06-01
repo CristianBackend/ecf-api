@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as QRCode from 'qrcode';
-import { formatDateDgii, formatDateTimeDgiiUrl } from '../helpers/date-formatters';
+import { formatDateDgii, formatDateTimeDgii } from '../helpers/date-formatters';
 import { formatQrAmount } from '../helpers/currency-formatter';
 
 export type DgiiEnv = 'DEV' | 'CERT' | 'PROD';
@@ -25,30 +25,40 @@ export class QrBuilder {
       ? input.montoTotal
       : formatQrAmount(input.montoTotal);
 
+    // Encode every param, matching the official dgii-ecf generateEcfQRCodeURL.
+    // Critical for CodigoSeguridad values containing '+' or '/' — a literal '+'
+    // is decoded as a space, producing a broken QR. We encode the RAW date
+    // strings (literal space → %20, ':' → %3A); never pre-encoded values, to
+    // avoid double-encoding (% → %25).
+    const rncEmisor = encodeURIComponent(input.rncEmisor);
+    const encf = encodeURIComponent(input.encf);
+    const monto = encodeURIComponent(montoStr);
+    const codigoSeguridad = encodeURIComponent(input.codigoSeguridad);
+
     if (input.isRfce) {
       return (
         base +
-        `RncEmisor=${input.rncEmisor}` +
-        `&ENCF=${input.encf}` +
-        `&MontoTotal=${montoStr}` +
-        `&CodigoSeguridad=${input.codigoSeguridad}`
+        `RncEmisor=${rncEmisor}` +
+        `&ENCF=${encf}` +
+        `&MontoTotal=${monto}` +
+        `&CodigoSeguridad=${codigoSeguridad}`
       );
     }
 
     let url =
       base +
-      `RncEmisor=${input.rncEmisor}`;
+      `RncEmisor=${rncEmisor}`;
 
     if (input.rncComprador) {
-      url += `&RncComprador=${input.rncComprador}`;
+      url += `&RncComprador=${encodeURIComponent(input.rncComprador)}`;
     }
 
     url +=
-      `&ENCF=${input.encf}` +
-      `&FechaEmision=${formatDateDgii(input.fechaEmision)}` +
-      `&MontoTotal=${montoStr}` +
-      `&FechaFirma=${formatDateTimeDgiiUrl(input.fechaFirma)}` +
-      `&CodigoSeguridad=${input.codigoSeguridad}`;
+      `&ENCF=${encf}` +
+      `&FechaEmision=${encodeURIComponent(formatDateDgii(input.fechaEmision))}` +
+      `&MontoTotal=${monto}` +
+      `&FechaFirma=${encodeURIComponent(formatDateTimeDgii(input.fechaFirma))}` +
+      `&CodigoSeguridad=${codigoSeguridad}`;
 
     return url;
   }
