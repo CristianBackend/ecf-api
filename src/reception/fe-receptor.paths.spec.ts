@@ -118,6 +118,117 @@ describe('FeReceptorController — path prefix exclusion', () => {
 });
 
 // ============================================================
+// DGII multipart/form-data ingestion (field "xml")
+// DGII POSTs signed XML as multipart with a file field named "xml"
+// (see DgiiService.httpPostMultipart). The endpoints must read file.buffer.
+// ============================================================
+
+describe('FeReceptorController — multipart/form-data ingestion', () => {
+  let app: INestApplication;
+  let mockSigningService: { verifySignedXml: jest.Mock; extractFromP12: jest.Mock; signXml: jest.Mock };
+  let mockResponseXmlBuilder: { buildArecfXml: jest.Mock; buildArecfErrorXml: jest.Mock };
+  let mockPrisma: any;
+  let mockReceptionService: { storeReceived: jest.Mock };
+  let mockCertificatesService: { getDecryptedCertificate: jest.Mock };
+
+  beforeEach(async () => {
+    mockSigningService = { verifySignedXml: jest.fn(), extractFromP12: jest.fn(), signXml: jest.fn() };
+    mockResponseXmlBuilder = {
+      buildArecfXml: jest.fn().mockReturnValue('<ARECF><Estado>0</Estado></ARECF>'),
+      buildArecfErrorXml: jest.fn().mockReturnValue('<ARECF><Estado>1</Estado></ARECF>'),
+    };
+    mockPrisma = {
+      company: { findFirst: jest.fn().mockResolvedValue(null) },
+      invoice: { findFirst: jest.fn(), update: jest.fn() },
+    };
+    mockReceptionService = { storeReceived: jest.fn() };
+    mockCertificatesService = { getDecryptedCertificate: jest.fn() };
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [FeReceptorController],
+      providers: [
+        { provide: PrismaService,       useValue: mockPrisma },
+        { provide: SigningService,       useValue: mockSigningService },
+        { provide: ReceptionService,    useValue: mockReceptionService },
+        { provide: ResponseXmlBuilder,  useValue: mockResponseXmlBuilder },
+        { provide: CertificatesService, useValue: mockCertificatesService },
+        { provide: getLoggerToken(FeReceptorController.name), useValue: MOCK_LOGGER },
+      ],
+    }).compile();
+
+    app = module.createNestApplication();
+    app.setGlobalPrefix('api/v1', {
+      exclude: [
+        { path: 'fe/autenticacion/api/validacioncertificado', method: RequestMethod.POST },
+        { path: 'fe/recepcion/api/ecf', method: RequestMethod.POST },
+      ],
+    });
+    await app.init();
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  const SIGNED_SEED = '<SemillaModel><valor>abc</valor><Signature/></SemillaModel>';
+
+  it('validarCertificado accepts multipart with file field "xml" → verifies & returns token', async () => {
+    mockSigningService.verifySignedXml.mockReturnValue({ certificatePem: 'CERT' });
+
+    const res = await request(app.getHttpServer())
+      .post('/fe/autenticacion/api/validacioncertificado')
+      .attach('xml', Buffer.from(SIGNED_SEED, 'utf-8'), 'semilla.xml');
+
+    expect(res.status).toBe(200);
+    // The exact signed XML from the file field must reach verifySignedXml
+    expect(mockSigningService.verifySignedXml).toHaveBeenCalledWith(SIGNED_SEED);
+    expect(res.body).toHaveProperty('token');
+    expect(res.body).toHaveProperty('expira');
+    expect(typeof res.body.token).toBe('string');
+  });
+
+  it('validarCertificado still accepts a JSON body {xml} (backward compat)', async () => {
+    mockSigningService.verifySignedXml.mockReturnValue({ certificatePem: 'CERT' });
+
+    const res = await request(app.getHttpServer())
+      .post('/fe/autenticacion/api/validacioncertificado')
+      .send({ xml: SIGNED_SEED });
+
+    expect(res.status).toBe(200);
+    expect(mockSigningService.verifySignedXml).toHaveBeenCalledWith(SIGNED_SEED);
+    expect(res.body).toHaveProperty('token');
+  });
+
+  it('validarCertificado with invalid signature in multipart → 400', async () => {
+    mockSigningService.verifySignedXml.mockImplementation(() => {
+      throw new Error('DigestValue mismatch');
+    });
+
+    const res = await request(app.getHttpServer())
+      .post('/fe/autenticacion/api/validacioncertificado')
+      .attach('xml', Buffer.from(SIGNED_SEED, 'utf-8'), 'semilla.xml');
+
+    expect(res.status).toBe(400);
+  });
+
+  it('receiveEcf accepts multipart with file field "xml" → extracts XML', async () => {
+    mockSigningService.verifySignedXml.mockReturnValue({ certificatePem: 'CERT' });
+    mockPrisma.company.findFirst.mockResolvedValue(null); // → unknown RNC path
+
+    const ecfXml =
+      '<ECF><Encabezado><Emisor><RNCEmisor>131234567</RNCEmisor></Emisor>' +
+      '<IdDoc><eNCF>E310000000001</eNCF></IdDoc></Encabezado><Signature/></ECF>';
+
+    const res = await request(app.getHttpServer())
+      .post('/fe/recepcion/api/ecf')
+      .attach('xml', Buffer.from(ecfXml, 'utf-8'), '131234567E310000000001.xml');
+
+    expect(res.status).toBe(200);
+    expect(mockSigningService.verifySignedXml).toHaveBeenCalledWith(ecfXml);
+  });
+});
+
+// ============================================================
 // receiveEcf — signature verification (FIX 4)
 // ============================================================
 

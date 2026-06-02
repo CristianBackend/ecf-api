@@ -7,9 +7,12 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
@@ -86,9 +89,19 @@ export class FeReceptorController {
    */
   @Post('autenticacion/api/validacioncertificado')
   @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('xml'))
+  @ApiConsumes('multipart/form-data', 'application/json')
   @ApiOperation({ summary: 'Validar semilla firmada y obtener token (DGII p.52)' })
-  async validarCertificado(@Body() body: any): Promise<{ token: string; expira: string }> {
-    const xmlContent = typeof body === 'string' ? body : body?.xml;
+  async validarCertificado(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: any,
+  ): Promise<{ token: string; expira: string }> {
+    // DGII sends the signed seed as multipart/form-data with a file field named
+    // "xml" (see DgiiService.httpPostMultipart). Fall back to a raw/JSON body for
+    // backward compatibility with existing clients and tests.
+    const xmlContent =
+      file?.buffer?.toString('utf-8') ??
+      (typeof body === 'string' ? body : body?.xml);
     if (!xmlContent) {
       throw new BadRequestException('Se requiere la semilla firmada en el campo xml');
     }
@@ -125,9 +138,18 @@ export class FeReceptorController {
   @Post('recepcion/api/ecf')
   @HttpCode(HttpStatus.OK)
   @Header('Content-Type', 'application/xml; charset=utf-8')
+  @UseInterceptors(FileInterceptor('xml'))
+  @ApiConsumes('multipart/form-data', 'application/json')
   @ApiOperation({ summary: 'Recibir e-CF de emisor y retornar ARECF firmado (DGII p.53)' })
-  async receiveEcf(@Body() body: any): Promise<string> {
-    const xmlContent = typeof body === 'string' ? body : body?.xml;
+  async receiveEcf(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: any,
+  ): Promise<string> {
+    // DGII sends the e-CF as multipart/form-data with a file field named "xml";
+    // fall back to a raw/JSON body for backward compatibility.
+    const xmlContent =
+      file?.buffer?.toString('utf-8') ??
+      (typeof body === 'string' ? body : body?.xml);
     if (!xmlContent) {
       throw new BadRequestException('Se requiere el XML del e-CF');
     }
@@ -263,9 +285,18 @@ export class FeReceptorController {
    */
   @Post('aprobacioncomercial/api/ecf')
   @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('xml'))
+  @ApiConsumes('multipart/form-data', 'application/json')
   @ApiOperation({ summary: 'Recibir ACECF de aprobación/rechazo comercial (DGII p.54)' })
-  async receiveAcecf(@Body() body: any): Promise<{ mensaje: string }> {
-    const xmlContent = typeof body === 'string' ? body : body?.xml;
+  async receiveAcecf(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: any,
+  ): Promise<{ mensaje: string }> {
+    // DGII sends the ACECF as multipart/form-data with a file field named "xml";
+    // fall back to a raw/JSON body for backward compatibility.
+    const xmlContent =
+      file?.buffer?.toString('utf-8') ??
+      (typeof body === 'string' ? body : body?.xml);
     if (!xmlContent) {
       throw new BadRequestException('Se requiere el XML del ACECF');
     }
