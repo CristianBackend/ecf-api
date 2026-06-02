@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Body,
+  Header,
   HttpCode,
   HttpStatus,
   BadRequestException,
@@ -58,6 +59,7 @@ export class FeReceptorController {
    * to authenticate before sending e-CF documents.
    */
   @Get('autenticacion/api/semilla')
+  @Header('Content-Type', 'application/xml; charset=utf-8')
   @ApiOperation({ summary: 'Obtener semilla para autenticación emisor-receptor (DGII p.52)' })
   getSemilla(): string {
     const valor = crypto.randomBytes(32).toString('hex');
@@ -122,6 +124,7 @@ export class FeReceptorController {
    */
   @Post('recepcion/api/ecf')
   @HttpCode(HttpStatus.OK)
+  @Header('Content-Type', 'application/xml; charset=utf-8')
   @ApiOperation({ summary: 'Recibir e-CF de emisor y retornar ARECF firmado (DGII p.53)' })
   async receiveEcf(@Body() body: any): Promise<string> {
     const xmlContent = typeof body === 'string' ? body : body?.xml;
