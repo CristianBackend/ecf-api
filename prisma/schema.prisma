@@ -270,7 +270,13 @@ model Sequence {
   // Relations
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
-  @@unique([companyId, ecfType, isActive])
+  // FIX 1 (resilience): "one ACTIVE sequence per (company, type)" is enforced by
+  // a PARTIAL unique index (company_id, ecf_type) WHERE is_active = true, created
+  // in migration 20260608140000_sequences_partial_unique. The previous full
+  // @@unique([companyId, ecfType, isActive]) wrongly limited the table to ONE
+  // inactive row per (company, type), so exhausting a 2nd NCF range (which sets
+  // is_active=false) collided with the already-exhausted row and failed the
+  // emission tx. Prisma's DSL can't express partial uniques, so it lives in raw SQL.
   @@index([tenantId])
   @@map("sequences")
 }

@@ -7,11 +7,24 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QrBuilder, DgiiEnv } from '../representacion-impresa/services/qr-builder.service';
 import { ECF_TYPE_NAMES, FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-types';
 import { fmtDateGmt4, fmtDateTimeGmt4 } from '../common/utils/date-format.util';
+// p-limit v3 is CommonJS (module.exports = fn). With esModuleInterop off, a default
+// `import` resolves to `.default` (undefined at runtime), so use require — same
+// pattern as form-data in dgii.service.ts.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const pLimit = require('p-limit');
 
 @Injectable()
 export class PdfService implements OnModuleDestroy {
   /** Lazy-initialized Chromium instance. Shared across requests — launch overhead is ~300ms. */
   private browser: Browser | null = null;
+
+  /**
+   * FIX 2 (resilience): cap concurrent Chromium renders. On a t2.micro (1GB RAM)
+   * each open page adds tens of MB on top of the ~150MB Chromium baseline; an
+   * unbounded burst of PDF requests would OOM-kill the process (which then
+   * triggers BullMQ job retries). 2 = a little parallelism without risking OOM.
+   */
+  private readonly renderLimit = pLimit(2);
   constructor(
     private readonly prisma: PrismaService,
     // FIX 8: use the certification-validated QR generator (encodes ALL params,
@@ -316,22 +329,29 @@ export class PdfService implements OnModuleDestroy {
    * because Chromium handles the full layout engine.
    */
   async generatePdfBuffer(tenantId: string, invoiceId: string): Promise<Buffer> {
+    // generateHtml (DB + QR) is cheap; only the Chromium render is memory-heavy,
+    // so bound just that part with the concurrency limiter.
     const html = await this.generateHtml(tenantId, invoiceId);
-    const browser = await this.getBrowser();
-    const page = await browser.newPage();
-    try {
-      await page.setContent(html, { waitUntil: 'networkidle0' });
-      const pdfBuffer = await page.pdf({
-        format: 'A4',
-        margin: { top: '15mm', right: '15mm', bottom: '15mm', left: '15mm' },
-        printBackground: true,
-      });
-      const buf = Buffer.from(pdfBuffer);
-      this.logger.debug(`Generated PDF for invoice ${invoiceId} (${buf.length} bytes)`);
-      return buf;
-    } finally {
-      await page.close();
-    }
+    return this.renderLimit(async () => {
+      const browser = await this.getBrowser();
+      const page = await browser.newPage();
+      try {
+        // FIX 2: 'load' + a hard 15s timeout so a page that never reaches
+        // network-idle can't hang forever holding memory. The RI HTML is
+        // self-contained (inlined CSS + data-URL QR), so 'load' is sufficient.
+        await page.setContent(html, { waitUntil: 'load', timeout: 15000 });
+        const pdfBuffer = await page.pdf({
+          format: 'A4',
+          margin: { top: '15mm', right: '15mm', bottom: '15mm', left: '15mm' },
+          printBackground: true,
+        });
+        const buf = Buffer.from(pdfBuffer);
+        this.logger.debug(`Generated PDF for invoice ${invoiceId} (${buf.length} bytes)`);
+        return buf;
+      } finally {
+        await page.close();
+      }
+    });
   }
 
   /**
