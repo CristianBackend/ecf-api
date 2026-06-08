@@ -6,6 +6,7 @@ import { SigningService } from '../signing/signing.service';
 import { DgiiService } from '../dgii/dgii.service';
 import { CertificatesService } from '../certificates/certificates.service';
 import { QueueService } from '../queue/queue.service';
+import { UsageService } from '../billing/usage.service';
 import { DGII_STATUS, FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-types';
 
 /**
@@ -23,6 +24,7 @@ export class ContingencyService {
     private readonly dgiiService: DgiiService,
     private readonly certificatesService: CertificatesService,
     private readonly queueService: QueueService,
+    private readonly usageService: UsageService,
     @InjectPinoLogger(ContingencyService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -202,18 +204,61 @@ export class ContingencyService {
         );
         const { privateKey, certificate } = this.signingService.extractFromP12(p12Buffer, passphrase);
 
-        // 2. Sign the stored unsigned XML
+        // 2. Authenticate with DGII (needed for both reconcile and submit)
+        const token = await this.dgiiService.getToken(
+          invoice.tenantId, invoice.companyId,
+          privateKey, certificate, invoice.company.dgiiEnv,
+        );
+
+        // FIX B (P4): if this invoice ALREADY has a trackId, a previous attempt
+        // already delivered it to DGII (e.g. DGII received it but the ack timed
+        // out at 30s, leaving it CONTINGENCY). RECONCILE via queryStatus instead
+        // of resubmitting — resubmitting would create a DUPLICATE e-CF at DGII.
+        if (invoice.trackId) {
+          const statusResult = await this.dgiiService.queryStatus(
+            invoice.trackId, token, invoice.company.dgiiEnv,
+          );
+          const reconciledStatus = statusResult.status === DGII_STATUS.ACCEPTED ? InvoiceStatus.ACCEPTED
+            : statusResult.status === DGII_STATUS.REJECTED ? InvoiceStatus.REJECTED
+            : statusResult.status === DGII_STATUS.CONDITIONAL ? InvoiceStatus.CONDITIONAL
+            : InvoiceStatus.PROCESSING;
+
+          await this.prisma.invoice.update({
+            where: { id: invoice.id },
+            data: {
+              status: reconciledStatus,
+              dgiiResponse: statusResult as any,
+              dgiiMessage: statusResult.message,
+              dgiiTimestamp: new Date(),
+            },
+          });
+
+          // FIX G: refund quota if DGII rejected (idempotent).
+          if (reconciledStatus === InvoiceStatus.REJECTED) {
+            await this.usageService.revertUsage(invoice.id, invoice.companyId)
+              .catch((err) => this.logger.error(`Usage revert failed for ${invoice.encf}: ${err.message}`));
+          }
+          if (reconciledStatus === InvoiceStatus.PROCESSING) {
+            await this.queueService.enqueueStatusPoll({
+              invoiceId: invoice.id,
+              tenantId: invoice.tenantId,
+              companyId: invoice.companyId,
+              attempt: 1,
+            });
+          }
+          this.logger.info(
+            `Contingency reconcile (existing trackId ${invoice.trackId}): ${invoice.encf} → ${reconciledStatus}`,
+          );
+          processed++;
+          continue;
+        }
+
+        // 3. Sign the stored unsigned XML
         if (!invoice.xmlUnsigned) {
           throw new Error('No unsigned XML stored for invoice');
         }
         const { signedXml, securityCode } = this.signingService.signXml(
           invoice.xmlUnsigned, privateKey, certificate,
-        );
-
-        // 3. Authenticate with DGII
-        const token = await this.dgiiService.getToken(
-          invoice.tenantId, invoice.companyId,
-          privateKey, certificate, invoice.company.dgiiEnv,
         );
 
         // 4. Submit to DGII
@@ -252,6 +297,12 @@ export class ContingencyService {
             dgiiTimestamp: new Date(),
           },
         });
+
+        // FIX G: refund quota if DGII rejected (idempotent via usageReverted).
+        if (newStatus === InvoiceStatus.REJECTED) {
+          await this.usageService.revertUsage(invoice.id, invoice.companyId)
+            .catch((err) => this.logger.error(`Usage revert failed for ${invoice.encf}: ${err.message}`));
+        }
 
         // Schedule status polling if DGII returned EN_PROCESO
         if (newStatus === InvoiceStatus.PROCESSING) {

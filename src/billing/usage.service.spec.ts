@@ -1,7 +1,6 @@
 import { UsageService } from './usage.service';
 import { CompanyPlanStatus, DgiiEnvironment } from '@prisma/client';
-
-const NOW = new Date('2026-06-01T00:00:00Z');
+import { ForbiddenException } from '@nestjs/common';
 
 function makeCompany(dgiiEnv: DgiiEnvironment = DgiiEnvironment.PROD) {
   return { id: 'company-1', dgiiEnv };
@@ -19,26 +18,15 @@ function makeCompanyPlan(overrides: Partial<any> = {}) {
   };
 }
 
-function makeUsage(overrides: Partial<any> = {}) {
-  return {
-    baseUsed: 0,
-    topupUsed: 0,
-    totalQuota: 100,
-    notified70: false,
-    notified85: false,
-    notified95: false,
-    notified100: false,
-    ...overrides,
-  };
-}
-
+// Atomic counter updates now use $queryRaw / $executeRaw, so the mock exposes them.
 function makePrisma(overrides: Record<string, any> = {}) {
   return {
     company: { findUnique: jest.fn() },
     companyPlan: { findUnique: jest.fn(), update: jest.fn() },
-    companyUsage: { findUnique: jest.fn(), update: jest.fn() },
-    topupPurchase: { findFirst: jest.fn(), update: jest.fn() },
-    $transaction: jest.fn((ops: any[]) => Promise.all(ops)),
+    companyUsage: { findUnique: jest.fn() },
+    invoice: { updateMany: jest.fn() },
+    $queryRaw: jest.fn(),
+    $executeRaw: jest.fn().mockResolvedValue(1),
     ...overrides,
   };
 }
@@ -65,6 +53,7 @@ describe('UsageService.incrementUsage', () => {
 
     await service.incrementUsage('company-1');
     expect(prisma.companyPlan.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('skips usage tracking in DEV environment', async () => {
@@ -74,6 +63,7 @@ describe('UsageService.incrementUsage', () => {
 
     await service.incrementUsage('company-1');
     expect(prisma.companyPlan.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('returns early when company has no plan', async () => {
@@ -83,68 +73,107 @@ describe('UsageService.incrementUsage', () => {
     const { service } = buildService(prisma);
 
     await service.incrementUsage('company-1');
-    expect(prisma.companyUsage.findUnique).not.toHaveBeenCalled();
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
-  it('marks plan EXHAUSTED and returns early when quota already full', async () => {
+  it('consumes BASE quota with a single atomic update when below base/quota', async () => {
     const prisma = makePrisma();
     prisma.company.findUnique.mockResolvedValue(makeCompany());
     prisma.companyPlan.findUnique.mockResolvedValue(makeCompanyPlan());
-    prisma.companyUsage.findUnique.mockResolvedValue(
-      makeUsage({ baseUsed: 100, topupUsed: 0, totalQuota: 100 }),
-    );
+    // Base UPDATE ... RETURNING applied (1 row).
+    prisma.$queryRaw.mockResolvedValueOnce([{ base_used: 6, topup_used: 0, total_quota: 100 }]);
     const { service } = buildService(prisma);
 
     await service.incrementUsage('company-1');
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1); // only the base branch
+    expect(prisma.$executeRaw).not.toHaveBeenCalled(); // no topup accounting
+    expect(prisma.companyPlan.update).not.toHaveBeenCalled(); // ceiling not reached
+  });
+
+  it('falls back to the TOPUP pool atomically when base is full', async () => {
+    const prisma = makePrisma();
+    prisma.company.findUnique.mockResolvedValue(makeCompany());
+    prisma.companyPlan.findUnique.mockResolvedValue(makeCompanyPlan());
+    prisma.$queryRaw
+      .mockResolvedValueOnce([]) // base branch: no room
+      .mockResolvedValueOnce([{ base_used: 100, topup_used: 1, total_quota: 600 }]); // topup branch applied
+    const { service } = buildService(prisma);
+
+    await service.incrementUsage('company-1');
+
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1); // FIFO topup_purchases accounting
+  });
+
+  it('marks plan EXHAUSTED when the consumption hits the ceiling', async () => {
+    const prisma = makePrisma();
+    prisma.company.findUnique.mockResolvedValue(makeCompany());
+    prisma.companyPlan.findUnique.mockResolvedValue(makeCompanyPlan());
+    prisma.$queryRaw.mockResolvedValueOnce([{ base_used: 100, topup_used: 0, total_quota: 100 }]);
+    const { service } = buildService(prisma);
+
+    await service.incrementUsage('company-1');
+
     expect(prisma.companyPlan.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: CompanyPlanStatus.EXHAUSTED } }),
     );
-    expect(prisma.companyUsage.update).not.toHaveBeenCalled();
   });
 
-  it('increments baseUsed when below base quota', async () => {
+  it('THROWS (blocks emission) when quota is exhausted — no row updated', async () => {
     const prisma = makePrisma();
     prisma.company.findUnique.mockResolvedValue(makeCompany());
     prisma.companyPlan.findUnique.mockResolvedValue(makeCompanyPlan());
-    prisma.companyUsage.findUnique
-      .mockResolvedValueOnce(makeUsage({ baseUsed: 5, topupUsed: 0, totalQuota: 100 }))
-      .mockResolvedValueOnce(makeUsage({ baseUsed: 6, topupUsed: 0, totalQuota: 100 }));
-    const { service, notifications } = buildService(prisma);
+    prisma.$queryRaw
+      .mockResolvedValueOnce([]) // base: no room
+      .mockResolvedValueOnce([]); // topup: no room
+    prisma.companyUsage.findUnique.mockResolvedValue({ baseUsed: 100, topupUsed: 0, totalQuota: 100 });
+    const { service } = buildService(prisma);
 
-    await service.incrementUsage('company-1');
-
-    expect(prisma.companyUsage.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { baseUsed: { increment: 1 } } }),
+    await expect(service.incrementUsage('company-1')).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.companyPlan.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: CompanyPlanStatus.EXHAUSTED } }),
     );
-    expect(notifications.evaluateThresholds).toHaveBeenCalled();
   });
 
-  it('consumes oldest topup when base quota is full', async () => {
-    const topup = { id: 'topup-1', topupPackCode: 'TOPUP_500', createdAt: new Date() };
+  it('THROWS a hard error when the usage row is missing (data inconsistency)', async () => {
     const prisma = makePrisma();
     prisma.company.findUnique.mockResolvedValue(makeCompany());
     prisma.companyPlan.findUnique.mockResolvedValue(makeCompanyPlan());
-    prisma.companyUsage.findUnique
-      .mockResolvedValueOnce(makeUsage({ baseUsed: 100, topupUsed: 0, totalQuota: 600 }))
-      .mockResolvedValueOnce(makeUsage({ baseUsed: 100, topupUsed: 1, totalQuota: 600 }));
-    prisma.topupPurchase.findFirst.mockResolvedValue(topup);
-    prisma.$transaction.mockResolvedValue([{}, {}]);
+    prisma.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    prisma.companyUsage.findUnique.mockResolvedValue(null);
     const { service } = buildService(prisma);
 
-    await service.incrementUsage('company-1');
-    expect(prisma.$transaction).toHaveBeenCalled();
+    await expect(service.incrementUsage('company-1')).rejects.toThrow(/row missing/);
   });
+});
 
-  it('does not attempt topup increment when no topup exists', async () => {
+describe('UsageService.revertUsage (idempotent refund)', () => {
+  it('refunds once when it wins the usageReverted claim', async () => {
     const prisma = makePrisma();
+    prisma.invoice.updateMany.mockResolvedValue({ count: 1 }); // claim won
     prisma.company.findUnique.mockResolvedValue(makeCompany());
     prisma.companyPlan.findUnique.mockResolvedValue(makeCompanyPlan());
-    prisma.companyUsage.findUnique
-      .mockResolvedValueOnce(makeUsage({ baseUsed: 100, topupUsed: 0, totalQuota: 100 }));
-    prisma.topupPurchase.findFirst.mockResolvedValue(null);
+    prisma.$queryRaw.mockResolvedValueOnce([]); // no topup → base decrement branch
     const { service } = buildService(prisma);
 
-    await service.incrementUsage('company-1');
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    await service.revertUsage('inv-1', 'company-1');
+
+    expect(prisma.invoice.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'inv-1', usageReverted: false } }),
+    );
+    expect(prisma.company.findUnique).toHaveBeenCalled(); // decrement ran
+    expect(prisma.$executeRaw).toHaveBeenCalled(); // base decrement
+  });
+
+  it('does NOT double-refund when already reverted (claim lost)', async () => {
+    const prisma = makePrisma();
+    prisma.invoice.updateMany.mockResolvedValue({ count: 0 }); // already reverted
+    const { service } = buildService(prisma);
+
+    await service.revertUsage('inv-1', 'company-1');
+
+    expect(prisma.company.findUnique).not.toHaveBeenCalled(); // decrement skipped
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 });

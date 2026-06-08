@@ -300,6 +300,25 @@ export class InvoicesService {
       // Increment billing counter inside the same transaction for atomicity.
       await this.billingService.incrementInvoiceCount(tenantId, tx);
 
+      // FIX E (P2): company-level usage (authoritative via ActivePlanGuard) is
+      // counted INSIDE the emission transaction so a failure — including atomic
+      // quota exhaustion (FIX D) — rolls back the invoice instead of leaking a
+      // free, uncounted emission. If UsageService didn't resolve but this company
+      // is company-billed (has a CompanyPlan), fail loudly rather than count zero.
+      if (this.usageService) {
+        await this.usageService.incrementUsage(dto.companyId, tx);
+      } else {
+        const companyPlan = await tx.companyPlan.findUnique({
+          where: { companyId: dto.companyId },
+        });
+        if (companyPlan) {
+          throw new Error(
+            'UsageService no disponible para una company con CompanyPlan — ' +
+              'emisión abortada para no contar cero.',
+          );
+        }
+      }
+
       return inv;
     });
 
@@ -313,10 +332,13 @@ export class InvoicesService {
       hasReference: !!dto.reference?.encf,
     });
 
+    // Threshold alerts (70/85/95/100%) run post-commit, best-effort — they must
+    // never block or roll back an emission. The authoritative count already
+    // happened atomically inside the transaction above (FIX E).
     this.usageService
-      ?.incrementUsage(dto.companyId)
+      ?.notifyThresholds(dto.companyId)
       .catch((err) =>
-        this.logger.error({ err }, 'Company usage increment failed — invoice already created'),
+        this.logger.error({ err }, 'Company usage threshold notification failed'),
       );
 
     await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_QUEUED, {
@@ -500,23 +522,33 @@ export class InvoicesService {
       throw new BadRequestException(`No se puede anular una factura en estado ${invoice.status}`);
     }
 
-    // Void the invoice
-    const updated = await this.prisma.invoice.update({
-      where: { id: invoice.id },
-      data: {
-        status: InvoiceStatus.VOIDED,
-        dgiiMessage: reason || 'Anulada por el usuario',
-        metadata: {
-          ...(invoice.metadata as any || {}),
-          voidedAt: new Date().toISOString(),
-          voidReason: reason || 'Anulada por el usuario',
-          previousStatus: invoice.status,
+    // Void the invoice + refund quota atomically (FIX G). revertUsage is
+    // idempotent (usageReverted flag), so a REJECTED invoice already refunded in
+    // the processor won't be double-refunded here. DRAFT was never counted (it
+    // never reached QUEUED), so it is excluded from the refund.
+    const previousStatus = invoice.status;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const inv = await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          status: InvoiceStatus.VOIDED,
+          dgiiMessage: reason || 'Anulada por el usuario',
+          metadata: {
+            ...(invoice.metadata as any || {}),
+            voidedAt: new Date().toISOString(),
+            voidReason: reason || 'Anulada por el usuario',
+            previousStatus,
+          },
         },
-      },
-      include: {
-        lines: { orderBy: { lineNumber: 'asc' } },
-        company: { select: { id: true, rnc: true, businessName: true } },
-      },
+        include: {
+          lines: { orderBy: { lineNumber: 'asc' } },
+          company: { select: { id: true, rnc: true, businessName: true } },
+        },
+      });
+      if (previousStatus !== InvoiceStatus.DRAFT) {
+        await this.usageService?.revertUsage(invoice.id, invoice.companyId, tx);
+      }
+      return inv;
     });
 
     await this.createAuditLog(tenantId, 'invoice', invoice.id, 'voided', {

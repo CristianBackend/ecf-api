@@ -104,6 +104,10 @@ function makeProcessor() {
     emit: jest.fn(async () => ({ jobId: 'hook-1', deliveryId: 'del-1' })) as Mock,
   };
 
+  const usageService = {
+    revertUsage: jest.fn(async () => undefined) as Mock,
+  };
+
   const processor = new EcfProcessingProcessor(
     prisma as any,
     xmlBuilder as any,
@@ -113,6 +117,7 @@ function makeProcessor() {
     xsdValidation as any,
     queueService as any,
     webhooksService as any,
+    usageService as any,
     makeTestLogger(),
   );
 

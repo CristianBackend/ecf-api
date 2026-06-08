@@ -6,6 +6,7 @@ import { SigningModule } from '../signing/signing.module';
 import { DgiiModule } from '../dgii/dgii.module';
 import { CertificatesModule } from '../certificates/certificates.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
+import { BillingModule } from '../billing/billing.module';
 
 import { EcfProcessingProcessor } from './ecf-processing.processor';
 import { StatusPollProcessor } from './status-poll.processor';
@@ -29,6 +30,7 @@ export { QUEUES } from './queue.constants';
     DgiiModule,
     CertificatesModule,
     WebhooksModule,
+    BillingModule,
   ],
   providers: [
     EcfProcessingProcessor,

@@ -10,6 +10,7 @@ import { CertificatesService } from '../certificates/certificates.service';
 import { QueueService } from './queue.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { XsdValidationService } from '../validation/xsd-validation.service';
+import { UsageService } from '../billing/usage.service';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 import { QUEUES } from './queue.constants';
 import { ECF_TYPE_CODES } from '../xml-builder/ecf-types';
@@ -52,6 +53,7 @@ export class EcfProcessingProcessor extends WorkerHost {
     private readonly xsdValidation: XsdValidationService,
     private readonly queueService: QueueService,
     private readonly webhooksService: WebhooksService,
+    private readonly usageService: UsageService,
     @InjectPinoLogger(EcfProcessingProcessor.name)
     private readonly logger: PinoLogger,
   ) {
@@ -82,6 +84,20 @@ export class EcfProcessingProcessor extends WorkerHost {
     if (invoice.status === InvoiceStatus.ACCEPTED || invoice.status === InvoiceStatus.VOIDED) {
       this.logger.warn(`Invoice ${invoiceId} already in final state: ${invoice.status}`);
       return { status: invoice.status };
+    }
+
+    // FIX A (P4): a trackId already present means a PREVIOUS attempt already
+    // submitted this e-CF to DGII (and persisted the trackId) but the job didn't
+    // complete — e.g. an OOM crash after submit. Resubmitting would create a
+    // DUPLICATE e-CF at DGII. Instead, reconcile the real status from DGII via
+    // the status-poll path (which calls dgiiService.queryStatus(trackId)) and do
+    // NOT resubmit. Only submit when trackId is null.
+    if (invoice.trackId) {
+      this.logger.warn(
+        `Invoice ${invoiceId} already has trackId ${invoice.trackId} — reconciling via status poll instead of resubmitting`,
+      );
+      await this.queueService.enqueueStatusPoll({ invoiceId, tenantId, companyId, attempt: 1 });
+      return { status: 'RECONCILE', trackId: invoice.trackId };
     }
 
     // Fix 4n: ordering check for credit/debit notes.
@@ -262,6 +278,16 @@ export class EcfProcessingProcessor extends WorkerHost {
       });
 
       this.logger.info(`${invoice.encf} → DGII: ${newStatus} | TrackId: ${submissionResult.trackId}`);
+
+      // FIX G (P2): DGII REJECTED the e-CF (bad data) → it will never be a valid
+      // comprobante, so refund the quota it consumed at emission. Idempotent via
+      // the usageReverted flag (a later VOID won't double-refund). ERROR/
+      // CONTINGENCY are NOT refunded here — they are transient/retriable.
+      if (newStatus === InvoiceStatus.REJECTED) {
+        await this.usageService
+          .revertUsage(invoiceId, companyId)
+          .catch((err) => this.logger.error({ err }, `Usage revert failed for rejected ${invoice.encf}`));
+      }
 
       // 7. Fire INVOICE_SUBMITTED when DGII assigned a TrackId (regardless of
       //    the subsequent status). Subscribers use this to record the DGII

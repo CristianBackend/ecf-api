@@ -350,6 +350,10 @@ model Invoice {
   foreignBeneficiaryInfo Json?  @map("foreign_beneficiary_info") @db.JsonB
   retentionAmount Decimal?      @map("retention_amount") @db.Decimal(18, 2)
 
+  // Billing: set true once this invoice's quota consumption has been reverted
+  // (REJECTED / VOIDED). Idempotency guard so quota is refunded at most once.
+  usageReverted   Boolean       @default(false) @map("usage_reverted")
+
   // Metadata
   metadata        Json?         @db.JsonB
   createdAt       DateTime      @default(now()) @map("created_at")
@@ -366,6 +370,11 @@ model Invoice {
   @@index([encf])
   @@index([status])
   @@index([createdAt])
+  // NOTE (FIX C): a PARTIAL unique index (company_id, ecf_type, encf)
+  // WHERE encf IS NOT NULL is created in migration
+  // 20260608120000_billing_p4_trackid_safety as a DB-level safety net against
+  // duplicate ENCF. Prisma's DSL can't express partial uniques, so it lives in
+  // raw SQL; multiple NULL-encf (draft) rows remain allowed.
   @@map("invoices")
 }
 

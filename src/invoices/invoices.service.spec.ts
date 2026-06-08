@@ -130,6 +130,12 @@ function makeMocks() {
     incrementInvoiceCount: jest.fn().mockResolvedValue(undefined) as Mock,
   };
 
+  const usageService = {
+    incrementUsage: jest.fn().mockResolvedValue(undefined) as Mock,
+    notifyThresholds: jest.fn().mockResolvedValue(undefined) as Mock,
+    revertUsage: jest.fn().mockResolvedValue(undefined) as Mock,
+  };
+
   return {
     prisma,
     xmlBuilder,
@@ -142,6 +148,7 @@ function makeMocks() {
     certificatesService,
     validationService,
     billingService,
+    usageService,
   };
 }
 
@@ -159,6 +166,7 @@ function buildService(mocks: ReturnType<typeof makeMocks>) {
     mocks.webhooksService as any,
     mocks.billingService as any,
     makeTestLogger(),
+    mocks.usageService as any,
   );
 }
 
