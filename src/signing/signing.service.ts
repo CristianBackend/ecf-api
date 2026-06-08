@@ -3,11 +3,6 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { SignedXml } from 'xml-crypto';
 import { DOMParser } from '@xmldom/xmldom';
 import { Signature as DgiiSignature } from 'dgii-ecf';
-import {
-  buildStandardQrUrl,
-  buildFcUnder250kQrUrl,
-  getAmbiente,
-} from '../xml-builder/ecf-types';
 
 // Kept for verifySignedXml() which still uses xml-crypto directly
 const DSIG_NS = 'http://www.w3.org/2000/09/xmldsig#';
@@ -159,44 +154,6 @@ export class SigningService {
     );
     if (!match) return '';
     return this.generateSecurityCode(match[1].replace(/\s/g, ''));
-  }
-
-  /**
-   * Build DGII-compliant QR URL for standard e-CF or FC under 250K.
-   */
-  buildQrUrl(params: {
-    rncEmisor: string;
-    rncComprador: string;
-    encf: string;
-    fechaEmision: Date;
-    montoTotal: number;
-    fechaFirma: Date;
-    securityCode: string;
-    isFcUnder250k: boolean;
-    dgiiEnv: string;
-  }): string {
-    const ambiente = getAmbiente(params.dgiiEnv);
-
-    if (params.isFcUnder250k) {
-      return buildFcUnder250kQrUrl({
-        rncEmisor: params.rncEmisor,
-        encf: params.encf,
-        montoTotal: params.montoTotal.toFixed(2),
-        codigoSeguridad: params.securityCode,
-        ambiente,
-      });
-    }
-
-    return buildStandardQrUrl({
-      rncEmisor: params.rncEmisor,
-      rncComprador: params.rncComprador || '',
-      encf: params.encf,
-      fechaEmision: formatDateDgii(params.fechaEmision),
-      montoTotal: params.montoTotal.toFixed(2),
-      fechaFirma: formatDateTimeFirma(params.fechaFirma),
-      codigoSeguridad: params.securityCode,
-      ambiente,
-    });
   }
 
   /**
@@ -391,11 +348,6 @@ function toGmt4(d: Date): {
     minutes: get('minute'),
     seconds: get('second'),
   };
-}
-
-function formatDateDgii(d: Date): string {
-  const t = toGmt4(d);
-  return `${String(t.day).padStart(2, '0')}-${String(t.month).padStart(2, '0')}-${t.year}`;
 }
 
 function formatDateTimeFirma(d: Date): string {

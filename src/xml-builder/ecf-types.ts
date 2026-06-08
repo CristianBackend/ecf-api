@@ -268,43 +268,12 @@ export function getAmbiente(env: string): string {
   return DGII_ENDPOINTS[env as keyof typeof DGII_ENDPOINTS]?.ambiente || 'testecf';
 }
 
-/**
- * Build QR URL for standard e-CF per DGII Descripción Técnica p.37-39.
- * Pattern: https://ecf.dgii.gov.do/{ambiente}/consultatimbre?...
- * Parameters per spec example: rncemisor, rnccomprador, encf, fechaemision,
- *                               montototal, fechafirma, codigoseguridad
- */
-export function buildStandardQrUrl(params: {
-  rncEmisor: string;
-  rncComprador: string;
-  encf: string;
-  fechaEmision: string;     // dd-MM-aaaa
-  montoTotal: string;       // X.XX
-  fechaFirma: string;       // dd-MM-aaaa HH:mm:ss
-  codigoSeguridad: string;  // first 6 hex of SignatureValue hash
-  ambiente: string;         // testecf | certecf | ecf
-}): string {
-  const p = params;
-  const baseUrl = `https://ecf.dgii.gov.do/${p.ambiente}/ConsultaTimbre`;
-  return `${baseUrl}?rncemisor=${p.rncEmisor}&rnccomprador=${p.rncComprador}&encf=${p.encf}&fechaemision=${p.fechaEmision}&montototal=${p.montoTotal}&fechafirma=${encodeURIComponent(p.fechaFirma)}&codigoseguridad=${p.codigoSeguridad}`;
-}
-
-/**
- * Build QR URL for FC < 250K per DGII Descripción Técnica p.37-39.
- * Pattern: https://fc.dgii.gov.do/{ambiente}/consultatimbrefc?...
- * Parameters per spec example: rncemisor, encf, montototal, codigoseguridad
- */
-export function buildFcUnder250kQrUrl(params: {
-  rncEmisor: string;
-  encf: string;
-  montoTotal: string;
-  codigoSeguridad: string;
-  ambiente: string;         // testecf | certecf | ecf
-}): string {
-  const p = params;
-  const baseUrl = `https://fc.dgii.gov.do/${p.ambiente}/ConsultaTimbreFC`;
-  return `${baseUrl}?rncemisor=${p.rncEmisor}&encf=${p.encf}&montototal=${p.montoTotal}&codigoseguridad=${p.codigoSeguridad}`;
-}
+// FIX 8: buildStandardQrUrl / buildFcUnder250kQrUrl were removed. They did NOT
+// encodeURIComponent the CodigoSeguridad (first 6 chars of the base64 SignatureValue,
+// which may contain '+' or '/'), producing broken QR URLs ("No fue encontrada").
+// The single source of truth for QR generation is now QrBuilder in
+// src/representacion-impresa/services/qr-builder.service.ts, which encodes every
+// parameter and is the implementation validated in DGII certification step 5.
 
 // ============================================================
 // eNCF FORMAT UTILITIES

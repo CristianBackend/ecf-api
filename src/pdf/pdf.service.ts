@@ -4,7 +4,7 @@ import * as QRCode from 'qrcode';
 import * as puppeteer from 'puppeteer';
 import type { Browser } from 'puppeteer';
 import { PrismaService } from '../prisma/prisma.service';
-import { SigningService } from '../signing/signing.service';
+import { QrBuilder, DgiiEnv } from '../representacion-impresa/services/qr-builder.service';
 import { ECF_TYPE_NAMES, FC_FULL_SUBMISSION_THRESHOLD } from '../xml-builder/ecf-types';
 import { fmtDateGmt4, fmtDateTimeGmt4 } from '../common/utils/date-format.util';
 
@@ -14,7 +14,10 @@ export class PdfService implements OnModuleDestroy {
   private browser: Browser | null = null;
   constructor(
     private readonly prisma: PrismaService,
-    private readonly signingService: SigningService,
+    // FIX 8: use the certification-validated QR generator (encodes ALL params,
+    // including CodigoSeguridad whose base64 may contain '+'/'/'). Replaces the
+    // removed signingService.buildQrUrl which left CodigoSeguridad un-encoded.
+    private readonly qrBuilder: QrBuilder,
     @InjectPinoLogger(PdfService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -40,16 +43,16 @@ export class PdfService implements OnModuleDestroy {
       invoice.ecfType === 'E32' &&
       Number(invoice.totalAmount) < FC_FULL_SUBMISSION_THRESHOLD;
 
-    const qrUrl = this.signingService.buildQrUrl({
+    const qrUrl = this.qrBuilder.buildUrl({
+      isRfce: isFcUnder250k,
+      dgiiEnv: invoice.company.dgiiEnv as DgiiEnv,
       rncEmisor: invoice.company.rnc,
-      rncComprador: invoice.buyerRnc || '',
+      rncComprador: invoice.buyerRnc || undefined,
       encf: invoice.encf || '',
       fechaEmision: invoice.createdAt,
       montoTotal: Number(invoice.totalAmount),
       fechaFirma: invoice.signedAt || invoice.createdAt,
-      securityCode: invoice.securityCode || '000000',
-      isFcUnder250k,
-      dgiiEnv: invoice.company.dgiiEnv,
+      codigoSeguridad: invoice.securityCode || '000000',
     });
 
     // Generate QR as embedded data URL — no external network dependency

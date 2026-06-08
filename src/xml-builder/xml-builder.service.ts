@@ -117,6 +117,12 @@ export class XmlBuilderService {
     const paginacion = input.paginacion?.length
       ? this.buildPaginacion(input.paginacion)
       : '';
+    // FIX 7 (audit): InformacionReferencia is minOccurs="1" for e-CF-33/34. This is
+    // ALREADY enforced upstream by validationService.validateInvoiceInput() →
+    // validateReference() (validation.service.ts), which is called at the top of
+    // this method and throws BadRequestException when an E33/E34 lacks `reference`.
+    // No duplicate guard is added here. The audit's "silent omission" was a false
+    // positive — buildEcfXml never reaches this line without a reference for 33/34.
     const referencia = REQUIRES_REFERENCE.includes(typeCode) && input.reference
       ? this.buildInformacionReferencia(input.reference)
       : '';
@@ -639,11 +645,23 @@ export class XmlBuilderService {
     // set's expectation of an absent value.
     //
     // E41/E43/E47 have always omitted TipoIngresos; that exclusion stays.
+    //
+    // FIX 2: TipoIngresos is minOccurs="1" (MANDATORY) in e-CF-31, e-CF-32,
+    // e-CF-44, e-CF-45 and e-CF-46, but minOccurs="0" (optional) in e-CF-33 and
+    // e-CF-34. The previous code omitted it whenever incomeType was undefined,
+    // which produces XSD-invalid XML for the mandatory types. We now emit a
+    // default '01' (Ingresos por Operaciones) for the mandatory types when the
+    // caller didn't provide one, while keeping E33/E34 optional (omit when absent,
+    // per the Feb-2025 DGII relaxation documented above).
     const noTipoIngresos = [41, 43, 47];
+    const tipoIngresoOptional = [33, 34]; // minOccurs=0 per e-CF-33/34.xsd
     if (!noTipoIngresos.includes(typeCode)) {
       const tipoIngreso = input.items[0]?.incomeType;
       if (tipoIngreso !== undefined && tipoIngreso !== null) {
         xml += `      <TipoIngresos>${String(tipoIngreso).padStart(2, '0')}</TipoIngresos>\n`;
+      } else if (!tipoIngresoOptional.includes(typeCode)) {
+        // Mandatory (31/32/44/45/46) and caller omitted it → emit conformant default.
+        xml += `      <TipoIngresos>01</TipoIngresos>\n`;
       }
     }
 
@@ -879,27 +897,42 @@ export class XmlBuilderService {
         xml += `      <ProvinciaComprador>${escapeXml(buyer.province)}</ProvinciaComprador>\n`;
       }
 
-      // FechaEntrega, ContactoEntrega, DireccionEntrega, TelefonoAdicional (XSD order)
-      if (buyer.deliveryDate) {
-        xml += `      <FechaEntrega>${escapeXml(buyer.deliveryDate)}</FechaEntrega>\n`;
-      }
-      if (buyer.deliveryContact) {
-        xml += `      <ContactoEntrega>${escapeXml(buyer.deliveryContact)}</ContactoEntrega>\n`;
-      }
-      if (buyer.deliveryAddress) {
-        xml += `      <DireccionEntrega>${escapeXml(buyer.deliveryAddress)}</DireccionEntrega>\n`;
-      }
-      if (buyer.additionalPhone) {
-        xml += `      <TelefonoAdicional>${escapeXml(buyer.additionalPhone)}</TelefonoAdicional>\n`;
+      // FIX 6: PaisComprador exists only in e-CF-46.xsd and its position is right
+      // AFTER ProvinciaComprador and BEFORE FechaEntrega (e-CF-46.xsd:85). Emit it
+      // here (inside the non-E47 block) so E46 keeps strict xs:sequence order.
+      if (typeCode === 46 && buyer.country) {
+        xml += `      <PaisComprador>${escapeXml(buyer.country)}</PaisComprador>\n`;
       }
 
-      // FechaOrdenCompra, NumeroOrdenCompra, CodigoInternoComprador (XSD order)
-      if (buyer.orderDate) {
-        xml += `      <FechaOrdenCompra>${escapeXml(buyer.orderDate)}</FechaOrdenCompra>\n`;
+      // FechaEntrega, ContactoEntrega, DireccionEntrega, TelefonoAdicional (XSD order)
+      // FIX 4: e-CF-41.xsd Comprador does NOT declare these delivery/order fields
+      // (they exist for 31/32/33/34/44/45/46). Skip the whole block for E41 so it
+      // never emits phantom elements; CodigoInternoComprador/ResponsablePago/
+      // InformacionAdicionalComprador below ARE valid for E41 and stay.
+      if (typeCode !== 41) {
+        if (buyer.deliveryDate) {
+          xml += `      <FechaEntrega>${escapeXml(buyer.deliveryDate)}</FechaEntrega>\n`;
+        }
+        if (buyer.deliveryContact) {
+          xml += `      <ContactoEntrega>${escapeXml(buyer.deliveryContact)}</ContactoEntrega>\n`;
+        }
+        if (buyer.deliveryAddress) {
+          xml += `      <DireccionEntrega>${escapeXml(buyer.deliveryAddress)}</DireccionEntrega>\n`;
+        }
+        if (buyer.additionalPhone) {
+          xml += `      <TelefonoAdicional>${escapeXml(buyer.additionalPhone)}</TelefonoAdicional>\n`;
+        }
+
+        // FechaOrdenCompra, NumeroOrdenCompra (XSD order)
+        if (buyer.orderDate) {
+          xml += `      <FechaOrdenCompra>${escapeXml(buyer.orderDate)}</FechaOrdenCompra>\n`;
+        }
+        if (buyer.orderNumber) {
+          xml += `      <NumeroOrdenCompra>${escapeXml(buyer.orderNumber)}</NumeroOrdenCompra>\n`;
+        }
       }
-      if (buyer.orderNumber) {
-        xml += `      <NumeroOrdenCompra>${escapeXml(buyer.orderNumber)}</NumeroOrdenCompra>\n`;
-      }
+
+      // CodigoInternoComprador (valid for E41 too — XSD order)
       if (buyer.internalCode) {
         xml += `      <CodigoInternoComprador>${escapeXml(buyer.internalCode)}</CodigoInternoComprador>\n`;
       }
@@ -913,10 +946,8 @@ export class XmlBuilderService {
       }
     }
 
-    // PaisComprador: solo E46 (opcional, código 3)
-    if (typeCode === 46 && buyer.country) {
-      xml += `      <PaisComprador>${escapeXml(buyer.country)}</PaisComprador>\n`;
-    }
+    // PaisComprador for E46 is emitted earlier (after ProvinciaComprador) per FIX 6
+    // to satisfy the e-CF-46.xsd element order.
 
     xml += `    </Comprador>`;
     return xml;
@@ -1040,10 +1071,13 @@ export class XmlBuilderService {
         xml += `        <ImpuestoAdicional>\n`;
         xml += `          <TipoImpuesto>${entry.tipoImpuesto}</TipoImpuesto>\n`;
         xml += `          <TasaImpuestoAdicional>${entry.tasaImpuestoAdicional}</TasaImpuestoAdicional>\n`;
-        if (entry.montoIscEspecifico && entry.montoIscEspecifico > 0) {
+        // FIX 5b: e-CF-44.xsd ImpuestoAdicional (Totales) allows ONLY
+        // OtrosImpuestosAdicionales — not the two MontoImpuestoSelectivo* fields
+        // (those exist for 31/32/33/34/45). Suppress them for E44.
+        if (typeCode !== 44 && entry.montoIscEspecifico && entry.montoIscEspecifico > 0) {
           xml += `          <MontoImpuestoSelectivoConsumoEspecifico>${fmt(entry.montoIscEspecifico)}</MontoImpuestoSelectivoConsumoEspecifico>\n`;
         }
-        if (entry.montoIscAdvalorem && entry.montoIscAdvalorem > 0) {
+        if (typeCode !== 44 && entry.montoIscAdvalorem && entry.montoIscAdvalorem > 0) {
           xml += `          <MontoImpuestoSelectivoConsumoAdvalorem>${fmt(entry.montoIscAdvalorem)}</MontoImpuestoSelectivoConsumoAdvalorem>\n`;
         }
         if (entry.otrosImpuestosAdicionales && entry.otrosImpuestosAdicionales > 0) {
@@ -1134,14 +1168,23 @@ export class XmlBuilderService {
   private buildDetallesItem(items: InvoiceItemInput[], indicadorMontoGravado: number, typeCode?: number, currency?: { code: string; exchangeRate: number }): string {
     let xml = '  <DetallesItems>\n';
 
-    // Per XSD: types that have ISC item-level fields (CantidadReferencia, GradosAlcohol, etc.)
-    const hasIscItemFields = [31, 32, 33, 34, 44, 45];
+    // Per XSD: types that have ISC item-level reference fields (CantidadReferencia,
+    // TablaSubcantidad, GradosAlcohol, PrecioUnitarioReferencia).
+    // FIX 5a: E44's Item does NOT declare these (e-CF-44.xsd) — only 31/32/33/34/45 do.
+    const hasIscItemFields = [31, 32, 33, 34, 45];
     const emitIscFields = typeCode ? hasIscItemFields.includes(typeCode) : true;
+
+    // TablaImpuestoAdicional (child: TipoImpuesto only) IS declared for E44
+    // (e-CF-44.xsd:249) as well as 31/32/33/34/45 — kept separate so E44 still emits it.
+    const hasImpuestoAdicionalTable = [31, 32, 33, 34, 44, 45];
+    const emitImpuestoAdicionalTable = typeCode ? hasImpuestoAdicionalTable.includes(typeCode) : true;
 
     // Per XSD: types that require Retencion block (E41: minOccurs=1, E47: minOccurs=1)
     const retencionRequired = typeCode === 41 || typeCode === 47;
-    // E31/E32/E33/E34 have optional Retencion (minOccurs=0)
-    const retencionOptional = [31, 32, 33, 34].includes(typeCode || 0);
+    // E31/E33/E34 have optional Retencion (minOccurs=0).
+    // FIX 1: E32 does NOT declare <Retencion> in its Item at all (e-CF-32.xsd),
+    // unlike E31/E33/E34 (e-CF-31.xsd:236). Removing 32 prevents a phantom element.
+    const retencionOptional = [31, 33, 34].includes(typeCode || 0);
     // E43/E44/E45/E46 have NO Retencion element in their XSD at all
     const noRetencion = [43, 44, 45, 46].includes(typeCode || 0);
 
@@ -1310,7 +1353,8 @@ export class XmlBuilderService {
       }
 
       // M3: RecargoMonto (optional, after DescuentoMonto/TablaSubDescuento per XSD)
-      if (surcharge > 0) {
+      // FIX 3: e-CF-47.xsd has no RecargoMonto in Item — guard like DescuentoMonto.
+      if (surcharge > 0 && typeCode !== 47) {
         xml += `      <RecargoMonto>${item.rawText?.RecargoMonto ?? fmt(surcharge)}</RecargoMonto>\n`;
       }
 
@@ -1319,7 +1363,8 @@ export class XmlBuilderService {
       // DGII test E410000000007 has 5 items × {tipo:'%', porcentaje:'1.00',
       // monto:varies} and previously rejected with "El campo TablaSubRecargo
       // de la sección DetallesItems de la línea 1 no es válido".
-      if (item.subRecargos && item.subRecargos.length > 0) {
+      // FIX 3: e-CF-47.xsd has no TablaSubRecargo in Item — guard like TablaSubDescuento.
+      if (item.subRecargos && item.subRecargos.length > 0 && typeCode !== 47) {
         xml += `      <TablaSubRecargo>\n`;
         for (const sub of item.subRecargos) {
           xml += `        <SubRecargo>\n`;
@@ -1336,8 +1381,9 @@ export class XmlBuilderService {
       }
 
       // 22. TablaImpuestoAdicional — per XSD: contains ImpuestoAdicional > TipoImpuesto ONLY
-      // Only for types 31/32/33/34/44/45
-      if (emitIscFields && item.additionalTaxCode) {
+      // Only for types 31/32/33/34/44/45 (FIX 5a: uses its own flag so E44 keeps this
+      // even though E44 lost the ISC reference fields above).
+      if (emitImpuestoAdicionalTable && item.additionalTaxCode) {
         xml += `      <TablaImpuestoAdicional>\n`;
         xml += `        <ImpuestoAdicional>\n`;
         xml += `          <TipoImpuesto>${item.additionalTaxCode}</TipoImpuesto>\n`;

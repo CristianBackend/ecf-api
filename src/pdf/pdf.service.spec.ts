@@ -3,7 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { getLoggerToken } from 'nestjs-pino';
 import { PdfService } from './pdf.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { SigningService } from '../signing/signing.service';
+import { QrBuilder } from '../representacion-impresa/services/qr-builder.service';
 
 // Stub QRCode so tests don't perform actual image generation
 jest.mock('qrcode', () => ({
@@ -102,10 +102,10 @@ describe('PdfService', () => {
   beforeEach(async () => {
     prisma = { invoice: { findFirst: jest.fn() } };
 
-    const signing = {
-      buildQrUrl: jest
+    const qrBuilder = {
+      buildUrl: jest
         .fn()
-        .mockReturnValue('https://ecf.dgii.gov.do/testecf/consultas?test=1'),
+        .mockReturnValue('https://ecf.dgii.gov.do/testecf/ConsultaTimbre?test=1'),
     };
 
     const logger = {
@@ -119,7 +119,7 @@ describe('PdfService', () => {
       providers: [
         PdfService,
         { provide: PrismaService, useValue: prisma },
-        { provide: SigningService, useValue: signing },
+        { provide: QrBuilder, useValue: qrBuilder },
         { provide: getLoggerToken(PdfService.name), useValue: logger },
       ],
     }).compile();

@@ -349,15 +349,25 @@ describe('XmlBuilderService', () => {
       expect(tagContent(xml, 'IndicadorMontoGravado')).toBe('1');
     });
 
-    it('Fix 4n: omits TipoIngresos when incomeType is undefined (XSD allows it as minOccurs=0)', () => {
-      // Fix 4c previously emitted '01' as default because we thought the XSD
-      // required TipoIngresos at a fixed position; but the DGII Feb 2025
-      // schema update made TipoIngresos minOccurs="0" for E33/E34, and the
-      // certification dataset for E340000000015 actually expects the field
-      // ABSENT (Excel cell is blank, DGII rejects '01' as "valor enviado
-      // (01) no coincide con () del conjunto de datos entregados").
+    it('FIX 2: emits default TipoIngresos=01 for E31 when incomeType is undefined (e-CF-31.xsd minOccurs=1)', () => {
+      // e-CF-31.xsd:19 declares TipoIngresos minOccurs="1" (MANDATORY). Omitting it
+      // yields XSD-invalid XML that DGII rejects. When the caller doesn't provide
+      // incomeType, the builder now emits the conformant default '01'.
+      // (The previous "Fix 4n" omission conflated E31/E32 with the E33/E34
+      // minOccurs=0 relaxation — see the E34 test below for the optional case.)
       const input = makeInput('E31', { items: [basicItem({ incomeType: undefined })] });
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(tagContent(xml, 'TipoIngresos')).toBe('01');
+    });
+
+    it('omits TipoIngresos for E34 when incomeType is undefined (e-CF-34.xsd minOccurs=0)', () => {
+      // For E33/E34 the field is optional (DGII Feb 2025 update). The certification
+      // dataset for E340000000015 expects it ABSENT, so we omit when not provided.
+      const input = makeInput('E34', {
+        reference: { encf: 'E310000000050', date: '01-01-2025', modificationCode: 1 },
+        items: [basicItem({ incomeType: undefined })],
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E340000000001');
       expect(hasTag(xml, 'TipoIngresos')).toBe(false);
     });
 
