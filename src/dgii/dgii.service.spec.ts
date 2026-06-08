@@ -23,6 +23,7 @@ function makeService() {
     dgiiToken: {
       findFirst: jest.fn(async () => null) as Mock,
       deleteMany: jest.fn(async () => ({})) as Mock,
+      delete: jest.fn(async () => ({})) as Mock,
       create: jest.fn(async () => ({})) as Mock,
     },
   };
@@ -31,10 +32,17 @@ function makeService() {
     signXml: jest.fn(() => ({ signedXml: '<signed/>', securityCode: 'ABC123', signTime: new Date() })) as Mock,
   };
 
+  // Identity round-trip: tokens pass through unchanged so value assertions hold.
+  const encryption = {
+    encryptString: jest.fn((v: string) => v) as Mock,
+    decryptString: jest.fn((v: string) => v) as Mock,
+  };
+
   const service = new DgiiService(
     config as any,
     prisma as any,
     signingService as any,
+    encryption as any,
     makeTestLogger(),
   );
 

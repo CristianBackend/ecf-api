@@ -21,22 +21,42 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   /**
+   * Validate that a value is a real UUID before it is used as the RLS tenant key.
+   * `SET` / `set_config` cannot bind the *name*, and a malformed tenantId is a
+   * sign of a bug or an injection attempt — fail fast rather than trust it.
+   */
+  private assertTenantId(tenantId: string): void {
+    const UUID_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(tenantId)) {
+      throw new Error('Invalid tenantId for RLS context (must be a UUID)');
+    }
+  }
+
+  /**
    * Set the current tenant context for RLS policies.
    * Call this before any query that should be tenant-scoped.
+   *
+   * FIX 2 (P5): the value is passed as a BOUND parameter via set_config(), not
+   * string-interpolated, so a hostile tenantId cannot break out of the RLS
+   * boundary. `is_local = false` → session-scoped, matching the previous `SET`.
    */
   async setTenantContext(tenantId: string): Promise<void> {
-    await this.$executeRawUnsafe(
-      `SET app.current_tenant = '${tenantId}'`,
-    );
+    this.assertTenantId(tenantId);
+    await this.$executeRaw`SELECT set_config('app.current_tenant', ${tenantId}, false)`;
   }
 
   /**
    * Execute a callback within a tenant context.
    * Uses a transaction to ensure the tenant setting persists.
+   *
+   * FIX 2 (P5): parameterized set_config with `is_local = true` (transaction
+   * scoped, matching the previous `SET LOCAL`).
    */
   async withTenant<T>(tenantId: string, callback: (prisma: PrismaClient) => Promise<T>): Promise<T> {
+    this.assertTenantId(tenantId);
     return this.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe(`SET LOCAL app.current_tenant = '${tenantId}'`);
+      await tx.$executeRaw`SELECT set_config('app.current_tenant', ${tenantId}, true)`;
       return callback(tx as PrismaClient);
     });
   }

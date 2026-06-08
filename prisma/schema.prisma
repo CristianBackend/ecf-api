@@ -336,7 +336,9 @@ model Invoice {
   exchangeRate    Decimal?      @map("exchange_rate") @db.Decimal(12, 4)
 
   // Idempotency
-  idempotencyKey  String?       @unique @map("idempotency_key") @db.VarChar(64)
+  // FIX 3 (P5): idempotency key is unique PER TENANT (see @@unique below), not
+  // globally — otherwise tenant A could read tenant B's invoice by guessing its key.
+  idempotencyKey  String?       @map("idempotency_key") @db.VarChar(64)
 
   // E41: dedicated vendor columns (avoids metadata._originalDto dependency)
   vendorRnc       String?       @map("vendor_rnc") @db.VarChar(11)
@@ -370,6 +372,8 @@ model Invoice {
   @@index([encf])
   @@index([status])
   @@index([createdAt])
+  // FIX 3 (P5): idempotency key unique per-tenant (replaces the global @unique).
+  @@unique([tenantId, idempotencyKey])
   // NOTE (FIX C): a PARTIAL unique index (company_id, ecf_type, encf)
   // WHERE encf IS NOT NULL is created in migration
   // 20260608120000_billing_p4_trackid_safety as a DB-level safety net against

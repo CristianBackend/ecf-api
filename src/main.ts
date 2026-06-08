@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe, RequestMethod } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
@@ -12,8 +13,15 @@ import { buildCorsOriginOption } from './config/cors.util';
 async function bootstrap() {
   // `bufferLogs: true` so any log emitted during module init is held until
   // the pino Logger is adopted via `app.useLogger(...)`.
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
+
+  // FIX 4 (P4): trust the first proxy hop (nginx/ELB) so req.ip and the
+  // ThrottlerGuard key on the real client IP from X-Forwarded-For instead of the
+  // proxy's IP. Without this, behind a proxy ALL traffic shares one rate-limit
+  // bucket. Combined with @SkipThrottle on the /fe controller, DGII's mandated
+  // inbound bursts are never 429-rejected.
+  app.set('trust proxy', 1);
 
   const configService = app.get(ConfigService);
   const logger = app.get(Logger);

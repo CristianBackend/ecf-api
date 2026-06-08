@@ -188,8 +188,12 @@ describe('InvoicesService.create — async pipeline', () => {
     mocks.prisma.auditLog.create.mockResolvedValue({});
     mocks.prisma.tenantPlan.findFirst.mockResolvedValue(null); // billing check in tx
     mocks.prisma.monthlyUsage.upsert.mockResolvedValue({});
-    // findOne() at the end
-    mocks.prisma.invoice.findFirst.mockImplementation(async ({ where }: any) => ({
+    // findFirst is used both for the per-tenant idempotency lookup (FIX 3) and
+    // for findOne() at the end. The idempotency lookup must miss (return null) so
+    // create() proceeds; the by-id lookup returns the created invoice.
+    mocks.prisma.invoice.findFirst.mockImplementation(async ({ where }: any) => {
+      if (where?.idempotencyKey) return null;
+      return ({
       id: where.id ?? 'invoice-uuid-1',
       tenantId: where.tenantId ?? 'tenant-1',
       encf: 'E310000000001',
@@ -198,7 +202,8 @@ describe('InvoicesService.create — async pipeline', () => {
       lines: [],
       company: { rnc: '131234567', businessName: 'Emisor SRL' },
       isRfce: false,
-    }));
+      });
+    });
   });
 
   it('persists invoice with status=QUEUED and enqueues exactly one job', async () => {
@@ -281,7 +286,8 @@ describe('InvoicesService.create — async pipeline', () => {
         status: InvoiceStatus.ACCEPTED,
         idempotencyKey: 'repeated-key',
       };
-      mocks.prisma.invoice.findUnique.mockResolvedValueOnce(existing);
+      // FIX 3: idempotency lookup is now findFirst({ idempotencyKey, tenantId }).
+      mocks.prisma.invoice.findFirst.mockResolvedValueOnce(existing);
 
       const result = await service.create('tenant-1', makeValidDto({
         idempotencyKey: 'repeated-key',
@@ -372,15 +378,18 @@ describe('InvoicesService.create — async pipeline', () => {
         dgiiEnv: 'CERT',
       });
       mocks.sequencesService.getNextEncf.mockResolvedValueOnce('E320000000015');
-      mocks.prisma.invoice.findFirst.mockResolvedValueOnce({
-        id: 'invoice-uuid-1',
-        tenantId: 'tenant-1',
-        encf: 'E320000000015',
-        status: 'QUEUED',
-        ecfType: 'E32',
-        lines: [],
-        company: { rnc: '131234567', businessName: 'Emisor SRL' },
-        isRfce: false,
+      mocks.prisma.invoice.findFirst.mockImplementation(async ({ where }: any) => {
+        if (where?.idempotencyKey) return null; // FIX 3: idempotency lookup misses
+        return {
+          id: 'invoice-uuid-1',
+          tenantId: 'tenant-1',
+          encf: 'E320000000015',
+          status: 'QUEUED',
+          ecfType: 'E32',
+          lines: [],
+          company: { rnc: '131234567', businessName: 'Emisor SRL' },
+          isRfce: false,
+        };
       });
 
       await service.create('tenant-1', makeValidDto({
@@ -418,15 +427,18 @@ describe('InvoicesService.create — async pipeline', () => {
         dgiiEnv: 'CERT',
       });
       mocks.sequencesService.getNextEncf.mockResolvedValueOnce('E320000000015');
-      mocks.prisma.invoice.findFirst.mockResolvedValueOnce({
-        id: 'invoice-uuid-1',
-        tenantId: 'tenant-1',
-        encf: 'E320000000015',
-        status: 'QUEUED',
-        ecfType: 'E32',
-        lines: [],
-        company: { rnc: '131234567', businessName: 'Emisor SRL' },
-        isRfce: false,
+      mocks.prisma.invoice.findFirst.mockImplementation(async ({ where }: any) => {
+        if (where?.idempotencyKey) return null; // FIX 3: idempotency lookup misses
+        return {
+          id: 'invoice-uuid-1',
+          tenantId: 'tenant-1',
+          encf: 'E320000000015',
+          status: 'QUEUED',
+          ecfType: 'E32',
+          lines: [],
+          company: { rnc: '131234567', businessName: 'Emisor SRL' },
+          isRfce: false,
+        };
       });
 
       const dto = makeValidDto({
@@ -507,17 +519,21 @@ describe('InvoicesService.create — async pipeline', () => {
     }
 
     it('E33 with reference.date="DD-MM-YYYY" creates invoice without throwing', async () => {
-      // Setup: make findFirst return a valid E33 invoice after creation
-      mocks.prisma.invoice.findFirst.mockResolvedValue({
-        id: 'invoice-e33-1',
-        tenantId: 'tenant-1',
-        encf: 'E330000000001',
-        status: InvoiceStatus.QUEUED,
-        ecfType: 'E33',
-        lines: [],
-        company: { rnc: '131234567', businessName: 'Emisor SRL' },
-        isRfce: false,
-        referenceDate: new Date(2024, 0, 25),
+      // Setup: make findFirst return a valid E33 invoice after creation.
+      // Must still MISS the per-tenant idempotency lookup (FIX 3) so create runs.
+      mocks.prisma.invoice.findFirst.mockImplementation(async ({ where }: any) => {
+        if (where?.idempotencyKey) return null;
+        return {
+          id: 'invoice-e33-1',
+          tenantId: 'tenant-1',
+          encf: 'E330000000001',
+          status: InvoiceStatus.QUEUED,
+          ecfType: 'E33',
+          lines: [],
+          company: { rnc: '131234567', businessName: 'Emisor SRL' },
+          isRfce: false,
+          referenceDate: new Date(2024, 0, 25),
+        };
       });
 
       await expect(service.create('tenant-1', makeE33Dto())).resolves.not.toThrow();

@@ -21,6 +21,7 @@ import type FormDataType from 'form-data';
 const FormData: typeof FormDataType = require('form-data');
 import { PrismaService } from '../prisma/prisma.service';
 import { SigningService } from '../signing/signing.service';
+import { EncryptionService } from '../common/services/encryption.service';
 import { DGII_ENDPOINTS, DGII_SERVICES, DGII_STATUS, DGII_STATUS_SERVICE_URL, buildDgiiUrl } from '../xml-builder/ecf-types';
 
 /**
@@ -45,6 +46,7 @@ export class DgiiService {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly signingService: SigningService,
+    private readonly encryption: EncryptionService,
     @InjectPinoLogger(DgiiService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -71,8 +73,21 @@ export class DgiiService {
     });
 
     if (cached) {
-      this.logger.debug(`Using cached DGII token for company ${companyId}`);
-      return cached.token;
+      try {
+        // FIX 1 (P5): tokens are stored AES-256-GCM-encrypted at rest. Decrypt
+        // the cached value before use.
+        const plain = this.encryption.decryptString(cached.token);
+        this.logger.debug(`Using cached DGII token for company ${companyId}`);
+        return plain;
+      } catch {
+        // Pre-existing PLAINTEXT token (written before at-rest encryption) or a
+        // corrupted ciphertext — discard it and re-authenticate so we never serve
+        // an unusable token. Never logs the token value.
+        this.logger.warn(
+          `Cached DGII token for company ${companyId} is not decryptable; re-authenticating`,
+        );
+        await this.prisma.dgiiToken.delete({ where: { id: cached.id } }).catch(() => {});
+      }
     }
 
     const baseUrl = this.getBaseUrl(environment);
@@ -92,8 +107,17 @@ export class DgiiService {
       where: { companyId, expiresAt: { lt: new Date() } },
     });
 
+    // FIX 1 (P5): encrypt the token at rest (same AES-256-GCM envelope used for
+    // the .p12 passphrase). A DB dump/replica/SQLi no longer exposes live DGII
+    // session tokens. The plaintext `token` is returned to the caller in-memory.
     await this.prisma.dgiiToken.create({
-      data: { tenantId, companyId, token, environment: environment as any, expiresAt },
+      data: {
+        tenantId,
+        companyId,
+        token: this.encryption.encryptString(token),
+        environment: environment as any,
+        expiresAt,
+      },
     });
 
     this.logger.info(`DGII token obtained for company ${companyId} (${environment})`);

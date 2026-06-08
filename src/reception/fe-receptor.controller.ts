@@ -11,6 +11,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { SkipThrottle } from '@nestjs/throttler';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import * as crypto from 'crypto';
@@ -38,6 +39,12 @@ import { CertificatesService } from '../certificates/certificates.service';
  * - Case-insensitive paths
  * - Always available via internet
  */
+// FIX 4 (P4): the DGII-mandated /fe/* endpoints must always be available. The
+// global 60/min ThrottlerGuard (keyed on client IP) would 429 a legitimate
+// burst/retry storm from DGII — which often arrives from a small set of NAT'd
+// IPs — making the receptor look "down". Skip throttling for this whole
+// controller (seed/validacioncertificado/recepcion/aprobacioncomercial).
+@SkipThrottle()
 @ApiTags('fe-receptor')
 @Controller('fe')
 export class FeReceptorController {

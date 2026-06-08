@@ -69,8 +69,10 @@ export class InvoicesService {
    */
   async create(tenantId: string, dto: CreateInvoiceDto) {
     if (dto.idempotencyKey) {
-      const existing = await this.prisma.invoice.findUnique({
-        where: { idempotencyKey: dto.idempotencyKey },
+      // FIX 3 (P5): scope the idempotency lookup by tenant so one tenant can never
+      // read another tenant's invoice by guessing its idempotency key.
+      const existing = await this.prisma.invoice.findFirst({
+        where: { idempotencyKey: dto.idempotencyKey, tenantId },
       });
       if (existing) {
         this.logger.debug(`Idempotency hit: ${dto.idempotencyKey}`);
