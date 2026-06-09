@@ -20,6 +20,20 @@ interface AuthState extends AuthMeta {
 
 const DEFAULT_META: AuthMeta = { scopes: [], isSuperAdmin: false, mustChangePassword: false };
 
+/**
+ * FIX 2: mirror the backend-derived `isSuperAdmin` flag into a cookie so the
+ * server-side `proxy.ts` can gate admin routes BEFORE render. Defense-in-depth
+ * only — the backend (@RequireScopes(ADMIN) → 403) remains the real boundary.
+ */
+function syncAdminCookie(isSuperAdmin: boolean): void {
+  if (typeof document === 'undefined') return;
+  document.cookie = `ecf-admin=${isSuperAdmin ? '1' : '0'}; path=/; max-age=86400; samesite=lax`;
+}
+function clearAdminCookie(): void {
+  if (typeof document === 'undefined') return;
+  document.cookie = 'ecf-admin=; path=/; max-age=0; samesite=lax';
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -27,9 +41,15 @@ export const useAuthStore = create<AuthState>()(
       tenant: null,
       ...DEFAULT_META,
       _hasHydrated: false,
-      setAuth: (token, tenant, meta) => set({ token, tenant, ...meta }),
+      setAuth: (token, tenant, meta) => {
+        set({ token, tenant, ...meta });
+        syncAdminCookie(meta.isSuperAdmin);
+      },
       setMustChangePassword: (v) => set({ mustChangePassword: v }),
-      clearAuth: () => set({ token: null, tenant: null, ...DEFAULT_META }),
+      clearAuth: () => {
+        set({ token: null, tenant: null, ...DEFAULT_META });
+        clearAdminCookie();
+      },
       setHasHydrated: (v) => set({ _hasHydrated: v }),
       isAuthenticated: () => !!get().token,
     }),
@@ -44,6 +64,9 @@ export const useAuthStore = create<AuthState>()(
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
+        // Re-establish the admin cookie for an already-persisted session so the
+        // proxy sees it on subsequent navigations after a reload.
+        if (state) syncAdminCookie(state.isSuperAdmin);
       },
     },
   ),

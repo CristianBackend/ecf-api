@@ -299,26 +299,31 @@ export class InvoicesService {
         },
       });
 
-      // Increment billing counter inside the same transaction for atomicity.
-      await this.billingService.incrementInvoiceCount(tenantId, tx);
-
-      // FIX E (P2): company-level usage (authoritative via ActivePlanGuard) is
-      // counted INSIDE the emission transaction so a failure — including atomic
-      // quota exhaustion (FIX D) — rolls back the invoice instead of leaking a
-      // free, uncounted emission. If UsageService didn't resolve but this company
-      // is company-billed (has a CompanyPlan), fail loudly rather than count zero.
-      if (this.usageService) {
-        await this.usageService.incrementUsage(dto.companyId, tx);
-      } else {
-        const companyPlan = await tx.companyPlan.findUnique({
-          where: { companyId: dto.companyId },
-        });
-        if (companyPlan) {
+      // FIX 1 (isolation): count exactly ONE billing meter, inside the same
+      // transaction for atomicity. If the company has its own CompanyPlan it is
+      // company-billed (counted via usageService); the legacy TENANT-level meter
+      // must NOT also count it, otherwise two companies of the same owner would
+      // share one TenantPlan quota. This mirrors ActivePlanGuard's fallback: the
+      // tenant meter applies ONLY when the company has no CompanyPlan. Single
+      // companyPlan lookup, reused for both branches (no double query).
+      const companyPlan = await tx.companyPlan.findUnique({
+        where: { companyId: dto.companyId },
+      });
+      if (companyPlan) {
+        // Company-billed → count against the company's OWN usage only.
+        // (FIX E: inside the tx so a failure/quota-exhaustion rolls back the
+        // invoice instead of leaking a free, uncounted emission.)
+        if (this.usageService) {
+          await this.usageService.incrementUsage(dto.companyId, tx);
+        } else {
           throw new Error(
             'UsageService no disponible para una company con CompanyPlan — ' +
               'emisión abortada para no contar cero.',
           );
         }
+      } else {
+        // No CompanyPlan → the legacy tenant-level meter governs this company.
+        await this.billingService.incrementInvoiceCount(tenantId, tx);
       }
 
       return inv;

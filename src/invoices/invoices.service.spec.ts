@@ -86,6 +86,9 @@ function makeMocks() {
     monthlyUsage: {
       upsert: jest.fn() as Mock,
     },
+    companyPlan: {
+      findUnique: jest.fn() as Mock, // FIX 1: drives which billing meter is used
+    },
   };
   // $transaction executes the callback with prisma itself acting as the tx client
   prisma.$transaction = jest.fn((fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
@@ -229,6 +232,28 @@ describe('InvoicesService.create — async pipeline', () => {
     // Response contains the QUEUED status
     expect(result.status).toBe(InvoiceStatus.QUEUED);
     expect(result.encf).toBe('E310000000001');
+  });
+
+  // FIX 1 (isolation): exactly ONE billing meter per emission, chosen by whether
+  // the company has its own CompanyPlan. A company-billed company must NOT also
+  // increment the tenant-level legacy meter (which would share quota across the
+  // owner's companies).
+  it('FIX 1: company WITH a CompanyPlan counts company usage only (NOT the tenant meter)', async () => {
+    mocks.prisma.companyPlan.findUnique.mockResolvedValueOnce({ companyId: 'company-uuid-1' });
+
+    await service.create('tenant-1', makeValidDto());
+
+    expect(mocks.usageService.incrementUsage).toHaveBeenCalledWith('company-uuid-1', expect.anything());
+    expect(mocks.billingService.incrementInvoiceCount).not.toHaveBeenCalled();
+  });
+
+  it('FIX 1: company WITHOUT a CompanyPlan falls back to the tenant meter only', async () => {
+    mocks.prisma.companyPlan.findUnique.mockResolvedValueOnce(null);
+
+    await service.create('tenant-1', makeValidDto());
+
+    expect(mocks.billingService.incrementInvoiceCount).toHaveBeenCalledWith('tenant-1', expect.anything());
+    expect(mocks.usageService.incrementUsage).not.toHaveBeenCalled();
   });
 
   it('records an audit log with action=queued (no "submitted" action)', async () => {
