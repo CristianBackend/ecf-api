@@ -1,13 +1,29 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, BadGatewayException } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { SigningService } from '../signing/signing.service';
 import { DgiiService } from '../dgii/dgii.service';
 import { CertificatesService } from '../certificates/certificates.service';
-import { ResponseXmlBuilder, ArecfInput, AcecfInput } from '../xml-builder/response-xml-builder';
+import { ResponseXmlBuilder, ArecfInput } from '../xml-builder/response-xml-builder';
+import {
+  AcecfXmlBuilder,
+  Step3AcecfInput,
+  formatDateTimeDdMmYyyy,
+} from '../certification-step3/services/acecf-xml-builder.service';
 import { ACECF_EXCLUDED_TYPES, getTypeFromEncf } from '../xml-builder/ecf-types';
 import { WebhookEvent, EcfType, ReceivedDocumentStatus } from '@prisma/client';
+
+/**
+ * FechaEmision for the ACECF must match the original e-CF. issueDate is stored
+ * as a UTC-midnight Date parsed from the incoming XML's dd-MM-yyyy, so it must
+ * be formatted back with UTC getters — a GMT-4 formatter would shift it one day.
+ */
+function formatIssueDateDdMmYyyy(d: Date): string {
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${dd}-${mm}-${d.getUTCFullYear()}`;
+}
 
 @Injectable()
 export class ReceptionService {
@@ -18,6 +34,7 @@ export class ReceptionService {
     private readonly dgiiService: DgiiService,
     private readonly certificatesService: CertificatesService,
     private readonly responseXmlBuilder: ResponseXmlBuilder,
+    private readonly acecfXmlBuilder: AcecfXmlBuilder,
     @InjectPinoLogger(ReceptionService.name)
     private readonly logger: PinoLogger,
   ) {}
@@ -180,21 +197,20 @@ export class ReceptionService {
       throw new BadRequestException('Motivo de rechazo es obligatorio');
     }
 
-    const acecfInput: AcecfInput = {
-      receiverRnc: doc.company.rnc,
-      receiverName: doc.company.businessName,
+    // Single ACECF builder for the whole system: the step3 builder validated
+    // in live DGII certification (official xs:sequence, FechaEmision, no MontoITBIS).
+    const acecfInput: Step3AcecfInput = {
       emitterRnc: doc.emitterRnc,
-      emitterName: doc.emitterName,
-      ecfType: doc.ecfType,
+      receiverRnc: doc.company.rnc,
       encf: doc.encf,
+      issueDate: formatIssueDateDdMmYyyy(doc.issueDate),
       totalAmount: Number(doc.totalAmount),
-      totalItbis: Number(doc.totalItbis || 0),
-      approvalDate: new Date(),
       approved,
       rejectionReason,
+      approvalDatetime: formatDateTimeDdMmYyyy(new Date()),
     };
 
-    const acecfXml = this.responseXmlBuilder.buildAcecfXml(acecfInput);
+    const acecfXml = this.acecfXmlBuilder.buildXml(acecfInput);
 
     const { p12Buffer, passphrase } = await this.certificatesService.getDecryptedCertificate(
       tenantId, doc.companyId,
@@ -211,6 +227,31 @@ export class ReceptionService {
     const acecfFileName = `${doc.company.rnc}${doc.encf}.xml`;
     const result = await this.dgiiService.sendAcecf(signedXml, token, doc.company.dgiiEnv, doc.emitterRnc, acecfFileName);
 
+    const existingMetadata = (doc.metadata as Record<string, any>) || {};
+
+    // Same pattern as ARECF above: only mark APPROVED/REJECTED when DGII
+    // actually accepted the ACECF. On failure, persist the attempt (signed XML
+    // + per-destination delivery result) and surface the error to the caller.
+    if (!result.success) {
+      await this.prisma.receivedDocument.update({
+        where: { id: documentId },
+        data: {
+          acecfXml: signedXml,
+          acecfStatus: 'Error',
+          metadata: {
+            ...existingMetadata,
+            acecfDeliveryError: (result.message || '').slice(0, 1000),
+            acecfAttemptedAt: new Date().toISOString(),
+            acecfEmitterDelivery: result.emitterDelivery,
+          } as any,
+        },
+      });
+      this.logger.warn(`ACECF rejected/failed at DGII for ${doc.encf}: ${result.message}`);
+      throw new BadGatewayException(
+        `DGII no aceptó el ACECF para ${doc.encf}: ${(result.message || 'error desconocido').slice(0, 300)}`,
+      );
+    }
+
     const newStatus = approved ? ReceivedDocumentStatus.APPROVED : ReceivedDocumentStatus.REJECTED;
 
     await this.prisma.receivedDocument.update({
@@ -221,7 +262,12 @@ export class ReceptionService {
         acecfSentAt: new Date(),
         acecfTrackId: result.trackId,
         acecfStatus: approved ? 'Aprobado' : 'Rechazado',
-        rejectionReason: rejectionReason || null,
+        rejectionReason: approved ? null : rejectionReason || null,
+        // Traceability of the emitter leg (DELIVERED / FAILED / NOT_IN_DIRECTORY / SKIPPED)
+        metadata: {
+          ...existingMetadata,
+          acecfEmitterDelivery: result.emitterDelivery,
+        } as any,
       },
     });
 

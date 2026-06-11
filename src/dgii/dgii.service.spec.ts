@@ -170,6 +170,10 @@ describe('FIX 7 — ReceptionService.sendArecf only marks ACKNOWLEDGED on succes
       buildArecfXml: jest.fn(() => '<ARECF/>') as Mock,
     };
 
+    const acecfXmlBuilder = {
+      buildXml: jest.fn(() => '<ACECF/>') as Mock,
+    };
+
     const service = new ReceptionService(
       prisma as any,
       webhooksService as any,
@@ -177,6 +181,7 @@ describe('FIX 7 — ReceptionService.sendArecf only marks ACKNOWLEDGED on succes
       dgiiService as any,
       certificatesService as any,
       responseXmlBuilder as any,
+      acecfXmlBuilder as any,
       makeTestLogger(),
     );
 

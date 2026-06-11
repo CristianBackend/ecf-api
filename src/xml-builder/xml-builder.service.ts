@@ -117,14 +117,12 @@ export class XmlBuilderService {
     const paginacion = input.paginacion?.length
       ? this.buildPaginacion(input.paginacion)
       : '';
-    // FIX 7 (audit): InformacionReferencia is minOccurs="1" for e-CF-33/34. This is
-    // ALREADY enforced upstream by validationService.validateInvoiceInput() →
-    // validateReference() (validation.service.ts), which is called at the top of
-    // this method and throws BadRequestException when an E33/E34 lacks `reference`.
-    // No duplicate guard is added here. The audit's "silent omission" was a false
-    // positive — buildEcfXml never reaches this line without a reference for 33/34.
-    const referencia = REQUIRES_REFERENCE.includes(typeCode) && input.reference
-      ? this.buildInformacionReferencia(input.reference)
+    // InformacionReferencia: obligatoria en E33/E34 (enforced upstream by
+    // validateReference) y OPCIONAL (minOccurs=0 en el XSD) en todos los demás
+    // tipos — necesaria p.ej. para el e-CF de reemplazo de un NCF en papel
+    // emitido en contingencia tipo 2 (CodigoModificacion=4, NCFModificado serie B).
+    const referencia = input.reference
+      ? this.buildInformacionReferencia(input.reference, typeCode)
       : '';
 
     // Assemble final XML per XSD xs:sequence order
@@ -367,6 +365,14 @@ export class XmlBuilderService {
   /**
    * Build ANECF XML for voiding unused sequences or
    * e-CF that were signed but not sent to DGII/receptor.
+   *
+   * Per DGII "Formato Anulación de e-NCF v1.0" (xsd/ANECF.xsd oficial):
+   * - Encabezado: Version, RncEmisor (casing oficial), CantidadeNCFAnulados
+   *   (total de NCF, no de rangos), FechaHoraAnulacioneNCF (dd-MM-yyyy HH:mm:ss).
+   * - DetalleAnulacion: una <Anulacion> por TIPO de e-CF (NoLinea 1..10), cada
+   *   una con TipoeCF, TablaRangoSecuenciasAnuladaseNCF con hasta 10.000
+   *   <Secuencias> (SecuenciaeNCFDesde/SecuenciaeNCFHasta) y su CantidadeNCFAnulados.
+   * La firma (Signature, xs:any minOccurs=1) la agrega SigningService.
    */
   buildAnecfXml(
     emitter: EmitterData,
@@ -377,25 +383,52 @@ export class XmlBuilderService {
   ): string {
     const now = new Date();
 
-    let rangesXml = '';
-    sequences.forEach((seq, i) => {
-      rangesXml += `    <Rango>\n`;
-      rangesXml += `      <NumeroLinea>${i + 1}</NumeroLinea>\n`;
-      rangesXml += `      <eNCFDesde>${escapeXml(seq.encfDesde)}</eNCFDesde>\n`;
-      rangesXml += `      <eNCFHasta>${escapeXml(seq.encfHasta)}</eNCFHasta>\n`;
-      rangesXml += `    </Rango>\n`;
-    });
+    // Group ranges by e-CF type (chars 2-3 of the eNCF): one Anulacion line per type
+    const byType = new Map<number, Array<{ desde: string; hasta: string; count: number }>>();
+    for (const seq of sequences) {
+      const typeCode = parseInt(seq.encfDesde.substring(1, 3), 10);
+      const fromNum = parseInt(seq.encfDesde.substring(3), 10);
+      const toNum = parseInt(seq.encfHasta.substring(3), 10);
+      const ranges = byType.get(typeCode) ?? [];
+      ranges.push({ desde: seq.encfDesde, hasta: seq.encfHasta, count: toNum - fromNum + 1 });
+      byType.set(typeCode, ranges);
+    }
+
+    const totalAnulados = [...byType.values()].flat().reduce((sum, r) => sum + r.count, 0);
+
+    let detalleXml = '';
+    let noLinea = 0;
+    for (const typeCode of [...byType.keys()].sort((a, b) => a - b)) {
+      const ranges = byType.get(typeCode)!;
+      const typeTotal = ranges.reduce((sum, r) => sum + r.count, 0);
+      noLinea += 1;
+
+      detalleXml += `    <Anulacion>\n`;
+      detalleXml += `      <NoLinea>${noLinea}</NoLinea>\n`;
+      detalleXml += `      <TipoeCF>${typeCode}</TipoeCF>\n`;
+      detalleXml += `      <TablaRangoSecuenciasAnuladaseNCF>\n`;
+      for (const range of ranges) {
+        detalleXml += `        <Secuencias>\n`;
+        detalleXml += `          <SecuenciaeNCFDesde>${escapeXml(range.desde)}</SecuenciaeNCFDesde>\n`;
+        detalleXml += `          <SecuenciaeNCFHasta>${escapeXml(range.hasta)}</SecuenciaeNCFHasta>\n`;
+        detalleXml += `        </Secuencias>\n`;
+      }
+      detalleXml += `      </TablaRangoSecuenciasAnuladaseNCF>\n`;
+      detalleXml += `      <CantidadeNCFAnulados>${typeTotal}</CantidadeNCFAnulados>\n`;
+      detalleXml += `    </Anulacion>\n`;
+    }
 
     const xml = [
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<ANECF>',
       `  <Encabezado>`,
-      `    <RNCEmisor>${escapeXml(emitter.rnc)}</RNCEmisor>`,
-      `    <FechaAnulacion>${formatDate(now)}</FechaAnulacion>`,
-      `    <CantidadRangos>${sequences.length}</CantidadRangos>`,
+      `    <Version>1.0</Version>`,
+      `    <RncEmisor>${escapeXml(emitter.rnc)}</RncEmisor>`,
+      `    <CantidadeNCFAnulados>${totalAnulados}</CantidadeNCFAnulados>`,
+      `    <FechaHoraAnulacioneNCF>${formatDateTime(now)}</FechaHoraAnulacioneNCF>`,
       `  </Encabezado>`,
       `  <DetalleAnulacion>`,
-      rangesXml.trimEnd(),
+      detalleXml.trimEnd(),
       `  </DetalleAnulacion>`,
       '</ANECF>',
     ].join('\n');
@@ -1619,7 +1652,7 @@ export class XmlBuilderService {
     return xml;
   }
 
-  private buildInformacionReferencia(ref: any): string {
+  private buildInformacionReferencia(ref: any, typeCode: number): string {
     let xml = '  <InformacionReferencia>\n';
     xml += `    <NCFModificado>${escapeXml(ref.encf)}</NCFModificado>\n`;
 
@@ -1631,8 +1664,10 @@ export class XmlBuilderService {
     xml += `    <FechaNCFModificado>${ref.date}</FechaNCFModificado>\n`;
     xml += `    <CodigoModificacion>${ref.modificationCode}</CodigoModificacion>\n`;
 
-    // RazonModificacion: optional per XSD (AlfNum90ValidationType, max 90 chars)
-    if (ref.reason) {
+    // RazonModificacion only exists in the E33/E34 XSDs (AlfNum90, optional).
+    // The InformacionReferencia block of the other 8 types does NOT define it,
+    // so emitting it there would fail schema validation.
+    if (ref.reason && REQUIRES_REFERENCE.includes(typeCode)) {
       xml += `    <RazonModificacion>${escapeXml(ref.reason.substring(0, 90))}</RazonModificacion>\n`;
     }
 
@@ -1982,5 +2017,25 @@ function formatDate(d: Date): string {
 
   const get = (type: string) => parts.find(p => p.type === type)?.value || '00';
   return `${get('day')}-${get('month')}-${get('year')}`;
+}
+
+/**
+ * Format datetime as DD-MM-YYYY HH:mm:ss in GMT-4 (America/Santo_Domingo).
+ * Used by ANECF FechaHoraAnulacioneNCF per DGII Formato Anulación v1.0.
+ */
+function formatDateTime(d: Date): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Santo_Domingo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+
+  const get = (type: string) => parts.find(p => p.type === type)?.value || '00';
+  return `${get('day')}-${get('month')}-${get('year')} ${get('hour')}:${get('minute')}:${get('second')}`;
 }
 

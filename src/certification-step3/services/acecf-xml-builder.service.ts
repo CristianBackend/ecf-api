@@ -59,12 +59,12 @@ function toGmt4Parts(d: Date) {
   return { day: get('day'), month: get('month'), year: get('year'), hour: get('hour'), minute: get('minute'), second: get('second') };
 }
 
-function formatDateDdMmYyyy(d: Date): string {
+export function formatDateDdMmYyyy(d: Date): string {
   const { day, month, year } = toGmt4Parts(d);
   return `${day}-${month}-${year}`;
 }
 
-function formatDateTimeDdMmYyyy(d: Date): string {
+export function formatDateTimeDdMmYyyy(d: Date): string {
   const { day, month, year, hour, minute, second } = toGmt4Parts(d);
   return `${day}-${month}-${year} ${hour}:${minute}:${second}`;
 }

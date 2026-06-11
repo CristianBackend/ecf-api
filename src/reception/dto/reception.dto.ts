@@ -6,9 +6,10 @@ export class ApproveReceptionDto {
   @IsBoolean()
   approved: boolean;
 
-  @ApiPropertyOptional({ description: 'Motivo de rechazo' })
+  @ApiPropertyOptional({ description: 'Motivo de rechazo (obligatorio al rechazar)' })
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  // DetalleMotivoRechazo es AlfaNum250Validation (max 250) en el XSD oficial ACECF v1.0
+  @MaxLength(250)
   rejectionReason?: string;
 }

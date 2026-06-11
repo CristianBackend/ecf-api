@@ -238,13 +238,60 @@ export class DgiiService {
     const response = await this.httpPostMultipart(url, anecfXml, token, fileName);
     const responseText = await response.text();
 
+    this.logger.info(
+      `ANECF response: status=${response.status} bodyLen=${responseText.length}` +
+      (responseText.length < 1000 ? ` body=${responseText}` : ''),
+    );
+
+    // anularrango returns { rnc, codigo, nombre, mensajes } (VoidNCFResponse in
+    // dgii-ecf). An HTTP 200 can still carry a logical rejection, so the body
+    // is parsed instead of trusting response.ok.
+    const parsed = this.parseAnecfResponse(responseText);
+    const success = response.ok && parsed.status === DGII_STATUS.ACCEPTED;
+
     return {
-      success: response.ok,
-      trackId: null,
-      status: response.ok ? DGII_STATUS.ACCEPTED : DGII_STATUS.REJECTED,
-      message: response.ok ? 'Secuencias anuladas exitosamente' : responseText,
+      success,
+      trackId: null, // anularrango doesn't return a TrackId
+      status: response.ok ? parsed.status : DGII_STATUS.REJECTED,
+      message: success
+        ? 'Rango(s) de secuencias anulado(s) por DGII'
+        : parsed.mensajes?.join('; ') || responseText || `HTTP ${response.status}`,
       rawResponse: responseText,
     };
+  }
+
+  /**
+   * Parse the anularrango response body. Conservative by design: an
+   * unparseable/ambiguous body is treated as REJECTED (never as a silent
+   * success), since callers mutate local sequences only on ACCEPTED.
+   */
+  private parseAnecfResponse(responseText: string): { status: number; mensajes?: string[] } {
+    try {
+      const json = JSON.parse(responseText);
+      const rawCodigo = json.codigo ?? json.Codigo;
+      const codigo =
+        typeof rawCodigo === 'number' ? rawCodigo :
+        typeof rawCodigo === 'string' && /^\d+$/.test(rawCodigo) ? parseInt(rawCodigo, 10) :
+        undefined;
+      const nombre = String(json.nombre ?? json.estado ?? '').toLowerCase();
+      const mensajes: string[] = (json.mensajes || json.Mensajes || [])
+        .map((m: any) => (typeof m === 'string' ? m : m?.valor))
+        .filter(Boolean);
+
+      if (codigo === DGII_STATUS.ACCEPTED || nombre.includes('aceptado')) {
+        return { status: DGII_STATUS.ACCEPTED, mensajes };
+      }
+      if (codigo === DGII_STATUS.REJECTED || nombre.includes('rechazado')) {
+        return { status: DGII_STATUS.REJECTED, mensajes };
+      }
+      if (codigo !== undefined) return { status: codigo, mensajes };
+      return { status: DGII_STATUS.REJECTED, mensajes: mensajes.length ? mensajes : [responseText] };
+    } catch {
+      const lower = responseText.toLowerCase();
+      if (lower.includes('aceptado')) return { status: DGII_STATUS.ACCEPTED };
+      if (lower.includes('rechazado')) return { status: DGII_STATUS.REJECTED };
+      return { status: DGII_STATUS.REJECTED, mensajes: [responseText] };
+    }
   }
 
   // ============================================================
@@ -455,6 +502,9 @@ export class DgiiService {
    * Per DGII Informe Técnico p.14, modelo paso 5-6:
    * - Step 5: Send to emitter via {emitterUrl}/fe/aprobacioncomercial/api/ecf
    * - Step 6: Send to DGII via aprobacioncomercial endpoint
+   *
+   * The emitter leg result is returned in `emitterDelivery` so callers can
+   * persist it — a failure to the emitter must not be silently discarded.
    */
   async sendAcecf(
     acecfXml: string,
@@ -462,7 +512,12 @@ export class DgiiService {
     environment: string,
     emitterRnc?: string,
     fileName = 'acecf.xml',
-  ): Promise<DgiiSubmissionResult> {
+  ): Promise<DgiiSubmissionResult & { emitterDelivery: AcecfEmitterDelivery }> {
+    let emitterDelivery: AcecfEmitterDelivery = {
+      status: 'SKIPPED',
+      detail: 'RNC del emisor no provisto',
+    };
+
     // Step 5: Try to send ACECF to the original emitter first
     if (emitterRnc) {
       try {
@@ -472,15 +527,30 @@ export class DgiiService {
         if (emitterUrl) {
           const url = `${emitterUrl}/fe/aprobacioncomercial/api/ecf`;
           this.logger.debug(`Sending ACECF to emitter: ${url}`);
-          await this.httpPostMultipart(url, acecfXml, token, fileName);
+          const response = await this.httpPostMultipart(url, acecfXml, token, fileName);
+          const body = await response.text();
+          if (response.ok) {
+            emitterDelivery = { status: 'DELIVERED', detail: body.slice(0, 500) };
+          } else {
+            emitterDelivery = { status: 'FAILED', detail: `HTTP ${response.status}: ${body.slice(0, 500)}` };
+            this.logger.warn(`ACECF rejected by emitter ${emitterRnc}: HTTP ${response.status}`);
+          }
+        } else {
+          emitterDelivery = {
+            status: 'NOT_IN_DIRECTORY',
+            detail: `URL de aprobación comercial del emisor ${emitterRnc} no disponible en directorio DGII`,
+          };
+          this.logger.warn(`ACECF not sent to emitter ${emitterRnc}: not in DGII directory`);
         }
       } catch (error: any) {
+        emitterDelivery = { status: 'FAILED', detail: error.message };
         this.logger.warn(`Failed to send ACECF to emitter ${emitterRnc}: ${error.message}`);
       }
     }
 
     // Step 6: Send to DGII
-    return this.sendCommercialApproval(acecfXml, token, environment, fileName);
+    const dgiiResult = await this.sendCommercialApproval(acecfXml, token, environment, fileName);
+    return { ...dgiiResult, emitterDelivery };
   }
 
   // ============================================================
@@ -987,6 +1057,12 @@ export interface DgiiSubmissionResult {
   encf?: string;
   secuenciaUtilizada?: boolean;
   rawResponse: string;
+}
+
+/** Result of the ACECF leg sent to the original emitter (Informe Técnico p.14, paso 5). */
+export interface AcecfEmitterDelivery {
+  status: 'DELIVERED' | 'FAILED' | 'NOT_IN_DIRECTORY' | 'SKIPPED';
+  detail: string;
 }
 
 export interface DgiiStatusResult {

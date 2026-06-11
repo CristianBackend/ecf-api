@@ -1284,10 +1284,146 @@ describe('XmlBuilderService', () => {
       expect(tagContent(xml, 'RNCOtroContribuyente')).toBe('987654321');
     });
 
-    it('should NOT emit InformacionReferencia for E31', () => {
+    it('should NOT emit InformacionReferencia for E31 without reference', () => {
       const input = makeInput('E31');
       const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
       expect(hasTag(xml, 'InformacionReferencia')).toBe(false);
+    });
+
+    // Contingencia tipo 2: e-CF de reemplazo referenciando un NCF de papel.
+    // InformacionReferencia es minOccurs=0 en los XSD de todos los tipos no-nota,
+    // con NCFModificado de 11-19 chars (serie B) y CodigoModificacion=4.
+    it('should emit InformacionReferencia for E31 replacing a paper NCF (contingency, code 4)', () => {
+      const input = makeInput('E31', {
+        reference: {
+          encf: 'B0100000001',
+          date: '15-05-2026',
+          modificationCode: 4,
+        },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(xml).toContain('<InformacionReferencia>');
+      expect(tagContent(xml, 'NCFModificado')).toBe('B0100000001');
+      expect(tagContent(xml, 'FechaNCFModificado')).toBe('15-05-2026');
+      expect(tagContent(xml, 'CodigoModificacion')).toBe('4');
+    });
+
+    it('should NOT emit RazonModificacion outside E33/E34 (absent from their XSD block)', () => {
+      const input = makeInput('E31', {
+        reference: {
+          encf: 'B0100000001',
+          date: '15-05-2026',
+          modificationCode: 4,
+          reason: 'Reemplazo contingencia',
+        },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      expect(hasTag(xml, 'InformacionReferencia')).toBe(true);
+      expect(hasTag(xml, 'RazonModificacion')).toBe(false);
+    });
+
+    it('should still emit RazonModificacion for E34 when reason is provided', () => {
+      const input = makeInput('E34', {
+        reference: {
+          encf: 'E310000000001',
+          date: '01-01-2025',
+          modificationCode: 1,
+          reason: 'Anulación de factura',
+        },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E340000000001');
+      expect(tagContent(xml, 'RazonModificacion')).toBe('Anulación de factura');
+    });
+
+    it('emits InformacionReferencia children in XSD order (NCFModificado → FechaNCFModificado → CodigoModificacion)', () => {
+      const input = makeInput('E31', {
+        reference: {
+          encf: 'B0100000001',
+          date: '15-05-2026',
+          modificationCode: 4,
+        },
+      });
+      const { xml } = service.buildEcfXml(input, mockEmitter, 'E310000000001');
+      const pos = (tag: string) => xml.indexOf(`<${tag}>`);
+      expect(pos('NCFModificado')).toBeLessThan(pos('FechaNCFModificado'));
+      expect(pos('FechaNCFModificado')).toBeLessThan(pos('CodigoModificacion'));
+    });
+  });
+
+  // ============================================================
+  // ANECF GOLDEN TEST (Formato Anulación de e-NCF v1.0)
+  // ============================================================
+
+  describe('buildAnecfXml (ANECF v1.0)', () => {
+    const ranges = [
+      { encfDesde: 'E310000000011', encfHasta: 'E310000000020' }, // 10 NCF tipo 31
+      { encfDesde: 'E310000000031', encfHasta: 'E310000000035' }, // 5 NCF tipo 31
+      { encfDesde: 'E340000000001', encfHasta: 'E340000000003' }, // 3 NCF tipo 34
+    ];
+
+    it('golden: exact official tag sequence with 2 types and multiple ranges', () => {
+      const xml = service.buildAnecfXml(mockEmitter, ranges);
+      // Normalize whitespace to assert the exact element sequence
+      const flat = xml.replace(/>\s+</g, '><');
+      expect(flat).toMatch(new RegExp(
+        '^<\\?xml version="1\\.0" encoding="UTF-8"\\?>' +
+        '<ANECF>' +
+        '<Encabezado>' +
+        '<Version>1\\.0</Version>' +
+        `<RncEmisor>${mockEmitter.rnc}</RncEmisor>` +
+        '<CantidadeNCFAnulados>18</CantidadeNCFAnulados>' +
+        '<FechaHoraAnulacioneNCF>\\d{2}-\\d{2}-\\d{4} \\d{2}:\\d{2}:\\d{2}</FechaHoraAnulacioneNCF>' +
+        '</Encabezado>' +
+        '<DetalleAnulacion>' +
+        '<Anulacion>' +
+        '<NoLinea>1</NoLinea>' +
+        '<TipoeCF>31</TipoeCF>' +
+        '<TablaRangoSecuenciasAnuladaseNCF>' +
+        '<Secuencias>' +
+        '<SecuenciaeNCFDesde>E310000000011</SecuenciaeNCFDesde>' +
+        '<SecuenciaeNCFHasta>E310000000020</SecuenciaeNCFHasta>' +
+        '</Secuencias>' +
+        '<Secuencias>' +
+        '<SecuenciaeNCFDesde>E310000000031</SecuenciaeNCFDesde>' +
+        '<SecuenciaeNCFHasta>E310000000035</SecuenciaeNCFHasta>' +
+        '</Secuencias>' +
+        '</TablaRangoSecuenciasAnuladaseNCF>' +
+        '<CantidadeNCFAnulados>15</CantidadeNCFAnulados>' +
+        '</Anulacion>' +
+        '<Anulacion>' +
+        '<NoLinea>2</NoLinea>' +
+        '<TipoeCF>34</TipoeCF>' +
+        '<TablaRangoSecuenciasAnuladaseNCF>' +
+        '<Secuencias>' +
+        '<SecuenciaeNCFDesde>E340000000001</SecuenciaeNCFDesde>' +
+        '<SecuenciaeNCFHasta>E340000000003</SecuenciaeNCFHasta>' +
+        '</Secuencias>' +
+        '</TablaRangoSecuenciasAnuladaseNCF>' +
+        '<CantidadeNCFAnulados>3</CantidadeNCFAnulados>' +
+        '</Anulacion>' +
+        '</DetalleAnulacion>' +
+        '</ANECF>$',
+      ));
+    });
+
+    it('does not emit legacy non-official tags (RNCEmisor/FechaAnulacion/CantidadRangos/Rango)', () => {
+      const xml = service.buildAnecfXml(mockEmitter, ranges);
+      expect(xml).not.toContain('<RNCEmisor>');
+      expect(xml).not.toContain('<FechaAnulacion>');
+      expect(xml).not.toContain('<CantidadRangos>');
+      expect(xml).not.toContain('<NumeroLinea>');
+      expect(xml).not.toContain('<eNCFDesde>');
+      // El XSD oficial (xsd/ANECF.xsd) llama <Secuencias> al wrapper de cada rango
+      expect(xml).not.toContain('<RangoSecuenciasAnuladaseNCF>');
+    });
+
+    it('counts CantidadeNCFAnulados inclusively (desde=hasta → 1 NCF)', () => {
+      const xml = service.buildAnecfXml(mockEmitter, [
+        { encfDesde: 'E320000000007', encfHasta: 'E320000000007' },
+      ]);
+      const flat = xml.replace(/>\s+</g, '><');
+      expect(flat).toContain('<Encabezado><Version>1.0</Version>');
+      expect((flat.match(/<CantidadeNCFAnulados>1<\/CantidadeNCFAnulados>/g) || []).length).toBe(2); // header + line
     });
   });
 

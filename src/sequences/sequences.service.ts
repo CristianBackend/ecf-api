@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  BadGatewayException,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +11,7 @@ import { SigningService } from '../signing/signing.service';
 import { DgiiService } from '../dgii/dgii.service';
 import { CertificatesService } from '../certificates/certificates.service';
 import { XmlBuilderService, EmitterData } from '../xml-builder/xml-builder.service';
+import { isValidEncf } from '../xml-builder/ecf-types';
 import { CreateSequenceDto } from './dto/sequence.dto';
 import { EcfType } from '@prisma/client';
 
@@ -281,7 +283,12 @@ export class SequencesService {
 
   /**
    * Annul unused eNCF sequences (ANECF).
-   * Stores annulment records for later DGII submission.
+   *
+   * Per DGII norm, only NOT-consumed sequences can be annulled (already-sent
+   * e-CF require a Nota de Crédito instead). Each range is validated against
+   * the company's registered sequences, the signed ANECF is submitted to DGII,
+   * and on ACCEPTED the local sequence is shrunk/deactivated so getNextEncf
+   * can never emit an eNCF inside an annulled range.
    */
   async annulSequences(
     tenantId: string,
@@ -300,13 +307,111 @@ export class SequencesService {
       throw new BadRequestException('Debe incluir al menos un rango de eNCF para anular');
     }
 
+    // ---------------------------------------------------------------
+    // Validate ranges against registered sequences and plan the local
+    // adjustment to apply if DGII accepts. Simulated state handles
+    // multiple ranges over the same sequence within one request.
+    // ---------------------------------------------------------------
+    type SimState = {
+      id: string;
+      prefix: string;
+      startNumber: number;
+      endNumber: number;
+      currentNumber: number;
+      active: boolean;
+      touched: boolean;
+    };
+    const simByType = new Map<string, SimState>();
+
     for (const range of ranges) {
       if (!range.encfFrom || !range.encfTo) {
         throw new BadRequestException('Cada rango debe tener encfFrom y encfTo');
       }
-      if (range.encfFrom.length !== 13 || range.encfTo.length !== 13) {
-        throw new BadRequestException('eNCF inválido. Formato: E + 2 tipo + 10 secuencial (13 chars)');
+      if (!isValidEncf(range.encfFrom) || !isValidEncf(range.encfTo)) {
+        throw new BadRequestException(
+          `eNCF inválido en rango ${range.encfFrom}-${range.encfTo}. Formato: E + 2 tipo + 10 secuencial (13 chars)`,
+        );
       }
+
+      const prefix = range.encfFrom.substring(0, 3);
+      if (range.encfTo.substring(0, 3) !== prefix) {
+        throw new BadRequestException(
+          `Rango ${range.encfFrom}-${range.encfTo}: ambos extremos deben ser del mismo tipo de e-CF`,
+        );
+      }
+
+      const fromNum = parseInt(range.encfFrom.substring(3), 10);
+      const toNum = parseInt(range.encfTo.substring(3), 10);
+      if (fromNum > toNum) {
+        throw new BadRequestException(
+          `Rango ${range.encfFrom}-${range.encfTo}: encfFrom debe ser menor o igual a encfTo`,
+        );
+      }
+
+      let sim = simByType.get(prefix);
+      if (!sim) {
+        const sequence = await this.prisma.sequence.findFirst({
+          where: { tenantId, companyId, ecfType: prefix as EcfType, isActive: true },
+        });
+        if (!sequence) {
+          throw new BadRequestException(
+            `No hay secuencia activa registrada para tipo ${prefix} en esta empresa. ` +
+            `Solo se pueden anular rangos de secuencias registradas.`,
+          );
+        }
+        sim = {
+          id: sequence.id,
+          prefix,
+          startNumber: sequence.startNumber,
+          endNumber: sequence.endNumber,
+          currentNumber: sequence.currentNumber,
+          active: true,
+          touched: false,
+        };
+        simByType.set(prefix, sim);
+      }
+
+      if (!sim.active) {
+        throw new BadRequestException(
+          `Rango ${range.encfFrom}-${range.encfTo}: la secuencia ${prefix} ya queda desactivada por un rango anterior de esta misma solicitud`,
+        );
+      }
+
+      if (fromNum < sim.startNumber || toNum > sim.endNumber) {
+        throw new BadRequestException(
+          `Rango ${range.encfFrom}-${range.encfTo} fuera de la secuencia registrada ` +
+          `${prefix} [${sim.startNumber}-${sim.endNumber}]`,
+        );
+      }
+
+      if (fromNum <= sim.currentNumber) {
+        throw new BadRequestException(
+          `Rango ${range.encfFrom}-${range.encfTo}: incluye secuencias ya utilizadas ` +
+          `(consumidas hasta ${sim.prefix}${String(sim.currentNumber).padStart(10, '0')}). ` +
+          `Solo se pueden anular secuencias NO utilizadas; para e-CF ya emitidos corresponde una Nota de Crédito (E34).`,
+        );
+      }
+
+      // Plan the local adjustment (B4). Supported shapes:
+      //   [currentNumber+1 .. endNumber]  → deactivate the sequence
+      //   [x .. endNumber]                → tail cut: endNumber = x-1
+      //   [currentNumber+1 .. y]          → advance: currentNumber = y
+      // Non-contiguous middle segments are rejected: they would leave a hole
+      // that the linear currentNumber/endNumber model cannot represent.
+      if (fromNum === sim.currentNumber + 1 && toNum === sim.endNumber) {
+        sim.active = false;
+      } else if (toNum === sim.endNumber) {
+        sim.endNumber = fromNum - 1;
+      } else if (fromNum === sim.currentNumber + 1) {
+        sim.currentNumber = toNum;
+      } else {
+        throw new BadRequestException(
+          `Rango ${range.encfFrom}-${range.encfTo}: tramo intermedio no contiguo. ` +
+          `Solo se soportan rangos que comiencen en la siguiente secuencia disponible ` +
+          `(${sim.prefix}${String(sim.currentNumber + 1).padStart(10, '0')}) o que lleguen hasta el final del rango registrado.`,
+        );
+      }
+      sim.touched = true;
     }
 
     // Build ANECF XML
@@ -334,12 +439,8 @@ export class SequencesService {
       tenantId, companyId, privateKey, certificate, company.dgiiEnv,
     );
 
-    // S6 fix: DGII requires filename = {RNCEmisor}{eNCF}.xml
-    // For ANECF, use {RNCEmisor}ANECF.xml as there's no single eNCF
-    const anecfFileName = `${company.rnc}ANECF.xml`;
-    const result = await this.dgiiService.submitAnecf(signedXml, token, company.dgiiEnv, anecfFileName);
-
-    // Store annulment records
+    // Audit trail: persist PENDING records (with both XMLs) before submitting,
+    // so a crash mid-flight leaves a visible trace of what was sent.
     const annulments = [];
     for (const range of ranges) {
       const annulment = await this.prisma.sequenceAnnulment.create({
@@ -348,21 +449,94 @@ export class SequencesService {
           companyId,
           encfFrom: range.encfFrom,
           encfTo: range.encfTo,
-          status: result.success ? 'SENT' : 'ERROR',
+          xmlAnecf: anecfXml,
+          xmlSigned: signedXml,
+          status: 'PENDING',
         },
       });
       annulments.push(annulment);
     }
+    const annulmentIds = annulments.map(a => a.id);
+
+    // S6 fix: DGII requires filename = {RNCEmisor}{eNCF}.xml
+    // For ANECF, use {RNCEmisor}ANECF.xml as there's no single eNCF
+    const anecfFileName = `${company.rnc}ANECF.xml`;
+    let result;
+    try {
+      result = await this.dgiiService.submitAnecf(signedXml, token, company.dgiiEnv, anecfFileName);
+    } catch (error: any) {
+      // Network-level failure: actual DGII state unknown — keep PENDING with the error
+      await this.prisma.sequenceAnnulment.updateMany({
+        where: { id: { in: annulmentIds } },
+        data: { dgiiResponse: `Error de red al enviar ANECF: ${error.message}` },
+      });
+      throw new BadGatewayException(
+        `No se pudo enviar el ANECF a DGII: ${error.message}. La anulación quedó PENDIENTE y no se aplicó localmente.`,
+      );
+    }
+
+    if (!result.success) {
+      await this.prisma.sequenceAnnulment.updateMany({
+        where: { id: { in: annulmentIds } },
+        data: { status: 'REJECTED', dgiiResponse: result.rawResponse || result.message },
+      });
+      this.logger.warn(`ANECF rejected by DGII for company ${companyId}: ${result.message}`);
+      throw new BadGatewayException(
+        `DGII no aceptó la anulación de secuencias: ${(result.message || 'error desconocido').slice(0, 300)}`,
+      );
+    }
+
+    // DGII accepted: mark ACCEPTED and apply the local adjustment atomically
+    // so getNextEncf can never emit inside an annulled range.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.sequenceAnnulment.updateMany({
+        where: { id: { in: annulmentIds } },
+        data: { status: 'ACCEPTED', dgiiResponse: result.rawResponse || result.message },
+      });
+
+      for (const sim of simByType.values()) {
+        if (!sim.touched) continue;
+
+        // Lock the row (same pattern as getNextEncf) — emissions may have
+        // advanced currentNumber during the DGII round-trip.
+        const rows: any[] = await tx.$queryRawUnsafe(
+          `SELECT current_number AS "currentNumber" FROM sequences WHERE id = $1::uuid FOR UPDATE`,
+          sim.id,
+        );
+        const liveCurrent = rows[0]?.currentNumber ?? sim.currentNumber;
+
+        if (!sim.active) {
+          await tx.sequence.update({
+            where: { id: sim.id },
+            data: { isActive: false },
+          });
+        } else {
+          if (liveCurrent > sim.currentNumber) {
+            this.logger.warn(
+              `Sequence ${sim.prefix} advanced to ${liveCurrent} during ANECF round-trip ` +
+              `(annulment planned from ${sim.currentNumber + 1})`,
+            );
+          }
+          await tx.sequence.update({
+            where: { id: sim.id },
+            data: {
+              endNumber: sim.endNumber,
+              currentNumber: Math.max(liveCurrent, sim.currentNumber),
+            },
+          });
+        }
+      }
+    });
 
     this.logger.info(
-      `ANECF submitted for company ${companyId}: ${ranges.length} range(s), result: ${result.success ? 'OK' : 'FAILED'}`,
+      `ANECF accepted by DGII for company ${companyId}: ${ranges.length} range(s) annulled and applied locally`,
     );
 
     return {
-      message: `${ranges.length} rango(s) de secuencias anulados y enviados a DGII`,
+      message: `${ranges.length} rango(s) de secuencias anulados ante DGII y bloqueados localmente`,
       trackId: result.trackId,
       dgiiStatus: result.status,
-      annulments,
+      annulments: annulments.map(a => ({ ...a, status: 'ACCEPTED' })),
     };
   }
 }

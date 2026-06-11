@@ -253,13 +253,17 @@ export class ValidationService {
   // ============================================================
 
   private validateReference(input: InvoiceInput, typeCode: number): void {
-    if (!REQUIRES_REFERENCE.includes(typeCode)) return;
-
-    if (!input.reference) {
+    // Mandatory only for NC/ND (E33/E34); optional for every other type
+    // (minOccurs=0 in their XSDs — e.g. contingency type-2 replacement e-CF
+    // referencing a paper NCF with CodigoModificacion=4). When present, the
+    // reference content is validated regardless of type.
+    if (REQUIRES_REFERENCE.includes(typeCode) && !input.reference) {
       throw new BadRequestException(
         `InformacionReferencia es obligatoria para tipo ${input.ecfType} (Nota de Crédito/Débito)`,
       );
     }
+
+    if (!input.reference) return;
 
     const ref = input.reference;
 

@@ -8,6 +8,7 @@ import { SigningModule } from '../signing/signing.module';
 import { DgiiModule } from '../dgii/dgii.module';
 import { CertificatesModule } from '../certificates/certificates.module';
 import { ResponseXmlBuilder } from '../xml-builder/response-xml-builder';
+import { AcecfXmlBuilder } from '../certification-step3/services/acecf-xml-builder.service';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { ResponseXmlBuilder } from '../xml-builder/response-xml-builder';
     MulterModule.register({ limits: { fileSize: 10 * 1024 * 1024 } }),
   ],
   controllers: [ReceptionController, FeReceptorController],
-  providers: [ReceptionService, ResponseXmlBuilder],
+  providers: [ReceptionService, ResponseXmlBuilder, AcecfXmlBuilder],
   exports: [ReceptionService],
 })
 export class ReceptionModule {}

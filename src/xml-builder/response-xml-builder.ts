@@ -1,22 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { ValidationService } from '../validation/validation.service';
 
 /**
- * ARECF / ACECF XML Builder
+ * ARECF XML Builder
  *
- * Generates the XML for:
- * - ARECF (Acuse de Recibo Electrónico de Comprobante Fiscal):
- *   Acknowledgment that an e-CF was received.
- *
- * - ACECF (Aprobación Comercial Electrónica de Comprobante Fiscal):
- *   Commercial approval or rejection of a received e-CF.
+ * Generates the XML for ARECF (Acuse de Recibo Electrónico de Comprobante
+ * Fiscal): acknowledgment that an e-CF was received.
  *
  * Per DGII Descripción Técnica v1.6 p.55-58:
  * - ARECF uses namespaces xsi and xsd
  * - FechaHoraAcuseRecibo format: dd-MM-yyyy HH:mm:ss
  * - Estado: 0 = Recibido, 1 = No Recibido
  * - No empty tags allowed
+ *
+ * ACECF generation lives in AcecfXmlBuilder (see note at the end of the class).
  */
 
 export interface ArecfInput {
@@ -31,22 +28,6 @@ export interface ArecfInput {
   receivedDate: Date;
   securityCode?: string;
 }
-
-export interface AcecfInput {
-  receiverRnc: string;
-  receiverName: string;
-  emitterRnc: string;
-  emitterName: string;
-  ecfType: string;
-  encf: string;
-  totalAmount: number;
-  totalItbis: number;
-  approvalDate: Date;
-  approved: boolean;         // true = approved, false = rejected
-  rejectionReason?: string;  // Required if rejected
-}
-
-const fmt = ValidationService.formatAmount;
 
 /** Escape XML special characters */
 function escapeXml(str: string): string {
@@ -137,49 +118,11 @@ export class ResponseXmlBuilder {
     return xml;
   }
 
-  /**
-   * Build ACECF XML (Aprobación Comercial Electrónica)
-   *
-   * Per DGII Descripción Técnica p.28-29, 57-58:
-   * - Must include xsi and xsd namespaces
-   * - Estado: 1 = Aprobado, 2 = Rechazado
-   * - DetalleMotivoRechazo only included when rejected (no empty tags)
-   * - Types that DO NOT apply: 32, 41, 43, 46, 47
-   */
-  buildAcecfXml(input: AcecfInput): string {
-    const now = new Date();
-    const estado = input.approved ? '1' : '2';
-
-    const lines = [
-      '<?xml version="1.0" encoding="utf-8"?>',
-      '<ACECF xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">',
-      '  <DetalleAprobacionComercial>',
-      '    <Version>1.0</Version>',
-      `    <RNCEmisor>${escapeXml(input.emitterRnc)}</RNCEmisor>`,
-      `    <RNCComprador>${escapeXml(input.receiverRnc)}</RNCComprador>`,
-      `    <eNCF>${escapeXml(input.encf)}</eNCF>`,
-      `    <Estado>${estado}</Estado>`,
-    ];
-
-    // Only include DetalleMotivoRechazo when rejected — DGII rejects empty tags
-    if (!input.approved) {
-      lines.push(`    <DetalleMotivoRechazo>${escapeXml(input.rejectionReason || 'Rechazado por el comprador')}</DetalleMotivoRechazo>`);
-    }
-
-    // I9 fix: Use round2 before formatting to ensure DGII-compliant rounding
-    lines.push(
-      `    <MontoTotal>${fmt(input.totalAmount)}</MontoTotal>`,
-      `    <MontoITBIS>${fmt(input.totalItbis)}</MontoITBIS>`,
-      `    <FechaHoraAprobacionComercial>${formatDateTimeGmt4(now)}</FechaHoraAprobacionComercial>`,
-      '  </DetalleAprobacionComercial>',
-      '</ACECF>',
-    );
-
-    const xml = lines.join('\n');
-
-    this.logger.debug(`ACECF built for ${input.encf}: ${input.approved ? 'APPROVED' : 'REJECTED'}`);
-    return xml;
-  }
+  // ACECF generation lives in AcecfXmlBuilder (certification-step3/services/
+  // acecf-xml-builder.service.ts) — the builder validated in live DGII
+  // certification. The previous buildAcecfXml here diverged from the official
+  // format (missing FechaEmision, extra MontoITBIS, wrong element order) and
+  // was removed; ReceptionService now uses AcecfXmlBuilder directly.
 }
 
 /**

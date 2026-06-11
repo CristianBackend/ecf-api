@@ -234,6 +234,22 @@ export class FeReceptorController {
     const emitterName = this.extractXmlField(xmlContent, 'RazonSocialEmisor') || rncEmisor;
     const totalAmount = parseFloat(this.extractXmlField(xmlContent, 'MontoTotal') || '0');
 
+    // FechaEmision of the original e-CF (Encabezado > IdDoc, dd-MM-yyyy). The
+    // outgoing ACECF must echo this exact date — DGII validates it against the
+    // referenced e-CF. Stored as UTC midnight so formatting it back with UTC
+    // getters reproduces the original string without timezone drift.
+    const fechaEmisionRaw = this.extractXmlField(xmlContent, 'FechaEmision');
+    const fechaMatch = fechaEmisionRaw.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    let issueDate: string;
+    if (fechaMatch) {
+      issueDate = new Date(Date.UTC(+fechaMatch[3], +fechaMatch[2] - 1, +fechaMatch[1])).toISOString();
+    } else {
+      this.logger.warn(
+        `FechaEmision no parseable en e-CF ${encf} de ${rncEmisor}: "${fechaEmisionRaw}" — usando fecha de recepción como fallback`,
+      );
+      issueDate = new Date().toISOString();
+    }
+
     try {
       await this.receptionService.storeReceived(company.tenantId, {
         companyId: company.id,
@@ -242,7 +258,7 @@ export class FeReceptorController {
         encf,
         ecfType: `E${typeCode}`,
         totalAmount,
-        issueDate: new Date().toISOString(),
+        issueDate,
         xmlContent,
       });
     } catch (error: any) {
