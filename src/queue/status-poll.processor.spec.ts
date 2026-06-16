@@ -64,6 +64,10 @@ function makeProcessor() {
     emit: jest.fn(async () => ({})) as Mock,
   };
 
+  const usageService = {
+    revertUsage: jest.fn(async () => {}) as Mock,
+  };
+
   const processor = new StatusPollProcessor(
     prisma as any,
     dgiiService as any,
@@ -71,10 +75,11 @@ function makeProcessor() {
     certificatesService as any,
     queueService as any,
     webhooksService as any,
+    usageService as any,
     makeTestLogger(),
   );
 
-  return { processor, prisma, dgiiService, signingService, certificatesService, queueService, webhooksService };
+  return { processor, prisma, dgiiService, signingService, certificatesService, queueService, webhooksService, usageService };
 }
 
 function makeJob(overrides: Partial<any> = {}): any {
@@ -211,5 +216,58 @@ describe('FIX 6 — no trackId after failed reconciliation marks invoice as ERRO
       (c: any[]) => c[0].data?.status === InvoiceStatus.ERROR,
     );
     expect(errorUpdates.length).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// FIX H1 — REJECTED via poller refunds the reserved quota
+// ─────────────────────────────────────────────────────────────
+describe('FIX H1 — REJECTED verdict via poller reverts usage', () => {
+  it('calls revertUsage(invoiceId, companyId) exactly once on REJECTED transition', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
+    );
+    // DGII status 2 → REJECTED (final)
+    m.dgiiService.queryStatus.mockResolvedValue({ status: 2, message: 'Rechazado por DGII', rawResponse: '' });
+
+    const result = await m.processor.process(makeJob());
+
+    expect(result.status).toBe(InvoiceStatus.REJECTED);
+    expect(m.usageService.revertUsage).toHaveBeenCalledTimes(1);
+    expect(m.usageService.revertUsage).toHaveBeenCalledWith('invoice-1', 'company-1');
+    // Webhook for rejection still fires
+    expect(m.webhooksService.emit).toHaveBeenCalledWith(
+      'tenant-1',
+      expect.anything(),
+      expect.objectContaining({ invoiceId: 'invoice-1' }),
+    );
+  });
+
+  it('does NOT revert usage on ACCEPTED transition', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
+    );
+    // DGII status 1 → ACCEPTED (final)
+    m.dgiiService.queryStatus.mockResolvedValue({ status: 1, message: 'Aceptado', rawResponse: '' });
+
+    const result = await m.processor.process(makeJob());
+
+    expect(result.status).toBe(InvoiceStatus.ACCEPTED);
+    expect(m.usageService.revertUsage).not.toHaveBeenCalled();
+  });
+
+  it('a REJECTED invoice already final short-circuits — no extra revert (idempotent re-poll)', async () => {
+    const m = makeProcessor();
+    // Second poll finds the invoice already REJECTED → early return, no revert call here.
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.REJECTED, trackId: 'TRACK-001' }),
+    );
+
+    const result = await m.processor.process(makeJob());
+
+    expect(result.final).toBe(true);
+    expect(m.usageService.revertUsage).not.toHaveBeenCalled();
   });
 });

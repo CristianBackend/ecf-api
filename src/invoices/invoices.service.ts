@@ -403,6 +403,17 @@ export class InvoicesService {
         newStatus,
         dgiiMessage: result.message,
       });
+
+      // FIX H1 (P2): manual poll can also land the REJECTED verdict. Refund the
+      // reserved quota (FIX G policy). Idempotent via the usageReverted flag, so
+      // it never double-refunds against the poller/processor/contingency paths.
+      if (newStatus === InvoiceStatus.REJECTED) {
+        await this.usageService
+          ?.revertUsage(invoice.id, invoice.companyId)
+          .catch((err) =>
+            this.logger.error({ err }, `Usage revert failed for rejected ${invoice.encf}`),
+          );
+      }
     }
 
     return {

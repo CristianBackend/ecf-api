@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as crypto from 'crypto';
 
@@ -6,6 +6,11 @@ import * as crypto from 'crypto';
  * Minimal shape of the Redis client used by {@link DistributedLockService}.
  * Exposing just `set` and `eval` keeps the unit tests honest — the fake in
  * `distributed-lock.service.spec.ts` implements exactly this surface.
+ *
+ * `quit`/`disconnect` are optional so the unit-test fake (which has neither)
+ * still satisfies the type; the real ioredis client implements both and they
+ * are used on shutdown to close the socket (see {@link
+ * DistributedLockService.onModuleDestroy}).
  */
 export interface LockRedisClient {
   set(
@@ -21,6 +26,8 @@ export interface LockRedisClient {
     key: string,
     arg: string,
   ): Promise<number | string | null>;
+  quit?(): Promise<unknown>;
+  disconnect?(): void;
 }
 
 export const LOCK_REDIS_CLIENT = Symbol('LOCK_REDIS_CLIENT');
@@ -61,12 +68,35 @@ export interface AcquiredLock {
  *   duration.
  */
 @Injectable()
-export class DistributedLockService {
+export class DistributedLockService implements OnModuleDestroy {
   constructor(
     @Inject(LOCK_REDIS_CLIENT) private readonly redis: LockRedisClient,
     @InjectPinoLogger(DistributedLockService.name)
     private readonly logger: PinoLogger,
   ) {}
+
+  /**
+   * Close the dedicated ioredis socket on shutdown. The client is created with
+   * `lazyConnect:false` (connects immediately) and is NOT the BullMQ
+   * connection, so nothing else closes it — without this hook the socket stays
+   * open and leaks a handle in tests (jest masks it with forceExit) and on
+   * graceful shutdown. Prefer `quit()` (flushes pending commands, sends QUIT);
+   * fall back to a hard `disconnect()` if `quit()` rejects.
+   */
+  async onModuleDestroy(): Promise<void> {
+    try {
+      if (this.redis.quit) {
+        await this.redis.quit();
+      } else {
+        this.redis.disconnect?.();
+      }
+    } catch (err: any) {
+      this.logger.debug(
+        `Lock Redis quit() failed, falling back to disconnect(): ${err?.message}`,
+      );
+      this.redis.disconnect?.();
+    }
+  }
 
   /**
    * Try to acquire the lock. Returns an {@link AcquiredLock} (the key + the

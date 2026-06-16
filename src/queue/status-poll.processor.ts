@@ -7,6 +7,7 @@ import { SigningService } from '../signing/signing.service';
 import { CertificatesService } from '../certificates/certificates.service';
 import { QueueService } from './queue.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { UsageService } from '../billing/usage.service';
 import { InvoiceStatus, WebhookEvent } from '@prisma/client';
 import { QUEUES } from './queue.constants';
 
@@ -42,6 +43,7 @@ export class StatusPollProcessor extends WorkerHost {
     private readonly certificatesService: CertificatesService,
     private readonly queueService: QueueService,
     private readonly webhooksService: WebhooksService,
+    private readonly usageService: UsageService,
     @InjectPinoLogger(StatusPollProcessor.name)
     private readonly logger: PinoLogger,
   ) {
@@ -182,6 +184,14 @@ export class StatusPollProcessor extends WorkerHost {
       if (newStatus === InvoiceStatus.ACCEPTED) {
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_ACCEPTED, webhookPayload);
       } else if (newStatus === InvoiceStatus.REJECTED) {
+        // FIX H1 (P2): for STANDARD e-CF, submitEcf returns IN_PROCESS and the
+        // REJECTED verdict arrives HERE via the poller — not in the processor.
+        // Refund the reserved quota (FIX G policy: refund REJECTED/VOIDED). The
+        // usageReverted flag makes this idempotent with the processor and
+        // contingency refunds, so repeated polls never double-refund.
+        await this.usageService
+          .revertUsage(invoiceId, companyId)
+          .catch((err) => this.logger.error({ err }, `Usage revert failed for rejected ${invoice.encf}`));
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_REJECTED, webhookPayload);
       } else if (newStatus === InvoiceStatus.CONDITIONAL) {
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_CONDITIONAL, webhookPayload);

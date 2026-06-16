@@ -104,7 +104,6 @@ function makeMocks() {
         totalAmount: 1180,
       },
     })) as Mock,
-    buildRfceXml: jest.fn() as Mock,
   };
 
   const sequencesService = {

@@ -59,7 +59,6 @@ function makeProcessor() {
 
   const xmlBuilder = {
     buildEcfXml: jest.fn() as Mock,
-    buildRfceXml: jest.fn() as Mock,
   };
 
   const signingService = {

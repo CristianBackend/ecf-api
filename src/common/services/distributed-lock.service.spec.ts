@@ -168,4 +168,52 @@ describe('DistributedLockService', () => {
     await expect(service.acquire('k', 0)).rejects.toThrow(/ttlMs/);
     await expect(service.acquire('k', -1)).rejects.toThrow(/ttlMs/);
   });
+
+  // FIX L1 — the dedicated ioredis socket must be closed on shutdown so it
+  // doesn't leak an open handle (the cause of jest forceExit masking).
+  describe('onModuleDestroy', () => {
+    function makeClient(over: Partial<LockRedisClient> = {}): LockRedisClient {
+      return {
+        set: jest.fn(async () => 'OK'),
+        eval: jest.fn(async () => 1),
+        ...over,
+      } as LockRedisClient;
+    }
+
+    it('calls quit() to gracefully close the socket', async () => {
+      const quit = jest.fn(async () => 'OK');
+      const disconnect = jest.fn();
+      const client = makeClient({ quit, disconnect });
+      const svc = new DistributedLockService(client, makeTestLogger());
+
+      await svc.onModuleDestroy();
+
+      expect(quit).toHaveBeenCalledTimes(1);
+      expect(disconnect).not.toHaveBeenCalled();
+    });
+
+    it('falls back to disconnect() when quit() rejects', async () => {
+      const quit = jest.fn(async () => {
+        throw new Error('connection already gone');
+      });
+      const disconnect = jest.fn();
+      const client = makeClient({ quit, disconnect });
+      const svc = new DistributedLockService(client, makeTestLogger());
+
+      await expect(svc.onModuleDestroy()).resolves.toBeUndefined();
+
+      expect(quit).toHaveBeenCalledTimes(1);
+      expect(disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses disconnect() when the client has no quit()', async () => {
+      const disconnect = jest.fn();
+      const client = makeClient({ disconnect });
+      const svc = new DistributedLockService(client, makeTestLogger());
+
+      await svc.onModuleDestroy();
+
+      expect(disconnect).toHaveBeenCalledTimes(1);
+    });
+  });
 });
