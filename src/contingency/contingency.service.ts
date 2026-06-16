@@ -236,7 +236,14 @@ export class ContingencyService {
           // FIX G: refund quota if DGII rejected (idempotent).
           if (reconciledStatus === InvoiceStatus.REJECTED) {
             await this.usageService.revertUsage(invoice.id, invoice.companyId)
-              .catch((err) => this.logger.error(`Usage revert failed for ${invoice.encf}: ${err.message}`));
+              // FIX 3: post-commit refund — structured ERROR + stable marker so a
+              // DB hiccup here (quota left un-refunded) is alertable/reconcilable.
+              .catch((err) =>
+                this.logger.error(
+                  { err, marker: 'USAGE_REFUND_FAILED', invoiceId: invoice.id, companyId: invoice.companyId, encf: invoice.encf },
+                  `USAGE_REFUND_FAILED: quota not refunded for rejected ${invoice.encf} — reconcile manually`,
+                ),
+              );
           }
           if (reconciledStatus === InvoiceStatus.PROCESSING) {
             await this.queueService.enqueueStatusPoll({

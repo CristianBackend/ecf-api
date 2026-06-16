@@ -893,8 +893,13 @@ export class DgiiService {
   /**
    * HTTP POST as multipart/form-data (how DGII expects XML submissions).
    */
-  /** HTTP timeout in milliseconds for all DGII requests */
-  private static readonly HTTP_TIMEOUT_MS = 30_000;
+  /**
+   * HTTP timeout in milliseconds for all DGII requests.
+   * Read from DGII_HTTP_TIMEOUT_MS (validated by Joi, default 30000) so the env
+   * var actually takes effect instead of being a dead config. Number() coerces
+   * the string env value; falls back to 30000 when unset/empty/invalid.
+   */
+  private readonly httpTimeoutMs = Number(this.config.get('DGII_HTTP_TIMEOUT_MS')) || 30_000;
 
   private async httpPostMultipart(
     url: string,
@@ -903,7 +908,7 @@ export class DgiiService {
     fileName = 'ecf.xml',
   ): Promise<Response> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), DgiiService.HTTP_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), this.httpTimeoutMs);
     try {
       // DGII expects multipart/form-data with 'xml' field
       // Per Descripción Técnica p.59: filename must be {RNCEmisor}{eNCF}.xml
@@ -972,7 +977,7 @@ export class DgiiService {
     fileName = 'rfce.xml',
   ): Promise<Response> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), DgiiService.HTTP_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), this.httpTimeoutMs);
     try {
       const formData = new FormData();
       // Buffer so form-data knows the exact byte length; required for
@@ -1022,7 +1027,7 @@ export class DgiiService {
 
   private async httpGet(url: string, headers?: Record<string, string>): Promise<Response> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), DgiiService.HTTP_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), this.httpTimeoutMs);
     try {
       return await fetch(url, {
         method: 'GET',

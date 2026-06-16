@@ -410,8 +410,13 @@ export class InvoicesService {
       if (newStatus === InvoiceStatus.REJECTED) {
         await this.usageService
           ?.revertUsage(invoice.id, invoice.companyId)
+          // FIX 3: post-commit refund — structured ERROR + stable marker so a DB
+          // hiccup here (quota left un-refunded) is alertable/reconcilable.
           .catch((err) =>
-            this.logger.error({ err }, `Usage revert failed for rejected ${invoice.encf}`),
+            this.logger.error(
+              { err, marker: 'USAGE_REFUND_FAILED', invoiceId: invoice.id, companyId: invoice.companyId, encf: invoice.encf },
+              `USAGE_REFUND_FAILED: quota not refunded for rejected ${invoice.encf} — reconcile manually`,
+            ),
           );
       }
     }

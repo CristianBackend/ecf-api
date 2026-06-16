@@ -191,7 +191,15 @@ export class StatusPollProcessor extends WorkerHost {
         // contingency refunds, so repeated polls never double-refund.
         await this.usageService
           .revertUsage(invoiceId, companyId)
-          .catch((err) => this.logger.error({ err }, `Usage revert failed for rejected ${invoice.encf}`));
+          // FIX 3: post-commit refund — on DB failure the quota stays reserved
+          // (silent billing drift). Structured ERROR + stable marker for alerting
+          // / reconciliation (idempotent revertUsage makes a later retry safe).
+          .catch((err) =>
+            this.logger.error(
+              { err, marker: 'USAGE_REFUND_FAILED', invoiceId, companyId, encf: invoice.encf },
+              `USAGE_REFUND_FAILED: quota not refunded for rejected ${invoice.encf} — reconcile manually`,
+            ),
+          );
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_REJECTED, webhookPayload);
       } else if (newStatus === InvoiceStatus.CONDITIONAL) {
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_CONDITIONAL, webhookPayload);
@@ -221,7 +229,26 @@ export class StatusPollProcessor extends WorkerHost {
         throw new DelayedError();
       }
 
+      // FIX 2: a non-network error (e.g. DGII 500 HTML page, revoked/invalid
+      // token, cert decrypt failure) would otherwise just return without
+      // touching the DB or rescheduling — leaving the invoice stuck in
+      // PROCESSING/SENT forever (zombie). Mark it ERROR, mirroring the
+      // MAX_ATTEMPTS timeout path above, so it surfaces for manual review /
+      // contingency retry. Guarded updateMany on the non-terminal states only,
+      // so a late failure (e.g. webhook emit throwing AFTER a final-status
+      // update was already persisted) can never clobber ACCEPTED/REJECTED/
+      // CONDITIONAL.
       this.logger.error(`Poll error for ${invoice.encf}: ${error.message}`);
+      await this.prisma.invoice.updateMany({
+        where: {
+          id: invoiceId,
+          status: { in: [InvoiceStatus.PROCESSING, InvoiceStatus.SENT] },
+        },
+        data: {
+          status: InvoiceStatus.ERROR,
+          dgiiMessage: `Status poll failed (non-network): ${error.message}`,
+        },
+      });
       return { status: 'ERROR', error: error.message };
     }
   }

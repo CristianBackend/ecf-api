@@ -36,6 +36,7 @@ function makeProcessor() {
     invoice: {
       findFirst: jest.fn() as Mock,
       update: jest.fn(async () => ({})) as Mock,
+      updateMany: jest.fn(async () => ({ count: 1 })) as Mock,
     },
   };
 
@@ -216,6 +217,44 @@ describe('FIX 6 — no trackId after failed reconciliation marks invoice as ERRO
       (c: any[]) => c[0].data?.status === InvoiceStatus.ERROR,
     );
     expect(errorUpdates.length).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// FIX 2 — non-network poll error marks invoice ERROR (no zombie)
+// ─────────────────────────────────────────────────────────────
+describe('FIX 2 — non-network error marks invoice ERROR (anti-zombie)', () => {
+  it('marks invoice ERROR (guarded on PROCESSING/SENT) when queryStatus throws a non-network error', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
+    );
+    // Non-network error (e.g. DGII 500 HTML page / revoked token), NOT ECONNREFUSED/ETIMEDOUT.
+    m.dgiiService.queryStatus.mockRejectedValue(new Error('DGII 500: <html>Internal Server Error</html>'));
+
+    const result = await m.processor.process(makeJob());
+
+    expect(result.status).toBe('ERROR');
+    // Guarded updateMany on non-terminal states only → no clobber of finals.
+    expect(m.prisma.invoice.updateMany).toHaveBeenCalledTimes(1);
+    const call = m.prisma.invoice.updateMany.mock.calls[0][0];
+    expect(call.where.status.in).toEqual([InvoiceStatus.PROCESSING, InvoiceStatus.SENT]);
+    expect(call.data.status).toBe(InvoiceStatus.ERROR);
+    expect(call.data.dgiiMessage).toContain('non-network');
+  });
+
+  it('does NOT reschedule (no zombie left polling) on a non-network error', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
+    );
+    m.dgiiService.queryStatus.mockRejectedValue(new Error('Token revoked'));
+
+    const job = makeJob();
+    await m.processor.process(job);
+
+    // Network path reschedules; this non-network path must NOT.
+    expect(job.moveToDelayed).not.toHaveBeenCalled();
   });
 });
 

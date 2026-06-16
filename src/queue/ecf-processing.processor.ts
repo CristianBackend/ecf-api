@@ -286,7 +286,17 @@ export class EcfProcessingProcessor extends WorkerHost {
       if (newStatus === InvoiceStatus.REJECTED) {
         await this.usageService
           .revertUsage(invoiceId, companyId)
-          .catch((err) => this.logger.error({ err }, `Usage revert failed for rejected ${invoice.encf}`));
+          // FIX 3: revertUsage is idempotent but this runs post-commit; if the DB
+          // hiccups here the quota stays un-refunded (silent billing drift, not
+          // fiscal). Emit a structured ERROR with a stable marker so it can be
+          // alerted/reconciled. (Not a BullMQ retry: that needs a new queue +
+          // processor — out of scope for this low-severity edge.)
+          .catch((err) =>
+            this.logger.error(
+              { err, marker: 'USAGE_REFUND_FAILED', invoiceId, companyId, encf: invoice.encf },
+              `USAGE_REFUND_FAILED: quota not refunded for rejected ${invoice.encf} — reconcile manually`,
+            ),
+          );
       }
 
       // 7. Fire INVOICE_SUBMITTED when DGII assigned a TrackId (regardless of
