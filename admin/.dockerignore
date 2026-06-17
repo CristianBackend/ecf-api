@@ -1,0 +1,14 @@
+# Keep the Docker build context small and avoid overwriting the image's
+# freshly-installed deps / build output with stale local copies.
+node_modules
+.next
+.git
+.gitignore
+Dockerfile
+.dockerignore
+README.md
+AGENTS.md
+CLAUDE.md
+npm-debug.log*
+.env*.local
+.DS_Store
