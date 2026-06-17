@@ -51,6 +51,35 @@ async function main() {
     console.log(`  ✓ ${r.fromQty}–${r.toQty ?? '∞'} → ${label}`);
   }
 
+  // Clean up legacy quota-model plans (TIER_1..4) so ONLY PER_EMISSION is
+  // assignable in any environment (incl. prod on deploy). Idempotent:
+  //  - DELETE plans with zero CompanyPlan references (cleanest — the FK to
+  //    pricing_tiers is ON DELETE CASCADE, and these legacy rows have no tiers).
+  //  - For any still referenced by a company (defensive; shouldn't happen),
+  //    deactivate (isActive=false) instead of failing the FK — keeps history but
+  //    makes it non-assignable (assignPlan rejects !isActive; the catalog
+  //    endpoints filter isActive=true).
+  console.log('\nCleaning up legacy non-PER_EMISSION plans...');
+  const legacyPlans = await prisma.billingPlan.findMany({
+    where: { code: { not: PER_EMISSION_PLAN.code } },
+    select: { code: true, _count: { select: { companyPlans: true } } },
+  });
+  for (const legacy of legacyPlans) {
+    if (legacy._count.companyPlans === 0) {
+      await prisma.billingPlan.delete({ where: { code: legacy.code } });
+      console.log(`  ✗ deleted legacy plan ${legacy.code} (0 references)`);
+    } else {
+      await prisma.billingPlan.update({
+        where: { code: legacy.code },
+        data: { isActive: false },
+      });
+      console.log(
+        `  ⚠ deactivated legacy plan ${legacy.code} (still referenced by ${legacy._count.companyPlans} company plan(s))`,
+      );
+    }
+  }
+  if (legacyPlans.length === 0) console.log('  (none — already clean)');
+
   console.log('\nSeed completado: 1 plan PER_EMISSION + 7 pricing tiers.');
 }
 
