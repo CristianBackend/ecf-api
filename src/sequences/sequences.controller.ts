@@ -13,6 +13,7 @@ import { CreateSequenceDto, AnnulSequencesDto } from './dto/sequence.dto';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { RequireScopes } from '../common/decorators/scopes.decorator';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
+import { Actor, ActorContext } from '../common/decorators/actor.decorator';
 import { ApiKeyScope, EcfType } from '@prisma/client';
 import { ApiStandardErrors, ApiReadErrors, ApiNotFoundError } from '../common/swagger/api-errors';
 
@@ -148,7 +149,8 @@ export class SequencesController {
     @CurrentTenant() tenant: RequestTenant,
     @Param('companyId') companyId: string,
     @Body() dto: AnnulSequencesDto,
+    @Actor() actor: ActorContext,
   ) {
-    return this.sequencesService.annulSequences(tenant.id, companyId, dto.ranges);
+    return this.sequencesService.annulSequences(tenant.id, companyId, dto.ranges, actor);
   }
 }

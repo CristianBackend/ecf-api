@@ -7,6 +7,7 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { EncryptionService } from '../common/services/encryption.service';
 import { UploadCertificateDto } from './dto/certificate.dto';
+import { ActorContext } from '../common/decorators/actor.decorator';
 
 /**
  * Certificate info extracted from .p12 file
@@ -46,7 +47,11 @@ export class CertificatesService {
    * The certificate is encrypted at rest using AES-256-GCM.
    * In production, AWS KMS envelope encryption would be used instead.
    */
-  async upload(tenantId: string, dto: UploadCertificateDto) {
+  async upload(
+    tenantId: string,
+    dto: UploadCertificateDto,
+    actorCtx?: ActorContext,
+  ) {
     // Verify company belongs to tenant
     const company = await this.prisma.company.findFirst({
       where: { id: dto.companyId, tenantId },
@@ -105,6 +110,24 @@ export class CertificatesService {
         signerEmail: certInfo.signerEmail,
         issuerName: certInfo.issuerName || null,
         isActive: true,
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId,
+        entityType: 'certificate',
+        entityId: certificate.id,
+        action: 'certificate_uploaded',
+        actor: actorCtx?.actor ?? 'api',
+        ipAddress: actorCtx?.ipAddress ?? null,
+        metadata: {
+          companyId: dto.companyId,
+          fingerprint: certInfo.fingerprint,
+          signerName: certInfo.signerName,
+          validFrom: certInfo.validFrom.toISOString(),
+          validTo: certInfo.validTo.toISOString(),
+        },
       },
     });
 

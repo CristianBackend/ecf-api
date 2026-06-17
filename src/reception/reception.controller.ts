@@ -13,6 +13,7 @@ import { ApproveReceptionDto } from './dto/reception.dto';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { RequireScopes } from '../common/decorators/scopes.decorator';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
+import { Actor, ActorContext } from '../common/decorators/actor.decorator';
 import { ApiKeyScope } from '@prisma/client';
 
 @ApiTags('reception')
@@ -40,12 +41,14 @@ export class ReceptionController {
     @CurrentTenant() tenant: RequestTenant,
     @Param('id') id: string,
     @Body() dto: ApproveReceptionDto,
+    @Actor() actor: ActorContext,
   ) {
     return this.receptionService.processApproval(
       tenant.id,
       id,
       dto.approved,
       dto.rejectionReason,
+      actor,
     );
   }
 }

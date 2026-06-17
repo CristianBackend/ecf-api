@@ -26,7 +26,14 @@ import {
   FC_FULL_SUBMISSION_THRESHOLD,
   ECF_TYPE_CODES,
 } from '../xml-builder/ecf-types';
+import {
+  resolveIndicadorFacturacion,
+  effectiveItbisRate,
+  lineItbisAmount,
+  round2 as r2,
+} from '../xml-builder/itbis.util';
 import { parseDgiiDate } from '../common/utils/date-format.util';
+import { ActorContext } from '../common/decorators/actor.decorator';
 
 @Injectable()
 export class InvoicesService {
@@ -67,7 +74,7 @@ export class InvoicesService {
    * The controller returns HTTP 202 Accepted with { id, eNCF, status:
    * 'QUEUED' }. All DGII interaction happens out-of-request.
    */
-  async create(tenantId: string, dto: CreateInvoiceDto) {
+  async create(tenantId: string, dto: CreateInvoiceDto, actorCtx?: ActorContext) {
     if (dto.idempotencyKey) {
       // FIX 3 (P5): scope the idempotency lookup by tenant so one tenant can never
       // read another tenant's invoice by guessing its idempotency key.
@@ -265,9 +272,18 @@ export class InvoicesService {
 
       await tx.invoiceLine.createMany({
         data: dto.items.map((item, index) => {
-          const lineSubtotal = item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0);
+          const lineSubtotal = r2(
+            item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0),
+          );
           const rate = item.itbisRate ?? 18;
-          const itbisAmount = lineSubtotal * (rate / 100);
+          // FISCAL: classify ITBIS with the SAME logic as the emitted e-CF XML
+          // (shared itbis.util), respecting IndicadorFacturacion. An Exento /
+          // ITBIS-0% / No-Facturable line carries 0 ITBIS and an effective rate
+          // of 0 — so the persisted InvoiceLine (and 606/607 reports derived
+          // from it) match what was declared to DGII. See itbis.util.ts.
+          const indicadorFact = resolveIndicadorFacturacion(item, rate);
+          const effectiveRate = effectiveItbisRate(indicadorFact, rate);
+          const itbisAmount = lineItbisAmount(lineSubtotal, indicadorFact, rate);
 
           return {
             tenantId,
@@ -277,10 +293,10 @@ export class InvoicesService {
             quantity: item.quantity,
             unitPrice: item.unitPrice,
             discount: item.discount || 0,
-            itbisRate: rate,
-            itbisAmount: Math.round(itbisAmount * 100) / 100,
+            itbisRate: effectiveRate,
+            itbisAmount,
             iscAmount: 0,
-            subtotal: Math.round(lineSubtotal * 100) / 100,
+            subtotal: lineSubtotal,
             additionalTaxCode: item.additionalTaxCode || null,
             additionalTaxRate: item.additionalTaxRate || null,
             goodService: item.goodService || 1,
@@ -294,7 +310,8 @@ export class InvoicesService {
           entityType: 'invoice',
           entityId: inv.id,
           action: 'queued',
-          actor: 'api',
+          actor: actorCtx?.actor ?? 'api',
+          ipAddress: actorCtx?.ipAddress ?? null,
           metadata: { encf, ecfType, isRfce, totalAmount: totals.totalAmount },
         },
       });
@@ -362,7 +379,7 @@ export class InvoicesService {
   /**
    * Poll DGII for invoice status update.
    */
-  async pollStatus(tenantId: string, invoiceId: string) {
+  async pollStatus(tenantId: string, invoiceId: string, actorCtx?: ActorContext) {
     const invoice = await this.prisma.invoice.findFirst({
       where: { id: invoiceId, tenantId },
       include: { company: true },
@@ -402,7 +419,7 @@ export class InvoicesService {
         previousStatus: invoice.status,
         newStatus,
         dgiiMessage: result.message,
-      });
+      }, actorCtx);
 
       // FIX H1 (P2): manual poll can also land the REJECTED verdict. Refund the
       // reserved quota (FIX G policy). Idempotent via the usageReverted flag, so
@@ -507,7 +524,7 @@ export class InvoicesService {
    * - PROCESSING, SENT: Cannot void while in transit to DGII
    * - VOIDED: Already voided
    */
-  async voidInvoice(tenantId: string, invoiceId: string, reason?: string) {
+  async voidInvoice(tenantId: string, invoiceId: string, reason?: string, actorCtx?: ActorContext) {
     const invoice = await this.prisma.invoice.findFirst({
       where: { id: invoiceId, tenantId },
       include: { company: true },
@@ -579,7 +596,7 @@ export class InvoicesService {
       ecfType: invoice.ecfType,
       previousStatus: invoice.status,
       reason: reason || 'Anulada por el usuario',
-    });
+    }, actorCtx);
 
     await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_VOIDED, {
       invoiceId: invoice.id,
@@ -616,10 +633,15 @@ export class InvoicesService {
 
   private async createAuditLog(
     tenantId: string, entityType: string, entityId: string,
-    action: string, metadata?: any,
+    action: string, metadata?: any, actorCtx?: ActorContext,
   ) {
     await this.prisma.auditLog.create({
-      data: { tenantId, entityType, entityId, action, actor: 'api', metadata },
+      data: {
+        tenantId, entityType, entityId, action,
+        actor: actorCtx?.actor ?? 'api',
+        ipAddress: actorCtx?.ipAddress ?? null,
+        metadata,
+      },
     });
   }
 }

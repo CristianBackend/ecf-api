@@ -264,6 +264,22 @@ describe('InvoicesService.create — async pipeline', () => {
     expect(auditArgs.data.entityType).toBe('invoice');
   });
 
+  it('AUDIT: records the real actor (apiKeyId) and ipAddress, not the hardcoded "api"', async () => {
+    await service.create('tenant-1', makeValidDto(), { actor: 'apikey-abc', ipAddress: '200.10.20.30' });
+
+    const auditArgs = mocks.prisma.auditLog.create.mock.calls[0][0];
+    expect(auditArgs.data.actor).toBe('apikey-abc');
+    expect(auditArgs.data.ipAddress).toBe('200.10.20.30');
+  });
+
+  it('AUDIT: falls back to actor "api" / null ip when no actor context is provided', async () => {
+    await service.create('tenant-1', makeValidDto());
+
+    const auditArgs = mocks.prisma.auditLog.create.mock.calls[0][0];
+    expect(auditArgs.data.actor).toBe('api');
+    expect(auditArgs.data.ipAddress).toBeNull();
+  });
+
   it('emits the INVOICE_QUEUED webhook after enqueuing the job', async () => {
     await service.create('tenant-1', makeValidDto());
 

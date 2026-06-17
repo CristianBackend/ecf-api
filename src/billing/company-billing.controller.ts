@@ -4,6 +4,7 @@ import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { RequireScopes } from '../common/decorators/scopes.decorator';
 import { ApiKeyScope } from '@prisma/client';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
+import { Actor, ActorContext } from '../common/decorators/actor.decorator';
 import { CompanyBillingService } from './company-billing.service';
 import { AssignPlanDto } from './dto/assign-plan.dto';
 import { PurchaseTopupDto } from './dto/purchase-topup.dto';
@@ -55,8 +56,9 @@ export class CompanyBillingController {
     @CurrentTenant() tenant: RequestTenant,
     @Param('id') companyId: string,
     @Body() dto: AssignPlanDto,
+    @Actor() actor: ActorContext,
   ) {
-    return this.companyBillingService.assignPlan(companyId, dto.planCode, tenant.id);
+    return this.companyBillingService.assignPlan(companyId, dto.planCode, tenant.id, actor);
   }
 
   @Get('companies/:id/usage')

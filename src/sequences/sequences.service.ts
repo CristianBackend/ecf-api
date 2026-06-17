@@ -13,6 +13,7 @@ import { CertificatesService } from '../certificates/certificates.service';
 import { XmlBuilderService, EmitterData } from '../xml-builder/xml-builder.service';
 import { isValidEncf } from '../xml-builder/ecf-types';
 import { CreateSequenceDto } from './dto/sequence.dto';
+import { ActorContext } from '../common/decorators/actor.decorator';
 import { EcfType } from '@prisma/client';
 
 /**
@@ -294,6 +295,7 @@ export class SequencesService {
     tenantId: string,
     companyId: string,
     ranges: Array<{ encfFrom: string; encfTo: string }>,
+    actorCtx?: ActorContext,
   ) {
     const company = await this.prisma.company.findFirst({
       where: { id: companyId, tenantId, isActive: true },
@@ -531,6 +533,22 @@ export class SequencesService {
     this.logger.info(
       `ANECF accepted by DGII for company ${companyId}: ${ranges.length} range(s) annulled and applied locally`,
     );
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId,
+        entityType: 'sequence',
+        entityId: companyId,
+        action: 'sequences_annulled',
+        actor: actorCtx?.actor ?? 'api',
+        ipAddress: actorCtx?.ipAddress ?? null,
+        metadata: {
+          companyId,
+          ranges: ranges.map((r) => ({ encfFrom: r.encfFrom, encfTo: r.encfTo })),
+          trackId: result.trackId ?? null,
+        },
+      },
+    });
 
     return {
       message: `${ranges.length} rango(s) de secuencias anulados ante DGII y bloqueados localmente`,

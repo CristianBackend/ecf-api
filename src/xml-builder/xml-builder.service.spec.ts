@@ -15,6 +15,12 @@ import {
   PaymentInput,
   BuyerInput,
 } from './invoice-input.interface';
+import {
+  resolveIndicadorFacturacion,
+  effectiveItbisRate,
+  lineItbisAmount,
+  round2,
+} from './itbis.util';
 
 // ============================================================
 // TEST FIXTURES
@@ -135,6 +141,66 @@ describe('XmlBuilderService', () => {
     }).compile();
 
     service = module.get<XmlBuilderService>(XmlBuilderService);
+  });
+
+  // ============================================================
+  // FISCAL: persisted InvoiceLine ITBIS == emitted e-CF XML ITBIS
+  // (regression guard for the bug where the DB persisted ITBIS on Exento/
+  // ITBIS-0%/No-Facturable lines, diverging from the e-CF sent to DGII).
+  // Replicates InvoicesService's per-line persistence via the SHARED itbis.util.
+  // ============================================================
+  describe('ITBIS parity: persisted InvoiceLine == emitted e-CF XML', () => {
+    function persistLine(item: InvoiceItemInput) {
+      const lineSubtotal = round2(
+        item.quantity * item.unitPrice - (item.discount || 0) + (item.surcharge || 0),
+      );
+      const rate = item.itbisRate ?? 18;
+      const indicadorFact = resolveIndicadorFacturacion(item, rate);
+      return {
+        itbisRate: effectiveItbisRate(indicadorFact, rate),
+        itbisAmount: lineItbisAmount(lineSubtotal, indicadorFact, rate),
+      };
+    }
+
+    it('Exento (indicador 4) persists itbisAmount=0 and effective rate 0, even with a default 18% rate', () => {
+      const persisted = persistLine(
+        basicItem({ unitPrice: 1000, itbisRate: 18, indicadorFacturacion: 4 }),
+      );
+      expect(persisted.itbisAmount).toBe(0);
+      expect(persisted.itbisRate).toBe(0);
+    });
+
+    it('per-indicator persisted rate + ITBIS (0,1,2,3,4)', () => {
+      expect(persistLine(basicItem({ unitPrice: 1000, itbisRate: 18 }))).toEqual({ itbisRate: 18, itbisAmount: 180 });
+      expect(persistLine(basicItem({ unitPrice: 1000, itbisRate: 16, indicadorFacturacion: 2 }))).toEqual({ itbisRate: 16, itbisAmount: 160 });
+      expect(persistLine(basicItem({ unitPrice: 1000, indicadorFacturacion: 3 }))).toEqual({ itbisRate: 0, itbisAmount: 0 });
+      expect(persistLine(basicItem({ unitPrice: 1000, indicadorFacturacion: 4 }))).toEqual({ itbisRate: 0, itbisAmount: 0 });
+      expect(persistLine(basicItem({ unitPrice: 1000, indicadorFacturacion: 0 }))).toEqual({ itbisRate: 0, itbisAmount: 0 });
+    });
+
+    it('BD total ITBIS === XML total ITBIS for a mixed-indicator invoice', () => {
+      // (indicador 0 / No-Facturable is covered by the persistLine-only test
+      // above; it's omitted here to keep the builder's cuadratura check happy.)
+      const items: InvoiceItemInput[] = [
+        basicItem({ unitPrice: 1000, itbisRate: 18 }),                          // 18% → 180
+        basicItem({ unitPrice: 1000, itbisRate: 16, indicadorFacturacion: 2 }), // 16% → 160
+        basicItem({ unitPrice: 1000, itbisRate: 18, indicadorFacturacion: 4 }), // exento default-rate → 0
+        basicItem({ unitPrice: 1000, indicadorFacturacion: 3 }),                // ITBIS 0% → 0
+      ];
+      const { totals } = service.buildEcfXml(
+        makeInput('E31', { items }),
+        mockEmitter,
+        'E310000000001',
+      );
+
+      const persistedTotalItbis = round2(
+        items.reduce((sum, it) => sum + persistLine(it).itbisAmount, 0),
+      );
+
+      // The persisted DB total must equal what the e-CF declared to DGII.
+      expect(persistedTotalItbis).toBe(round2(totals.totalItbis));
+      expect(persistedTotalItbis).toBe(340); // 180 + 160; exento/0%/no-fact carry 0
+    });
   });
 
   // ============================================================

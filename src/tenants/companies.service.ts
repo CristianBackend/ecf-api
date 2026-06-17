@@ -7,6 +7,7 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { RncValidationService } from '../common/services/rnc-validation.service';
 import { CreateCompanyDto, UpdateCompanyDto } from './dto/company.dto';
+import { ActorContext } from '../common/decorators/actor.decorator';
 
 @Injectable()
 export class CompaniesService {
@@ -124,7 +125,12 @@ export class CompaniesService {
     return company;
   }
 
-  async update(tenantId: string, companyId: string, dto: UpdateCompanyDto) {
+  async update(
+    tenantId: string,
+    companyId: string,
+    dto: UpdateCompanyDto,
+    actorCtx?: ActorContext,
+  ) {
     const company = await this.prisma.company.findFirst({
       where: { id: companyId, tenantId },
     });
@@ -133,10 +139,31 @@ export class CompaniesService {
       throw new NotFoundException('Company not found');
     }
 
-    return this.prisma.company.update({
+    // Capture critical-config change (DEV→PROD) for the audit trail before update.
+    const dgiiEnvChanged =
+      dto.dgiiEnv !== undefined && dto.dgiiEnv !== company.dgiiEnv;
+    const previousDgiiEnv = company.dgiiEnv;
+
+    const updated = await this.prisma.company.update({
       where: { id: companyId },
       data: dto,
     });
+
+    if (dgiiEnvChanged) {
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId,
+          entityType: 'company',
+          entityId: companyId,
+          action: 'dgii_env_changed',
+          actor: actorCtx?.actor ?? 'api',
+          ipAddress: actorCtx?.ipAddress ?? null,
+          metadata: { from: previousDgiiEnv, to: dto.dgiiEnv },
+        },
+      });
+    }
+
+    return updated;
   }
 
   async deactivate(tenantId: string, companyId: string) {

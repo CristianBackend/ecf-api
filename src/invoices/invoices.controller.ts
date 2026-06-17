@@ -26,6 +26,7 @@ import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { ActivePlanGuard } from '../billing/guards/active-plan.guard';
 import { RequireScopes } from '../common/decorators/scopes.decorator';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
+import { Actor, ActorContext } from '../common/decorators/actor.decorator';
 import { ApiKeyScope } from '@prisma/client';
 import { DownloadTokenService } from '../common/services/download-token.service';
 import { ApiStandardErrors, ApiReadErrors, ApiNotFoundError } from '../common/swagger/api-errors';
@@ -81,8 +82,9 @@ export class InvoicesController {
   async create(
     @CurrentTenant() tenant: RequestTenant,
     @Body() dto: CreateInvoiceDto,
+    @Actor() actor: ActorContext,
   ) {
-    return this.invoicesService.create(tenant.id, dto);
+    return this.invoicesService.create(tenant.id, dto, actor);
   }
 
   @Get()
@@ -262,8 +264,9 @@ export class InvoicesController {
   async pollStatus(
     @CurrentTenant() tenant: RequestTenant,
     @Param('id') id: string,
+    @Actor() actor: ActorContext,
   ) {
-    return this.invoicesService.pollStatus(tenant.id, id);
+    return this.invoicesService.pollStatus(tenant.id, id, actor);
   }
 
   @Post(':id/void')
@@ -293,7 +296,8 @@ export class InvoicesController {
     @CurrentTenant() tenant: RequestTenant,
     @Param('id') id: string,
     @Body() body: VoidInvoiceDto,
+    @Actor() actor: ActorContext,
   ) {
-    return this.invoicesService.voidInvoice(tenant.id, id, body.reason);
+    return this.invoicesService.voidInvoice(tenant.id, id, body.reason, actor);
   }
 }

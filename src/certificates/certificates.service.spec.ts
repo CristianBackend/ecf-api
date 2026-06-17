@@ -37,6 +37,9 @@ function makePrisma() {
       }),
       findFirst: jest.fn(async () => state.cert),
     },
+    auditLog: {
+      create: jest.fn(async () => ({})),
+    },
   };
 }
 

@@ -14,6 +14,7 @@ import { CreateCompanyDto, UpdateCompanyDto } from './dto/company.dto';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { RequireScopes } from '../common/decorators/scopes.decorator';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
+import { Actor, ActorContext } from '../common/decorators/actor.decorator';
 import { ApiKeyScope } from '@prisma/client';
 import { ApiStandardErrors, ApiReadErrors, ApiNotFoundError } from '../common/swagger/api-errors';
 
@@ -135,8 +136,9 @@ export class CompaniesController {
     @CurrentTenant() tenant: RequestTenant,
     @Param('id') companyId: string,
     @Body() dto: UpdateCompanyDto,
+    @Actor() actor: ActorContext,
   ) {
-    return this.companiesService.update(tenant.id, companyId, dto);
+    return this.companiesService.update(tenant.id, companyId, dto, actor);
   }
 
   @Delete(':id')

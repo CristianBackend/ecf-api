@@ -12,6 +12,7 @@ import {
   formatDateTimeDdMmYyyy,
 } from '../certification-step3/services/acecf-xml-builder.service';
 import { ACECF_EXCLUDED_TYPES, getTypeFromEncf } from '../xml-builder/ecf-types';
+import { ActorContext } from '../common/decorators/actor.decorator';
 import { WebhookEvent, EcfType, ReceivedDocumentStatus } from '@prisma/client';
 
 /**
@@ -171,6 +172,7 @@ export class ReceptionService {
     documentId: string,
     approved: boolean,
     rejectionReason?: string,
+    actorCtx?: ActorContext,
   ) {
     const doc = await this.prisma.receivedDocument.findFirst({
       where: { id: documentId, tenantId },
@@ -268,6 +270,27 @@ export class ReceptionService {
           ...existingMetadata,
           acecfEmitterDelivery: result.emitterDelivery,
         } as any,
+      },
+    });
+
+    // Audit trail: a commercial approval/rejection (ACECF) is a sensitive,
+    // outward fiscal action sent to DGII + the emitter. Record WHO/WHAT/WHEN.
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId,
+        entityType: 'received_document',
+        entityId: documentId,
+        action: approved ? 'commercial_approval_sent' : 'commercial_rejection_sent',
+        actor: actorCtx?.actor ?? 'api',
+        ipAddress: actorCtx?.ipAddress ?? null,
+        metadata: {
+          encf: doc.encf,
+          emitterRnc: doc.emitterRnc,
+          receiverRnc: doc.company.rnc,
+          approved,
+          rejectionReason: approved ? null : rejectionReason || null,
+          trackId: result.trackId ?? null,
+        },
       },
     });
 

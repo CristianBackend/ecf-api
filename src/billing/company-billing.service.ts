@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompanyPlanStatus, DgiiEnvironment } from '@prisma/client';
+import { ActorContext } from '../common/decorators/actor.decorator';
 
 @Injectable()
 export class CompanyBillingService {
@@ -11,7 +12,12 @@ export class CompanyBillingService {
     private readonly logger: PinoLogger,
   ) {}
 
-  async assignPlan(companyId: string, planCode: string, tenantId: string) {
+  async assignPlan(
+    companyId: string,
+    planCode: string,
+    tenantId: string,
+    actorCtx?: ActorContext,
+  ) {
     const company = await this.prisma.company.findFirst({
       where: { id: companyId, tenantId },
     });
@@ -52,6 +58,18 @@ export class CompanyBillingService {
         baseUsed: 0,
         topupUsed: 0,
         totalQuota: plan.includedInvoices,
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId,
+        entityType: 'company',
+        entityId: companyId,
+        action: 'plan_assigned',
+        actor: actorCtx?.actor ?? 'api',
+        ipAddress: actorCtx?.ipAddress ?? null,
+        metadata: { companyId, planCode },
       },
     });
 

@@ -22,6 +22,10 @@ import {
 } from './ecf-types';
 import { ValidationService } from '../validation/validation.service';
 import { isValidProvinciaMunicipio } from './provincia-municipio-codes';
+import {
+  resolveIndicadorFacturacion as resolveIndicadorFacturacionShared,
+  lineItbisAmount,
+} from './itbis.util';
 
 const r2 = ValidationService.round2;
 const r4 = ValidationService.round4;
@@ -278,11 +282,11 @@ export class XmlBuilderService {
       } else if (indicadorFact === 1) {
         // ITBIS 18%
         taxableAmount18 += lineSubtotal;
-        itbis18 += r2(lineSubtotal * 0.18);
+        itbis18 += lineItbisAmount(lineSubtotal, indicadorFact, rate);
       } else if (indicadorFact === 2) {
         // ITBIS 16%
         taxableAmount16 += lineSubtotal;
-        itbis16 += r2(lineSubtotal * 0.16);
+        itbis16 += lineItbisAmount(lineSubtotal, indicadorFact, rate);
       } else {
         // Default: use rate
         if (rate === 18) {
@@ -374,14 +378,9 @@ export class XmlBuilderService {
    * 0=No Facturable, 1=ITBIS 18%, 2=ITBIS 16%, 3=ITBIS 0%, 4=Exento
    */
   private resolveIndicadorFacturacion(item: InvoiceItemInput, rate: number): number {
-    if (item.indicadorFacturacion !== undefined && item.indicadorFacturacion !== null) {
-      return item.indicadorFacturacion;
-    }
-    // Auto-derive from ITBIS rate
-    if (rate === 18) return 1;
-    if (rate === 16) return 2;
-    if (rate === 0) return 3;
-    return 1; // default ITBIS 18%
+    // Delegates to the shared itbis.util so the XML and the persisted InvoiceLine
+    // classify ITBIS identically (single source of truth — see itbis.util.ts).
+    return resolveIndicadorFacturacionShared(item, rate);
   }
 
   // ============================================================

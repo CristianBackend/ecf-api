@@ -12,6 +12,7 @@ import { UploadCertificateDto } from './dto/certificate.dto';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { RequireScopes } from '../common/decorators/scopes.decorator';
 import { CurrentTenant, RequestTenant } from '../common/decorators/tenant.decorator';
+import { Actor, ActorContext } from '../common/decorators/actor.decorator';
 import { ApiKeyScope } from '@prisma/client';
 import { ApiStandardErrors, ApiReadErrors, ApiNotFoundError } from '../common/swagger/api-errors';
 
@@ -61,9 +62,10 @@ export class CertificatesController {
     @CurrentTenant() tenant: RequestTenant,
     @Param('companyId') companyId: string,
     @Body() dto: UploadCertificateDto,
+    @Actor() actor: ActorContext,
   ) {
     dto.companyId = companyId;
-    return this.certificatesService.upload(tenant.id, dto);
+    return this.certificatesService.upload(tenant.id, dto, actor);
   }
 
   @Get()
