@@ -181,25 +181,24 @@ export class StatusPollProcessor extends WorkerHost {
         invoiceId, encf: invoice.encf, trackId: invoice.trackId,
         message: result.message, attempts: attempt,
       };
+      // Billing-v2: count the accepted emission (ACCEPTED + CONDITIONAL) for the
+      // poller path — the COMMON path, since standard e-CF submit returns
+      // IN_PROCESS and the final verdict lands here. Idempotent via usageCounted,
+      // so a re-poll of an already-ACCEPTED invoice never double-counts.
+      if (newStatus === InvoiceStatus.ACCEPTED || newStatus === InvoiceStatus.CONDITIONAL) {
+        await this.usageService
+          .countAcceptedEmission(invoiceId, companyId)
+          .catch((err) =>
+            this.logger.error(
+              { err, marker: 'USAGE_COUNT_FAILED', invoiceId, companyId, encf: invoice.encf },
+              `USAGE_COUNT_FAILED: accepted emission not counted for ${invoice.encf} — reconcile manually`,
+            ),
+          );
+      }
+
       if (newStatus === InvoiceStatus.ACCEPTED) {
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_ACCEPTED, webhookPayload);
       } else if (newStatus === InvoiceStatus.REJECTED) {
-        // FIX H1 (P2): for STANDARD e-CF, submitEcf returns IN_PROCESS and the
-        // REJECTED verdict arrives HERE via the poller — not in the processor.
-        // Refund the reserved quota (FIX G policy: refund REJECTED/VOIDED). The
-        // usageReverted flag makes this idempotent with the processor and
-        // contingency refunds, so repeated polls never double-refund.
-        await this.usageService
-          .revertUsage(invoiceId, companyId)
-          // FIX 3: post-commit refund — on DB failure the quota stays reserved
-          // (silent billing drift). Structured ERROR + stable marker for alerting
-          // / reconciliation (idempotent revertUsage makes a later retry safe).
-          .catch((err) =>
-            this.logger.error(
-              { err, marker: 'USAGE_REFUND_FAILED', invoiceId, companyId, encf: invoice.encf },
-              `USAGE_REFUND_FAILED: quota not refunded for rejected ${invoice.encf} — reconcile manually`,
-            ),
-          );
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_REJECTED, webhookPayload);
       } else if (newStatus === InvoiceStatus.CONDITIONAL) {
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_CONDITIONAL, webhookPayload);

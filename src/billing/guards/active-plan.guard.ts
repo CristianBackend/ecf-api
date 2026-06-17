@@ -1,26 +1,22 @@
 import { Injectable, CanActivate, ExecutionContext, HttpException, HttpStatus, Optional } from '@nestjs/common';
 import { ApiKeyScope } from '@prisma/client';
-import { BillingService } from '../billing.service';
 import { CompanyBillingService } from '../company-billing.service';
 
 /**
- * Guard applied to invoice-creation endpoints.
- * Returns HTTP 402 Payment Required when the tenant has no active billing plan
- * or has exhausted its included-invoices quota for the current period.
+ * Guard applied to invoice-creation endpoints (billing-v2, company-level only).
  *
- * Super-admins (scope ADMIN on the current request) are exempt — they can
- * always emit invoices regardless of plan status.
+ * Post-pay model: a company must have an ACTIVE plan assigned so we know its rate
+ * — otherwise we'd emit with no idea what to bill. But it is NEVER blocked by
+ * volume: there is no quota. Returns HTTP 402 ONLY when the company has no plan
+ * (or the plan is cancelled/expired), never because of how many it has emitted.
  *
- * When request.body.companyId is present and CompanyBillingService is wired,
- * company-level billing is checked first. If the company has no CompanyPlan
- * (fallback=true), the check falls through to the TenantPlan path.
+ * Super-admins (scope ADMIN) and DEV companies are exempt.
  *
  * Must run after ApiKeyGuard (which populates request.tenant with scopes).
  */
 @Injectable()
 export class ActivePlanGuard implements CanActivate {
   constructor(
-    private readonly billingService: BillingService,
     @Optional() private readonly companyBillingService?: CompanyBillingService,
   ) {}
 
@@ -36,31 +32,19 @@ export class ActivePlanGuard implements CanActivate {
     const tenantId: string = request.tenant?.id;
     const companyId: string | undefined = request.body?.companyId;
 
-    // Company-level billing check (new path)
-    if (companyId && this.companyBillingService) {
-      const result = await this.companyBillingService.canEmitInvoice(companyId, tenantId);
-      if (!result.fallback) {
-        if (!result.allowed) {
-          throw new HttpException(
-            { message: result.reason ?? 'Plan inactivo o límite alcanzado', error: 'Payment Required' },
-            HttpStatus.PAYMENT_REQUIRED,
-          );
-        }
-        return true;
-      }
-      // fallback=true → fall through to tenant-level check
+    // No companyId on the request, or service not wired → nothing to gate on;
+    // downstream validation handles a missing/invalid company.
+    if (!companyId || !this.companyBillingService) {
+      return true;
     }
 
-    // Tenant-level billing check (legacy path)
-    const { allowed, reason } = await this.billingService.canEmitInvoice(tenantId);
-
-    if (!allowed) {
+    const result = await this.companyBillingService.canEmitInvoice(companyId, tenantId);
+    if (!result.allowed) {
       throw new HttpException(
-        { message: reason ?? 'Plan inactivo o límite alcanzado', error: 'Payment Required' },
+        { message: result.reason ?? 'Empresa sin plan asignado', error: 'Payment Required' },
         HttpStatus.PAYMENT_REQUIRED,
       );
     }
-
     return true;
   }
 }

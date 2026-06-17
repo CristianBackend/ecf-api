@@ -2,6 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { CompanyPlanStatus, DgiiEnvironment } from '@prisma/client';
+import {
+  calculateMonthlyCharge,
+  PricingRange,
+  PRICING_RANGES,
+} from './pricing';
 
 @Injectable()
 export class CompanyBillingService {
@@ -11,6 +16,11 @@ export class CompanyBillingService {
     private readonly logger: PinoLogger,
   ) {}
 
+  /**
+   * Assign a per-emission plan to a company (manual). Opens a 30-day cycle and a
+   * fresh accepted-emissions counter. No quota — emission is never blocked by
+   * volume in billing-v2.
+   */
   async assignPlan(companyId: string, planCode: string, tenantId: string) {
     const company = await this.prisma.company.findFirst({
       where: { id: companyId, tenantId },
@@ -42,78 +52,46 @@ export class CompanyBillingService {
     });
 
     await this.prisma.companyUsage.upsert({
-      where: {
-        companyId_cycleStartDate: { companyId, cycleStartDate: now },
-      },
+      where: { companyId_cycleStartDate: { companyId, cycleStartDate: now } },
       update: {},
-      create: {
-        companyId,
-        cycleStartDate: now,
-        baseUsed: 0,
-        topupUsed: 0,
-        totalQuota: plan.includedInvoices,
-      },
+      create: { companyId, cycleStartDate: now, acceptedCount: 0 },
     });
 
     return companyPlan;
   }
 
   /**
-   * Checks whether a company is allowed to emit a new invoice.
-   * Returns `fallback: true` when the company has no CompanyPlan — the
-   * caller (ActivePlanGuard) falls through to the TenantPlan check.
+   * Billing-v2 emission gate: a company must have an ACTIVE, non-expired plan so
+   * we know its rate — but volume is NEVER blocked (post-pay). DEV companies are
+   * always allowed. Returns `{ allowed, reason? }`.
    */
   async canEmitInvoice(
     companyId: string,
     tenantId: string,
-  ): Promise<{ allowed: boolean; reason?: string; fallback?: boolean }> {
+  ): Promise<{ allowed: boolean; reason?: string }> {
     const company = await this.prisma.company.findFirst({
       where: { id: companyId, tenantId },
     });
     if (!company) return { allowed: false, reason: 'Empresa no encontrada' };
 
-    // DEV environment — always allow without plan check
+    // DEV sandbox — always allowed, no plan required.
     if (company.dgiiEnv === DgiiEnvironment.DEV) return { allowed: true };
 
-    const companyPlan = await this.prisma.companyPlan.findUnique({
-      where: { companyId },
-    });
-
-    // No company plan — fall back to tenant-level billing
-    if (!companyPlan) return { allowed: true, fallback: true };
-
-    if (companyPlan.status === CompanyPlanStatus.EXPIRED) {
-      return { allowed: false, reason: 'Plan vencido' };
+    const companyPlan = await this.prisma.companyPlan.findUnique({ where: { companyId } });
+    if (!companyPlan) {
+      return { allowed: false, reason: 'Empresa sin plan asignado — asigna un plan para conocer su tarifa' };
     }
     if (companyPlan.status === CompanyPlanStatus.CANCELLED) {
       return { allowed: false, reason: 'Plan cancelado' };
     }
-    if (companyPlan.status === CompanyPlanStatus.EXHAUSTED) {
-      return { allowed: false, reason: 'Cuota agotada — adquiere un topup para continuar' };
-    }
-
-    if (companyPlan.cycleEndDate < new Date()) {
+    if (companyPlan.status === CompanyPlanStatus.EXPIRED || companyPlan.cycleEndDate < new Date()) {
       return { allowed: false, reason: 'Plan vencido' };
     }
-
-    const usage = await this.prisma.companyUsage.findUnique({
-      where: {
-        companyId_cycleStartDate: {
-          companyId,
-          cycleStartDate: companyPlan.cycleStartDate,
-        },
-      },
-    });
-
-    if (!usage) return { allowed: true };
-
-    if (usage.baseUsed + usage.topupUsed >= usage.totalQuota) {
-      return { allowed: false, reason: 'Cuota agotada — adquiere un topup para continuar' };
-    }
-
+    // ACTIVE plan → allowed regardless of how many emissions this cycle.
     return { allowed: true };
   }
 
+  /** Usage summary for a company (billing-v2: accepted-count + cycle, no quota/topups). */
   async getUsage(companyId: string, tenantId: string) {
     const company = await this.prisma.company.findFirst({
       where: { id: companyId, tenantId },
@@ -124,45 +102,26 @@ export class CompanyBillingService {
       where: { companyId },
       include: { plan: true },
     });
-
     if (!companyPlan) return { hasActivePlan: false };
 
     const usage = await this.prisma.companyUsage.findUnique({
       where: {
-        companyId_cycleStartDate: {
-          companyId,
-          cycleStartDate: companyPlan.cycleStartDate,
-        },
+        companyId_cycleStartDate: { companyId, cycleStartDate: companyPlan.cycleStartDate },
       },
     });
 
     const now = new Date();
     const daysRemaining = Math.max(
       0,
-      Math.ceil(
-        (companyPlan.cycleEndDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000),
-      ),
+      Math.ceil((companyPlan.cycleEndDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)),
     );
-
-    const activeTopups = await this.prisma.topupPurchase.findMany({
-      where: {
-        companyId,
-        cycleStartDate: companyPlan.cycleStartDate,
-        cycleEndDate: { gt: now },
-      },
-      include: { topupPack: true },
-    });
-
-    const baseUsed = usage?.baseUsed ?? 0;
-    const topupUsed = usage?.topupUsed ?? 0;
-    const totalQuota = usage?.totalQuota ?? companyPlan.plan.includedInvoices;
 
     return {
       hasActivePlan: true,
       plan: {
         code: companyPlan.planCode,
         name: companyPlan.plan.name,
-        includedInvoices: companyPlan.plan.includedInvoices,
+        type: companyPlan.plan.type,
         monthlyFee: companyPlan.plan.monthlyFee,
       },
       cycle: {
@@ -173,23 +132,17 @@ export class CompanyBillingService {
         status: companyPlan.status,
       },
       usage: {
-        baseUsed,
-        topupUsed,
-        totalUsed: baseUsed + topupUsed,
-        totalQuota,
-        remaining: Math.max(0, totalQuota - baseUsed - topupUsed),
+        acceptedCount: usage?.acceptedCount ?? 0,
       },
-      activeTopups: activeTopups.map((t) => ({
-        id: t.id,
-        topupPackCode: t.topupPackCode,
-        invoiceCount: t.topupPack.invoiceCount,
-        invoicesUsed: t.invoicesUsed,
-        cycleEndDate: t.cycleEndDate,
-      })),
     };
   }
 
-  async purchaseTopup(companyId: string, topupPackCode: string, tenantId: string) {
+  /**
+   * Billing-v2: current-month projected charge for the active cycle. Read-only —
+   * MEASURES and CALCULATES, never charges. Returns the flat-by-range breakdown
+   * (or requiresQuote / total:null for the quote-only range).
+   */
+  async getCurrentMonthBilling(companyId: string, tenantId: string) {
     const company = await this.prisma.company.findFirst({
       where: { id: companyId, tenantId },
     });
@@ -197,88 +150,57 @@ export class CompanyBillingService {
 
     const companyPlan = await this.prisma.companyPlan.findUnique({
       where: { companyId },
+      include: { plan: { include: { pricingTiers: true } } },
     });
-    if (!companyPlan) throw new NotFoundException('Empresa sin plan activo');
+    if (!companyPlan) return { hasActivePlan: false };
 
-    const topupPack = await this.prisma.topupPack.findUnique({
-      where: { code: topupPackCode },
-    });
-    if (!topupPack || !topupPack.isActive) {
-      throw new NotFoundException(`Topup pack '${topupPackCode}' no encontrado`);
-    }
-
-    const purchase = await this.prisma.topupPurchase.create({
-      data: {
-        companyId,
-        topupPackCode,
-        cycleStartDate: companyPlan.cycleStartDate,
-        cycleEndDate: companyPlan.cycleEndDate,
-        invoicesUsed: 0,
-      },
-    });
-
-    // Increase quota and reset exhausted state
     const usage = await this.prisma.companyUsage.findUnique({
       where: {
-        companyId_cycleStartDate: {
-          companyId,
-          cycleStartDate: companyPlan.cycleStartDate,
-        },
+        companyId_cycleStartDate: { companyId, cycleStartDate: companyPlan.cycleStartDate },
       },
     });
+    const acceptedCount = usage?.acceptedCount ?? 0;
 
-    if (usage) {
-      await this.prisma.companyUsage.update({
-        where: {
-          companyId_cycleStartDate: {
-            companyId,
-            cycleStartDate: companyPlan.cycleStartDate,
-          },
-        },
-        data: {
-          totalQuota: { increment: topupPack.invoiceCount },
-          notified100: false,
-        },
-      });
-    }
+    const ranges = this.toPricingRanges(companyPlan.plan.pricingTiers);
+    const charge = calculateMonthlyCharge(acceptedCount, ranges);
 
-    if (companyPlan.status === CompanyPlanStatus.EXHAUSTED) {
-      await this.prisma.companyPlan.update({
-        where: { companyId },
-        data: { status: CompanyPlanStatus.ACTIVE },
-      });
-    }
-
-    return purchase;
+    return {
+      hasActivePlan: true,
+      companyId,
+      plan: { code: companyPlan.planCode, name: companyPlan.plan.name },
+      cycle: {
+        startDate: companyPlan.cycleStartDate,
+        endDate: companyPlan.cycleEndDate,
+      },
+      charge,
+    };
   }
 
-  async getAlerts(companyId: string, tenantId: string) {
-    const company = await this.prisma.company.findFirst({
-      where: { id: companyId, tenantId },
-    });
-    if (!company) throw new NotFoundException('Empresa no encontrada');
-
-    return this.prisma.billingAlert.findMany({
-      where: { companyId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
-  }
-
-  async markAlertRead(companyId: string, alertId: string, tenantId: string) {
-    const company = await this.prisma.company.findFirst({
-      where: { id: companyId, tenantId },
-    });
-    if (!company) throw new NotFoundException('Empresa no encontrada');
-
-    const alert = await this.prisma.billingAlert.findFirst({
-      where: { id: alertId, companyId },
-    });
-    if (!alert) throw new NotFoundException('Alerta no encontrada');
-
-    return this.prisma.billingAlert.update({
-      where: { id: alertId },
-      data: { isRead: true },
-    });
+  /**
+   * Map the plan's configurable PricingTier rows to the pure-engine PricingRange
+   * shape. Falls back to the canonical {@link PRICING_RANGES} when the plan has
+   * no tiers configured.
+   */
+  private toPricingRanges(
+    tiers: Array<{
+      fromQty: number;
+      toQty: number | null;
+      pricePerEmission: unknown;
+      requiresQuote: boolean;
+      sortOrder: number;
+    }>,
+  ): PricingRange[] {
+    if (!tiers || tiers.length === 0) return PRICING_RANGES;
+    return [...tiers]
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.fromQty - b.fromQty)
+      .map((t) => ({
+        fromQty: t.fromQty,
+        toQty: t.toQty,
+        pricePerEmission:
+          t.pricePerEmission === null || t.pricePerEmission === undefined
+            ? null
+            : Number(t.pricePerEmission),
+        requiresQuote: t.requiresQuote,
+      }));
   }
 }

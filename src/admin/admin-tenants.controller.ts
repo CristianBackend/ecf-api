@@ -25,11 +25,6 @@ class AdminCreateTenantBodyDto {
   @IsOptional()
   @IsEnum(Plan)
   plan?: Plan;
-
-  @ApiPropertyOptional({ example: 'TIER_1', description: 'Código del plan de facturación (crea TenantPlan PENDING_PAYMENT)' })
-  @IsOptional()
-  @IsString()
-  planCode?: string;
 }
 
 class AdminTenantsQueryDto {

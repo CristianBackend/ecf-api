@@ -1,24 +1,17 @@
 /**
- * UsageService.revertUsage — integration tests against a real PostgreSQL DB.
+ * UsageService.countAcceptedEmission — integration tests against a real PostgreSQL DB.
  *
- * WHY THIS FILE EXISTS (FIX H1 verification):
- * The REJECTED verdict for STANDARD e-CF arrives via the status poller, which
- * now calls revertUsage(invoiceId, companyId) to refund the reserved quota.
- * This file proves the money path against REAL SQL:
- *   1. revertUsage decrements company_usages EXACTLY ONCE on the first call.
- *   2. A repeated call (e.g. a re-poll, or REJECTED→VOIDED) does NOT
- *      double-refund — the usageReverted updateMany claim guards it.
+ * WHY (billing-v2, revenue-critical): an invoice can reach ACCEPTED through 4
+ * code paths (poller, direct submit, contingency, manual poll) and a re-poll can
+ * hit an already-ACCEPTED invoice. This proves against REAL SQL that:
+ *   1. the first call increments CompanyUsage.acceptedCount and flips usageCounted,
+ *   2. a repeated call (other path / re-poll) does NOT double-count.
  *
- * Unit tests mock $queryRaw, so the snake_case columns / atomic UPDATE in
- * decrementUsage and the updateMany idempotency claim only get exercised here.
- *
- * SETUP: Requires DATABASE_URL pointing to a live PostgreSQL instance with the
- * schema already migrated. The .env file is loaded here (override) so this test
- * hits the real DB even though Jest's env-setup.ts set a test-only DATABASE_URL.
- * If the DB is unreachable, every test no-ops (mirrors the sequences spec).
+ * SETUP: requires DATABASE_URL pointing to a live migrated PostgreSQL. The .env is
+ * loaded (override) so this hits the real DB even though env-setup.ts set a
+ * test-only DATABASE_URL. If the DB is unreachable, every test no-ops.
  */
 
-// Load .env before PrismaClient is instantiated, overriding env-setup.ts defaults.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env'), override: true });
 
@@ -26,9 +19,9 @@ import { PrismaClient, CompanyPlanStatus, DgiiEnvironment, EcfType, InvoiceStatu
 import { UsageService } from './usage.service';
 import { makeTestLogger } from '../common/logger/test-logger';
 
-const TEST_LABEL = `usage-int-${Date.now()}`;
+const TEST_LABEL = `usage-v2-int-${Date.now()}`;
 
-describe('UsageService.revertUsage — integration (real DB)', () => {
+describe('UsageService.countAcceptedEmission — integration (real DB)', () => {
   let prisma: PrismaClient;
   let service: UsageService;
   let dbReachable = true;
@@ -49,19 +42,18 @@ describe('UsageService.revertUsage — integration (real DB)', () => {
       return;
     }
 
-    // notifications is only used by notifyThresholds — irrelevant to revertUsage.
-    service = new UsageService(prisma as any, {} as any, makeTestLogger());
+    service = new UsageService(prisma as any, makeTestLogger());
 
     const tenant = await prisma.tenant.create({
       data: { name: `Tenant ${TEST_LABEL}`, email: `${TEST_LABEL}@test.invalid` },
     });
     tenantId = tenant.id;
 
-    // CERT (NOT DEV) — DEV companies are not metered, so decrementUsage would no-op.
+    // CERT (NOT DEV) — DEV companies are not metered.
     const company = await prisma.company.create({
       data: {
         tenantId,
-        rnc: '130000001',
+        rnc: '130000009',
         businessName: `Empresa ${TEST_LABEL}`,
         dgiiEnv: DgiiEnvironment.CERT,
       },
@@ -70,7 +62,7 @@ describe('UsageService.revertUsage — integration (real DB)', () => {
 
     planCode = `PLAN_${TEST_LABEL}`.slice(0, 40);
     await prisma.billingPlan.create({
-      data: { code: planCode, name: 'Plan Test', monthlyFee: 0, includedInvoices: 100 },
+      data: { code: planCode, name: 'Per Emission Test', monthlyFee: 60 },
     });
 
     await prisma.companyPlan.create({
@@ -83,25 +75,14 @@ describe('UsageService.revertUsage — integration (real DB)', () => {
       },
     });
 
-    // One invoice consumed against base quota; usageReverted starts false.
-    await prisma.companyUsage.create({
-      data: {
-        companyId,
-        cycleStartDate: cycleStart,
-        baseUsed: 1,
-        topupUsed: 0,
-        totalQuota: 100,
-      },
-    });
-
     const invoice = await prisma.invoice.create({
       data: {
         tenantId,
         companyId,
         ecfType: EcfType.E31,
         encf: 'E310000000001',
-        status: InvoiceStatus.REJECTED,
-        usageReverted: false,
+        status: InvoiceStatus.ACCEPTED,
+        usageCounted: false,
       },
     });
     invoiceId = invoice.id;
@@ -112,7 +93,6 @@ describe('UsageService.revertUsage — integration (real DB)', () => {
       await prisma.$disconnect();
       return;
     }
-    // Clean up children first, then the tenant.
     await prisma.invoice.deleteMany({ where: { tenantId } }).catch(() => {});
     await prisma.companyUsage.deleteMany({ where: { companyId } }).catch(() => {});
     await prisma.companyPlan.deleteMany({ where: { companyId } }).catch(() => {});
@@ -122,32 +102,28 @@ describe('UsageService.revertUsage — integration (real DB)', () => {
     await prisma.$disconnect();
   });
 
-  it('decrements base_used exactly once and flips usageReverted on the first call', async () => {
+  it('first call increments acceptedCount to 1 and flips usageCounted', async () => {
     if (!dbReachable) return;
 
-    await service.revertUsage(invoiceId, companyId);
+    await service.countAcceptedEmission(invoiceId, companyId);
 
     const usage = await prisma.companyUsage.findUnique({
       where: { companyId_cycleStartDate: { companyId, cycleStartDate: cycleStart } },
     });
-    expect(usage!.baseUsed).toBe(0);
-    expect(usage!.topupUsed).toBe(0);
+    expect(usage!.acceptedCount).toBe(1);
 
     const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
-    expect(invoice!.usageReverted).toBe(true);
+    expect(invoice!.usageCounted).toBe(true);
   });
 
-  it('does NOT double-refund on a repeated revertUsage (idempotent re-poll)', async () => {
+  it('does NOT double-count on a repeated call (other path / re-poll)', async () => {
     if (!dbReachable) return;
 
-    // Second call: the usageReverted claim already lost → no further decrement.
-    await service.revertUsage(invoiceId, companyId);
+    await service.countAcceptedEmission(invoiceId, companyId);
 
     const usage = await prisma.companyUsage.findUnique({
       where: { companyId_cycleStartDate: { companyId, cycleStartDate: cycleStart } },
     });
-    // Still 0 — never went negative, never decremented twice.
-    expect(usage!.baseUsed).toBe(0);
-    expect(usage!.topupUsed).toBe(0);
+    expect(usage!.acceptedCount).toBe(1); // still 1 — never counted twice
   });
 });

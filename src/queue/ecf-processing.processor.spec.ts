@@ -104,7 +104,7 @@ function makeProcessor() {
   };
 
   const usageService = {
-    revertUsage: jest.fn(async () => undefined) as Mock,
+    countAcceptedEmission: jest.fn(async () => undefined) as Mock,
   };
 
   const processor = new EcfProcessingProcessor(

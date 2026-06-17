@@ -279,22 +279,17 @@ export class EcfProcessingProcessor extends WorkerHost {
 
       this.logger.info(`${invoice.encf} → DGII: ${newStatus} | TrackId: ${submissionResult.trackId}`);
 
-      // FIX G (P2): DGII REJECTED the e-CF (bad data) → it will never be a valid
-      // comprobante, so refund the quota it consumed at emission. Idempotent via
-      // the usageReverted flag (a later VOID won't double-refund). ERROR/
-      // CONTINGENCY are NOT refunded here — they are transient/retriable.
-      if (newStatus === InvoiceStatus.REJECTED) {
+      // Billing-v2: if DGII ACCEPTED (or CONDITIONAL) directly on submit — rare
+      // for standard e-CF (usually IN_PROCESS), common for some flows — count the
+      // accepted emission here. Idempotent via usageCounted, so if the poller
+      // later sees the same ACCEPTED it won't double-count.
+      if (newStatus === InvoiceStatus.ACCEPTED || newStatus === InvoiceStatus.CONDITIONAL) {
         await this.usageService
-          .revertUsage(invoiceId, companyId)
-          // FIX 3: revertUsage is idempotent but this runs post-commit; if the DB
-          // hiccups here the quota stays un-refunded (silent billing drift, not
-          // fiscal). Emit a structured ERROR with a stable marker so it can be
-          // alerted/reconciled. (Not a BullMQ retry: that needs a new queue +
-          // processor — out of scope for this low-severity edge.)
+          .countAcceptedEmission(invoiceId, companyId)
           .catch((err) =>
             this.logger.error(
-              { err, marker: 'USAGE_REFUND_FAILED', invoiceId, companyId, encf: invoice.encf },
-              `USAGE_REFUND_FAILED: quota not refunded for rejected ${invoice.encf} — reconcile manually`,
+              { err, marker: 'USAGE_COUNT_FAILED', invoiceId, companyId, encf: invoice.encf },
+              `USAGE_COUNT_FAILED: accepted emission not counted for ${invoice.encf} — reconcile manually`,
             ),
           );
       }

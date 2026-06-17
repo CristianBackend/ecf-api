@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, ConflictException, BadRequestException }
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
-import { Plan, ApiKeyScope, TenantPlanStatus } from '@prisma/client';
+import { Plan, ApiKeyScope } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -33,8 +33,6 @@ export interface AdminCreateTenantDto {
   name: string;
   email: string;
   plan?: Plan;
-  /** Optional billing plan code (TIER_1–TIER_4). Creates a TenantPlan with PENDING_PAYMENT status. */
-  planCode?: string;
 }
 
 @Injectable()
@@ -50,14 +48,8 @@ export class AdminTenantsService {
     const existing = await this.prisma.tenant.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('Email already registered');
 
-    // Validate planCode against billing plan catalog before doing any writes
-    let billingPlan: { id: string; code: string } | null = null;
-    if (dto.planCode) {
-      billingPlan = await this.prisma.billingPlan.findUnique({ where: { code: dto.planCode } });
-      if (!billingPlan) {
-        throw new BadRequestException(`Plan code '${dto.planCode}' no existe en el catálogo`);
-      }
-    }
+    // Billing-v2: plans are assigned to COMPANIES, not tenants. Tenant creation
+    // no longer creates any plan (the legacy tenant-level TenantPlan was removed).
 
     // Generate readable 12-char temporary password from unambiguous charset
     const randomBytes = crypto.randomBytes(24);
@@ -83,21 +75,7 @@ export class AdminTenantsService {
       this.authService.generateApiKey(tenant.id, 'Default Live Key', true, TENANT_DEFAULT_SCOPES),
     ]);
 
-    // Create TenantPlan if planCode was provided
-    let tenantPlan: { id: string; status: TenantPlanStatus; planId: string } | null = null;
-    if (billingPlan) {
-      tenantPlan = await this.prisma.tenantPlan.create({
-        data: {
-          tenantId: tenant.id,
-          planId: billingPlan.id,
-          status: TenantPlanStatus.PENDING_PAYMENT,
-        },
-      });
-    }
-
-    this.logger.info(
-      `Admin created tenant: ${tenant.id} (${tenant.email})${billingPlan ? ` with plan ${billingPlan.code}` : ''}`,
-    );
+    this.logger.info(`Admin created tenant: ${tenant.id} (${tenant.email})`);
 
     return {
       tenant: {
@@ -117,7 +95,6 @@ export class AdminTenantsService {
         test: { key: testKey.key, prefix: testKey.keyPrefix, scopes: testKey.scopes },
         live: { key: liveKey.key, prefix: liveKey.keyPrefix, scopes: liveKey.scopes },
       },
-      ...(tenantPlan ? { tenantPlan } : {}),
     };
   }
 

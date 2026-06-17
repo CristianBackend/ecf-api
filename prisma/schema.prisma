@@ -45,12 +45,12 @@ enum EcfType {
 
 // Tipo de comprador según DGII
 enum BuyerType {
-  CONTRIBUYENTE      // Persona jurídica o física con RNC activo en DGII → E31
-  CONSUMIDOR_FINAL   // Persona sin RNC o consumidor final → E32
-  GOBIERNO           // Entidad gubernamental → E45
-  REGIMEN_ESPECIAL   // Zona franca, exentos → E44
-  EXTRANJERO         // Persona o empresa extranjera → E46/E47
-  INFORMAL           // Proveedor sin RNC (compras informales) → E41
+  CONTRIBUYENTE // Persona jurídica o física con RNC activo en DGII → E31
+  CONSUMIDOR_FINAL // Persona sin RNC o consumidor final → E32
+  GOBIERNO // Entidad gubernamental → E45
+  REGIMEN_ESPECIAL // Zona franca, exentos → E44
+  EXTRANJERO // Persona o empresa extranjera → E46/E47
+  INFORMAL // Proveedor sin RNC (compras informales) → E41
 
   @@map("buyer_type")
 }
@@ -100,23 +100,15 @@ enum ApiKeyScope {
 
 enum CompanyPlanStatus {
   ACTIVE
-  EXHAUSTED
   EXPIRED
   CANCELLED
 }
 
-enum BillingAlertLevel {
-  INFO
-  WARNING
-  CRITICAL
-  BLOCKED
-}
-
-enum TenantPlanStatus {
-  PENDING_PAYMENT
-  ACTIVE
-  EXPIRED
-  CANCELED
+// Billing-v2: which billing model a BillingPlan implements. Kept as an enum so a
+// future quota-based model could coexist; today every plan is PER_EMISSION
+// (US$60 flat + accepted emissions × flat-per-range price).
+enum BillingModelType {
+  PER_EMISSION
 }
 
 // ===========================================
@@ -124,61 +116,57 @@ enum TenantPlanStatus {
 // ===========================================
 
 model Tenant {
-  id           String   @id @default(uuid()) @db.Uuid
-  name         String   @db.VarChar(200)
-  email        String   @unique @db.VarChar(320)
-  passwordHash String?  @map("password_hash") @db.VarChar(255)
-  /// @deprecated — use TenantPlan instead
-  plan         Plan     @default(STARTER)
+  id                 String   @id @default(uuid()) @db.Uuid
+  name               String   @db.VarChar(200)
+  email              String   @unique @db.VarChar(320)
+  passwordHash       String?  @map("password_hash") @db.VarChar(255)
+  /// @deprecated legacy tenant-level plan column; billing-v2 is company-level only
+  plan               Plan     @default(STARTER)
   isActive           Boolean  @default(true) @map("is_active")
   mustChangePassword Boolean  @default(false) @map("must_change_password")
-  metadata     Json?    @db.JsonB
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  metadata           Json?    @db.JsonB
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   // Relations
-  companies     Company[]
-  buyers        Buyer[]
-  apiKeys       ApiKey[]
-  webhooks      WebhookSubscription[]
-  auditLogs     AuditLog[]
+  companies         Company[]
+  buyers            Buyer[]
+  apiKeys           ApiKey[]
+  webhooks          WebhookSubscription[]
+  auditLogs         AuditLog[]
   receivedDocuments ReceivedDocument[]
-  tenantPlans   TenantPlan[]
-  monthlyUsages MonthlyUsage[]
 
   @@map("tenants")
 }
 
 model Company {
-  id            String          @id @default(uuid()) @db.Uuid
-  tenantId      String          @map("tenant_id") @db.Uuid
-  rnc           String          @db.VarChar(11)
-  businessName  String          @map("business_name") @db.VarChar(250)
-  tradeName     String?         @map("trade_name") @db.VarChar(250)
-  address       String?         @db.VarChar(500)
-  phone         String?         @db.VarChar(20)
-  email         String?         @db.VarChar(320)
-  municipality  String?         @db.VarChar(100)
-  province      String?         @db.VarChar(100)
-  activityCode  String?         @map("activity_code") @db.VarChar(10)
-  branchCode    String?         @map("branch_code") @db.VarChar(20)
-  economicActivity String?      @map("economic_activity") @db.VarChar(100)
-  dgiiEnv       DgiiEnvironment @default(DEV) @map("dgii_environment")
-  isActive      Boolean         @default(true) @map("is_active")
-  createdAt     DateTime        @default(now()) @map("created_at")
-  updatedAt     DateTime        @updatedAt @map("updated_at")
+  id               String          @id @default(uuid()) @db.Uuid
+  tenantId         String          @map("tenant_id") @db.Uuid
+  rnc              String          @db.VarChar(11)
+  businessName     String          @map("business_name") @db.VarChar(250)
+  tradeName        String?         @map("trade_name") @db.VarChar(250)
+  address          String?         @db.VarChar(500)
+  phone            String?         @db.VarChar(20)
+  email            String?         @db.VarChar(320)
+  municipality     String?         @db.VarChar(100)
+  province         String?         @db.VarChar(100)
+  activityCode     String?         @map("activity_code") @db.VarChar(10)
+  branchCode       String?         @map("branch_code") @db.VarChar(20)
+  economicActivity String?         @map("economic_activity") @db.VarChar(100)
+  dgiiEnv          DgiiEnvironment @default(DEV) @map("dgii_environment")
+  isActive         Boolean         @default(true) @map("is_active")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
 
   // Relations
-  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  certificates  Certificate[]
-  sequences     Sequence[]
-  invoices      Invoice[]
-  dgiiTokens    DgiiToken[]
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  certificates      Certificate[]
+  sequences         Sequence[]
+  invoices          Invoice[]
+  dgiiTokens        DgiiToken[]
   receivedDocuments ReceivedDocument[]
-  companyPlan   CompanyPlan?
-  companyUsages CompanyUsage[]
-  topupPurchases TopupPurchase[]
-  billingAlerts BillingAlert[]
+  companyPlan       CompanyPlan?
+  companyUsages     CompanyUsage[]
 
   @@unique([tenantId, rnc])
   @@index([tenantId])
@@ -186,38 +174,38 @@ model Company {
 }
 
 model Buyer {
-  id                String      @id @default(uuid()) @db.Uuid
-  tenantId          String      @map("tenant_id") @db.Uuid
-  rnc               String?     @db.VarChar(11)           // null for consumidor final sin RNC
-  name              String      @db.VarChar(250)
-  commercialName    String?     @map("commercial_name") @db.VarChar(250)
-  buyerType         BuyerType   @default(CONSUMIDOR_FINAL) @map("buyer_type")
-  email             String?     @db.VarChar(320)
-  phone             String?     @db.VarChar(20)
-  address           String?     @db.VarChar(500)
-  municipality      String?     @db.VarChar(100)
-  province          String?     @db.VarChar(100)
-  contactPerson     String?     @map("contact_person") @db.VarChar(250)
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  rnc            String?   @db.VarChar(11) // null for consumidor final sin RNC
+  name           String    @db.VarChar(250)
+  commercialName String?   @map("commercial_name") @db.VarChar(250)
+  buyerType      BuyerType @default(CONSUMIDOR_FINAL) @map("buyer_type")
+  email          String?   @db.VarChar(320)
+  phone          String?   @db.VarChar(20)
+  address        String?   @db.VarChar(500)
+  municipality   String?   @db.VarChar(100)
+  province       String?   @db.VarChar(100)
+  contactPerson  String?   @map("contact_person") @db.VarChar(250)
 
   // DGII data (auto-filled)
-  dgiiStatus             String?   @map("dgii_status") @db.VarChar(50)
-  dgiiPaymentRegime      String?   @map("dgii_payment_regime") @db.VarChar(50)
-  dgiiEconomicActivity   String?   @map("dgii_economic_activity") @db.Text
-  dgiiIsElectronicInvoicer Boolean? @default(false) @map("dgii_is_electronic_invoicer")
-  dgiiLastVerified       DateTime? @map("dgii_last_verified")
+  dgiiStatus               String?   @map("dgii_status") @db.VarChar(50)
+  dgiiPaymentRegime        String?   @map("dgii_payment_regime") @db.VarChar(50)
+  dgiiEconomicActivity     String?   @map("dgii_economic_activity") @db.Text
+  dgiiIsElectronicInvoicer Boolean?  @default(false) @map("dgii_is_electronic_invoicer")
+  dgiiLastVerified         DateTime? @map("dgii_last_verified")
 
   // Defaults
-  defaultEcfType    EcfType?    @map("default_ecf_type")
-  defaultPaymentType Int?       @map("default_payment_type")
-  notes             String?     @db.Text
+  defaultEcfType     EcfType? @map("default_ecf_type")
+  defaultPaymentType Int?     @map("default_payment_type")
+  notes              String?  @db.Text
 
-  isActive          Boolean     @default(true) @map("is_active")
-  createdAt         DateTime    @default(now()) @map("created_at")
-  updatedAt         DateTime    @updatedAt @map("updated_at")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  tenant            Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  invoices          Invoice[]
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoices Invoice[]
 
   @@index([tenantId])
   @@index([name])
@@ -225,25 +213,25 @@ model Buyer {
 }
 
 model Certificate {
-  id              String   @id @default(uuid()) @db.Uuid
-  tenantId        String   @map("tenant_id") @db.Uuid
-  companyId       String   @map("company_id") @db.Uuid
-  encryptedP12    Bytes    @map("encrypted_p12")
-  encryptedPass   String   @map("encrypted_passphrase") @db.VarChar(500)
-  fingerprint     String   @db.VarChar(64)
-  issuer          String?  @db.VarChar(250)
-  issuerName      String?  @map("issuer_name") @db.VarChar(250)
-  subject         String?  @db.VarChar(250)
-  serialNumber    String?  @map("serial_number") @db.VarChar(100)
-  signerName      String?  @map("signer_name") @db.VarChar(250)
-  signerId        String?  @map("signer_id") @db.VarChar(50)
-  signerEmail     String?  @map("signer_email") @db.VarChar(320)
-  validFrom       DateTime @map("valid_from")
-  validTo         DateTime @map("valid_to")
-  isActive        Boolean  @default(true) @map("is_active")
-  kmsKeyId        String?  @map("kms_key_id") @db.VarChar(200)
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  encryptedP12  Bytes    @map("encrypted_p12")
+  encryptedPass String   @map("encrypted_passphrase") @db.VarChar(500)
+  fingerprint   String   @db.VarChar(64)
+  issuer        String?  @db.VarChar(250)
+  issuerName    String?  @map("issuer_name") @db.VarChar(250)
+  subject       String?  @db.VarChar(250)
+  serialNumber  String?  @map("serial_number") @db.VarChar(100)
+  signerName    String?  @map("signer_name") @db.VarChar(250)
+  signerId      String?  @map("signer_id") @db.VarChar(50)
+  signerEmail   String?  @map("signer_email") @db.VarChar(320)
+  validFrom     DateTime @map("valid_from")
+  validTo       DateTime @map("valid_to")
+  isActive      Boolean  @default(true) @map("is_active")
+  kmsKeyId      String?  @map("kms_key_id") @db.VarChar(200)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   // Relations
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -254,18 +242,18 @@ model Certificate {
 }
 
 model Sequence {
-  id            String   @id @default(uuid()) @db.Uuid
-  tenantId      String   @map("tenant_id") @db.Uuid
-  companyId     String   @map("company_id") @db.Uuid
-  ecfType       EcfType  @map("ecf_type")
-  prefix        String   @db.VarChar(3) // E31, E32, etc.
-  currentNumber Int      @default(0) @map("current_number")
-  startNumber   Int      @map("start_number")
-  endNumber     Int      @map("end_number")
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  companyId     String    @map("company_id") @db.Uuid
+  ecfType       EcfType   @map("ecf_type")
+  prefix        String    @db.VarChar(3) // E31, E32, etc.
+  currentNumber Int       @default(0) @map("current_number")
+  startNumber   Int       @map("start_number")
+  endNumber     Int       @map("end_number")
   expiresAt     DateTime? @map("expires_at")
-  isActive      Boolean  @default(true) @map("is_active")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
   // Relations
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
@@ -286,100 +274,101 @@ model Sequence {
 // ===========================================
 
 model Invoice {
-  id              String        @id @default(uuid()) @db.Uuid
-  tenantId        String        @map("tenant_id") @db.Uuid
-  companyId       String        @map("company_id") @db.Uuid
-  ecfType         EcfType       @map("ecf_type")
-  encf            String?       @db.VarChar(13) // E310000000001
-  status          InvoiceStatus @default(DRAFT)
-  trackId         String?       @map("track_id") @db.VarChar(100)
-  securityCode    String?       @map("security_code") @db.VarChar(6)
+  id           String        @id @default(uuid()) @db.Uuid
+  tenantId     String        @map("tenant_id") @db.Uuid
+  companyId    String        @map("company_id") @db.Uuid
+  ecfType      EcfType       @map("ecf_type")
+  encf         String?       @db.VarChar(13) // E310000000001
+  status       InvoiceStatus @default(DRAFT)
+  trackId      String?       @map("track_id") @db.VarChar(100)
+  securityCode String?       @map("security_code") @db.VarChar(6)
 
   // Buyer info
-  buyerId         String?       @map("buyer_id") @db.Uuid
-  buyerRnc        String?       @map("buyer_rnc") @db.VarChar(11)
-  buyerName       String?       @map("buyer_name") @db.VarChar(250)
-  buyerEmail      String?       @map("buyer_email") @db.VarChar(320)
+  buyerId    String? @map("buyer_id") @db.Uuid
+  buyerRnc   String? @map("buyer_rnc") @db.VarChar(11)
+  buyerName  String? @map("buyer_name") @db.VarChar(250)
+  buyerEmail String? @map("buyer_email") @db.VarChar(320)
 
   // Amounts
-  subtotal        Decimal       @default(0) @db.Decimal(18, 2)
-  totalDiscount   Decimal       @default(0) @map("total_discount") @db.Decimal(18, 2)
-  totalItbis      Decimal       @default(0) @map("total_itbis") @db.Decimal(18, 2)
-  totalIsc        Decimal       @default(0) @map("total_isc") @db.Decimal(18, 2)
-  totalAmount     Decimal       @default(0) @map("total_amount") @db.Decimal(18, 2)
+  subtotal      Decimal @default(0) @db.Decimal(18, 2)
+  totalDiscount Decimal @default(0) @map("total_discount") @db.Decimal(18, 2)
+  totalItbis    Decimal @default(0) @map("total_itbis") @db.Decimal(18, 2)
+  totalIsc      Decimal @default(0) @map("total_isc") @db.Decimal(18, 2)
+  totalAmount   Decimal @default(0) @map("total_amount") @db.Decimal(18, 2)
 
   // Payment
-  paymentType     Int?          @map("payment_type") // 1=Efectivo, 2=Cheque, 3=Transferencia, 4=Tarjeta, etc.
-  paymentDate     DateTime?     @map("payment_date")
+  paymentType Int?      @map("payment_type") // 1=Efectivo, 2=Cheque, 3=Transferencia, 4=Tarjeta, etc.
+  paymentDate DateTime? @map("payment_date")
 
   // Reference (for credit/debit notes)
-  referenceEncf   String?       @map("reference_encf") @db.VarChar(13)
-  referenceDate   DateTime?     @map("reference_date")
+  referenceEncf String?   @map("reference_encf") @db.VarChar(13)
+  referenceDate DateTime? @map("reference_date")
 
   // XML storage
-  xmlUnsigned     String?       @map("xml_unsigned") @db.Text
-  xmlSigned       String?       @map("xml_signed") @db.Text
-  xmlS3Key        String?       @map("xml_s3_key") @db.VarChar(500)
+  xmlUnsigned String? @map("xml_unsigned") @db.Text
+  xmlSigned   String? @map("xml_signed") @db.Text
+  xmlS3Key    String? @map("xml_s3_key") @db.VarChar(500)
 
   // Signing
-  signedAt        DateTime?     @map("signed_at")
-  signatureValue  String?       @map("signature_value") @db.Text
+  signedAt       DateTime? @map("signed_at")
+  signatureValue String?   @map("signature_value") @db.Text
 
   // RFCE (Resumen Factura Consumo < 250K)
-  isRfce          Boolean       @default(false) @map("is_rfce")
-  xmlRfce         String?       @map("xml_rfce") @db.Text
+  isRfce  Boolean @default(false) @map("is_rfce")
+  xmlRfce String? @map("xml_rfce") @db.Text
 
   // Reference extras (for NC/ND)
-  referenceModCode Int?         @map("reference_mod_code") // 1=Anula, 2=Texto, 3=Montos, 4=Contingencia
+  referenceModCode Int? @map("reference_mod_code") // 1=Anula, 2=Texto, 3=Montos, 4=Contingencia
 
   // DGII response
-  dgiiResponse    Json?         @map("dgii_response") @db.JsonB
-  dgiiMessage     String?       @map("dgii_message") @db.Text
-  dgiiTimestamp   DateTime?     @map("dgii_timestamp")
+  dgiiResponse  Json?     @map("dgii_response") @db.JsonB
+  dgiiMessage   String?   @map("dgii_message") @db.Text
+  dgiiTimestamp DateTime? @map("dgii_timestamp")
 
   // Currency
-  currency        String        @default("DOP") @db.VarChar(3)
-  exchangeRate    Decimal?      @map("exchange_rate") @db.Decimal(12, 4)
+  currency     String   @default("DOP") @db.VarChar(3)
+  exchangeRate Decimal? @map("exchange_rate") @db.Decimal(12, 4)
 
   // Idempotency
   // FIX 3 (P5): idempotency key is unique PER TENANT (see @@unique below), not
   // globally — otherwise tenant A could read tenant B's invoice by guessing its key.
-  idempotencyKey  String?       @map("idempotency_key") @db.VarChar(64)
+  idempotencyKey String? @map("idempotency_key") @db.VarChar(64)
 
   // E41: dedicated vendor columns (avoids metadata._originalDto dependency)
-  vendorRnc       String?       @map("vendor_rnc") @db.VarChar(11)
-  vendorName      String?       @map("vendor_name") @db.VarChar(250)
+  vendorRnc  String? @map("vendor_rnc") @db.VarChar(11)
+  vendorName String? @map("vendor_name") @db.VarChar(250)
 
   // E46: transport + export info as JSON blobs (avoids metadata._originalDto dependency)
-  transportInfo   Json?         @map("transport_info") @db.JsonB
-  exportInfo      Json?         @map("export_info") @db.JsonB
+  transportInfo Json? @map("transport_info") @db.JsonB
+  exportInfo    Json? @map("export_info") @db.JsonB
 
   // E47: foreign beneficiary info + retention amount
-  foreignBeneficiaryInfo Json?  @map("foreign_beneficiary_info") @db.JsonB
-  retentionAmount Decimal?      @map("retention_amount") @db.Decimal(18, 2)
+  foreignBeneficiaryInfo Json?    @map("foreign_beneficiary_info") @db.JsonB
+  retentionAmount        Decimal? @map("retention_amount") @db.Decimal(18, 2)
 
-  // Billing: set true once this invoice's quota consumption has been reverted
-  // (REJECTED / VOIDED). Idempotency guard so quota is refunded at most once.
-  usageReverted   Boolean       @default(false) @map("usage_reverted")
+  // Billing-v2: set true once this invoice has been COUNTED as an accepted
+  // emission (ACCEPTED / CONDITIONAL). Idempotency guard so the per-emission
+  // counter is incremented at most once across the 4 acceptance paths + re-polls.
+  usageCounted Boolean @default(false) @map("usage_counted")
 
   // Metadata
-  metadata        Json?         @db.JsonB
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
+  metadata  Json?    @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  company    Company       @relation(fields: [companyId], references: [id])
-  buyer      Buyer?        @relation(fields: [buyerId], references: [id])
-  lines      InvoiceLine[]
+  company Company       @relation(fields: [companyId], references: [id])
+  buyer   Buyer?        @relation(fields: [buyerId], references: [id])
+  lines   InvoiceLine[]
 
+  // FIX 3 (P5): idempotency key unique per-tenant (replaces the global @unique).
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId])
   @@index([companyId])
   @@index([buyerId])
   @@index([encf])
   @@index([status])
   @@index([createdAt])
-  // FIX 3 (P5): idempotency key unique per-tenant (replaces the global @unique).
-  @@unique([tenantId, idempotencyKey])
   // NOTE (FIX C): a PARTIAL unique index (company_id, ecf_type, encf)
   // WHERE encf IS NOT NULL is created in migration
   // 20260608120000_billing_p4_trackid_safety as a DB-level safety net against
@@ -389,25 +378,25 @@ model Invoice {
 }
 
 model InvoiceLine {
-  id              String  @id @default(uuid()) @db.Uuid
-  tenantId        String  @map("tenant_id") @db.Uuid
-  invoiceId       String  @map("invoice_id") @db.Uuid
-  lineNumber      Int     @map("line_number")
-  description     String  @db.VarChar(500)
-  quantity        Decimal @db.Decimal(18, 4)
-  unitPrice       Decimal @map("unit_price") @db.Decimal(18, 4)
-  discount        Decimal @default(0) @db.Decimal(18, 2)
-  itbisRate        Decimal @default(18) @map("itbis_rate") @db.Decimal(5, 2) // 18, 16, 0
-  itbisAmount     Decimal @default(0) @map("itbis_amount") @db.Decimal(18, 2)
-  iscAmount       Decimal @default(0) @map("isc_amount") @db.Decimal(18, 2)
-  subtotal        Decimal @db.Decimal(18, 2)
+  id          String  @id @default(uuid()) @db.Uuid
+  tenantId    String  @map("tenant_id") @db.Uuid
+  invoiceId   String  @map("invoice_id") @db.Uuid
+  lineNumber  Int     @map("line_number")
+  description String  @db.VarChar(500)
+  quantity    Decimal @db.Decimal(18, 4)
+  unitPrice   Decimal @map("unit_price") @db.Decimal(18, 4)
+  discount    Decimal @default(0) @db.Decimal(18, 2)
+  itbisRate   Decimal @default(18) @map("itbis_rate") @db.Decimal(5, 2) // 18, 16, 0
+  itbisAmount Decimal @default(0) @map("itbis_amount") @db.Decimal(18, 2)
+  iscAmount   Decimal @default(0) @map("isc_amount") @db.Decimal(18, 2)
+  subtotal    Decimal @db.Decimal(18, 2)
 
   // ISC / Additional taxes
-  additionalTaxCode String? @map("additional_tax_code") @db.VarChar(3)
+  additionalTaxCode String?  @map("additional_tax_code") @db.VarChar(3)
   additionalTaxRate Decimal? @map("additional_tax_rate") @db.Decimal(10, 6)
 
   // Goods/Service indicator
-  goodService     Int     @default(1) @map("good_service") // 1=Bien, 2=Servicio
+  goodService Int @default(1) @map("good_service") // 1=Bien, 2=Servicio
 
   // Relations
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
@@ -422,17 +411,17 @@ model InvoiceLine {
 // ===========================================
 
 model ApiKey {
-  id          String        @id @default(uuid()) @db.Uuid
-  tenantId    String        @map("tenant_id") @db.Uuid
-  name        String        @db.VarChar(100)
-  keyHash     String        @unique @map("key_hash") @db.VarChar(128)
-  keyPrefix   String        @map("key_prefix") @db.VarChar(20) // frd_live_abc... (primeros chars para identificación)
-  scopes      ApiKeyScope[]
-  isLive      Boolean       @default(false) @map("is_live") // false = test, true = production
-  lastUsedAt  DateTime?     @map("last_used_at")
-  expiresAt   DateTime?     @map("expires_at")
-  isActive    Boolean       @default(true) @map("is_active")
-  createdAt   DateTime      @default(now()) @map("created_at")
+  id         String        @id @default(uuid()) @db.Uuid
+  tenantId   String        @map("tenant_id") @db.Uuid
+  name       String        @db.VarChar(100)
+  keyHash    String        @unique @map("key_hash") @db.VarChar(128)
+  keyPrefix  String        @map("key_prefix") @db.VarChar(20) // frd_live_abc... (primeros chars para identificación)
+  scopes     ApiKeyScope[]
+  isLive     Boolean       @default(false) @map("is_live") // false = test, true = production
+  lastUsedAt DateTime?     @map("last_used_at")
+  expiresAt  DateTime?     @map("expires_at")
+  isActive   Boolean       @default(true) @map("is_active")
+  createdAt  DateTime      @default(now()) @map("created_at")
 
   // Relations
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -465,26 +454,26 @@ model WebhookSubscription {
   updatedAt         DateTime       @updatedAt @map("updated_at")
 
   // Relations
-  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  deliveries  WebhookDelivery[]
+  tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
 
   @@index([tenantId])
   @@map("webhook_subscriptions")
 }
 
 model WebhookDelivery {
-  id              String   @id @default(uuid()) @db.Uuid
-  tenantId        String   @map("tenant_id") @db.Uuid
-  subscriptionId  String   @map("subscription_id") @db.Uuid
-  event           WebhookEvent
-  payload         Json     @db.JsonB
-  statusCode      Int?     @map("status_code")
-  responseBody    String?  @map("response_body") @db.Text
-  attempts        Int      @default(0)
-  maxAttempts     Int      @default(5) @map("max_attempts")
-  nextRetryAt     DateTime? @map("next_retry_at")
-  deliveredAt     DateTime? @map("delivered_at")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id             String       @id @default(uuid()) @db.Uuid
+  tenantId       String       @map("tenant_id") @db.Uuid
+  subscriptionId String       @map("subscription_id") @db.Uuid
+  event          WebhookEvent
+  payload        Json         @db.JsonB
+  statusCode     Int?         @map("status_code")
+  responseBody   String?      @map("response_body") @db.Text
+  attempts       Int          @default(0)
+  maxAttempts    Int          @default(5) @map("max_attempts")
+  nextRetryAt    DateTime?    @map("next_retry_at")
+  deliveredAt    DateTime?    @map("delivered_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
 
   // Relations
   subscription WebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
@@ -499,16 +488,16 @@ model WebhookDelivery {
 // ===========================================
 
 model SequenceAnnulment {
-  id            String   @id @default(uuid()) @db.Uuid
-  tenantId      String   @map("tenant_id") @db.Uuid
-  companyId     String   @map("company_id") @db.Uuid
-  encfFrom      String   @map("encf_from") @db.VarChar(13)
-  encfTo        String   @map("encf_to") @db.VarChar(13)
-  xmlAnecf      String?  @map("xml_anecf") @db.Text
-  xmlSigned     String?  @map("xml_signed") @db.Text
-  status        String   @default("PENDING") @db.VarChar(20) // PENDING, SENT, ACCEPTED, REJECTED
-  dgiiResponse  String?  @map("dgii_response") @db.Text
-  createdAt     DateTime @default(now()) @map("created_at")
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  companyId    String   @map("company_id") @db.Uuid
+  encfFrom     String   @map("encf_from") @db.VarChar(13)
+  encfTo       String   @map("encf_to") @db.VarChar(13)
+  xmlAnecf     String?  @map("xml_anecf") @db.Text
+  xmlSigned    String?  @map("xml_signed") @db.Text
+  status       String   @default("PENDING") @db.VarChar(20) // PENDING, SENT, ACCEPTED, REJECTED
+  dgiiResponse String?  @map("dgii_response") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([tenantId])
   @@index([companyId])
@@ -541,15 +530,15 @@ model DgiiToken {
 // ===========================================
 
 model AuditLog {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String   @map("tenant_id") @db.Uuid
-  entityType  String   @map("entity_type") @db.VarChar(50) // invoice, company, certificate
-  entityId    String   @map("entity_id") @db.VarChar(50)
-  action      String   @db.VarChar(50) // created, updated, signed, sent, accepted
-  actor       String?  @db.VarChar(100) // api_key name or system
-  metadata    Json?    @db.JsonB
-  ipAddress   String?  @map("ip_address") @db.VarChar(45)
-  createdAt   DateTime @default(now()) @map("created_at")
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  entityType String   @map("entity_type") @db.VarChar(50) // invoice, company, certificate
+  entityId   String   @map("entity_id") @db.VarChar(50)
+  action     String   @db.VarChar(50) // created, updated, signed, sent, accepted
+  actor      String?  @db.VarChar(100) // api_key name or system
+  metadata   Json?    @db.JsonB
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  createdAt  DateTime @default(now()) @map("created_at")
 
   // Relations
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -564,63 +553,63 @@ model AuditLog {
 // RECEIVED DOCUMENTS (e-CF received from other emitters)
 // ============================================================
 enum ReceivedDocumentStatus {
-  RECEIVED      // Document received, pending acknowledgment
-  ACKNOWLEDGED  // ARECF sent to DGII
-  APPROVED      // ACECF approved sent to DGII
-  REJECTED      // ACECF rejected sent to DGII
-  ERROR         // Error processing
+  RECEIVED // Document received, pending acknowledgment
+  ACKNOWLEDGED // ARECF sent to DGII
+  APPROVED // ACECF approved sent to DGII
+  REJECTED // ACECF rejected sent to DGII
+  ERROR // Error processing
 
   @@map("received_document_status")
 }
 
 model ReceivedDocument {
-  id              String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId        String                  @map("tenant_id") @db.Uuid
-  companyId       String                  @map("company_id") @db.Uuid
-  
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  companyId String @map("company_id") @db.Uuid
+
   // e-CF identification
-  encf            String                  @db.VarChar(13)
-  ecfType         EcfType                 @map("ecf_type")
-  
+  encf    String  @db.VarChar(13)
+  ecfType EcfType @map("ecf_type")
+
   // Emitter info
-  emitterRnc      String                  @map("emitter_rnc") @db.VarChar(11)
-  emitterName     String                  @map("emitter_name") @db.VarChar(250)
-  
+  emitterRnc  String @map("emitter_rnc") @db.VarChar(11)
+  emitterName String @map("emitter_name") @db.VarChar(250)
+
   // Document details
-  totalAmount     Decimal                 @map("total_amount") @db.Decimal(18, 2)
-  totalItbis      Decimal?                @map("total_itbis") @db.Decimal(18, 2)
-  issueDate       DateTime                @map("issue_date")
-  
+  totalAmount Decimal  @map("total_amount") @db.Decimal(18, 2)
+  totalItbis  Decimal? @map("total_itbis") @db.Decimal(18, 2)
+  issueDate   DateTime @map("issue_date")
+
   // Status tracking
-  status          ReceivedDocumentStatus  @default(RECEIVED)
-  
+  status ReceivedDocumentStatus @default(RECEIVED)
+
   // ARECF (Acuse de Recibo)
-  arecfXml        String?                 @map("arecf_xml") @db.Text
-  arecfSentAt     DateTime?               @map("arecf_sent_at")
-  arecfTrackId    String?                 @map("arecf_track_id") @db.VarChar(100)
-  
+  arecfXml     String?   @map("arecf_xml") @db.Text
+  arecfSentAt  DateTime? @map("arecf_sent_at")
+  arecfTrackId String?   @map("arecf_track_id") @db.VarChar(100)
+
   // ACECF (Aprobación/Rechazo Comercial)
-  acecfXml        String?                 @map("acecf_xml") @db.Text
-  acecfSentAt     DateTime?               @map("acecf_sent_at")
-  acecfTrackId    String?                 @map("acecf_track_id") @db.VarChar(100)
-  acecfStatus     String?                 @map("acecf_status") @db.VarChar(20) // Aprobado, Rechazado
-  rejectionReason String?                 @map("rejection_reason") @db.Text
-  
+  acecfXml        String?   @map("acecf_xml") @db.Text
+  acecfSentAt     DateTime? @map("acecf_sent_at")
+  acecfTrackId    String?   @map("acecf_track_id") @db.VarChar(100)
+  acecfStatus     String?   @map("acecf_status") @db.VarChar(20) // Aprobado, Rechazado
+  rejectionReason String?   @map("rejection_reason") @db.Text
+
   // Original XML
-  originalXml     String?                 @map("original_xml") @db.Text
-  
+  originalXml String? @map("original_xml") @db.Text
+
   // Metadata
-  metadata        Json?
-  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   // Relations
-  tenant          Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  company         Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
+  @@unique([companyId, encf])
   @@index([tenantId])
   @@index([companyId])
-  @@unique([companyId, encf])
   @@map("received_documents")
 }
 
@@ -630,63 +619,48 @@ model ReceivedDocument {
 // pre-existing Plan enum (STARTER / BUSINESS / ENTERPRISE / PLATFORM).
 // ===========================================
 
+// Billing-v2: per-emission flat-by-range plan. The US$60/month is `monthlyFee`;
+// the per-emission prices live in PricingTier rows (one BillingPlan → many tiers).
 model BillingPlan {
-  id               String   @id @default(uuid()) @db.Uuid
-  code             String   @unique                      // TIER_1 … TIER_4
-  name             String
-  monthlyFee       Decimal  @map("monthly_fee") @db.Decimal(10, 2)
-  includedInvoices Int      @map("included_invoices")
-  description      String?
-  isActive         Boolean  @default(true) @map("is_active")
-  sortOrder        Int      @default(0) @map("sort_order")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique
+  name        String
+  monthlyFee  Decimal          @map("monthly_fee") @db.Decimal(10, 2)
+  type        BillingModelType @default(PER_EMISSION)
+  description String?
+  isActive    Boolean          @default(true) @map("is_active")
+  sortOrder   Int              @default(0) @map("sort_order")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
 
-  tenantPlans  TenantPlan[]
   companyPlans CompanyPlan[]
+  pricingTiers PricingTier[]
 
   @@map("billing_plans")
 }
 
-model TenantPlan {
-  id          String           @id @default(uuid()) @db.Uuid
-  tenantId    String           @map("tenant_id") @db.Uuid
-  planId      String           @map("plan_id") @db.Uuid
-  status      TenantPlanStatus
-  activatedAt DateTime?        @map("activated_at")
-  expiresAt   DateTime?        @map("expires_at")
-  notes       String?
-  createdAt   DateTime         @default(now()) @map("created_at")
-  updatedAt   DateTime         @updatedAt @map("updated_at")
+// Billing-v2: configurable flat-by-range pricing. The TOTAL accepted emissions
+// of the month pick exactly one tier (fromQty..toQty inclusive, toQty null = ∞)
+// and ALL accepted emissions bill at that tier's pricePerEmission. A tier with
+// requiresQuote=true (e.g. 10001..100000) cannot be auto-priced (total = null).
+model PricingTier {
+  id               String   @id @default(uuid()) @db.Uuid
+  planCode         String   @map("plan_code")
+  fromQty          Int      @map("from_qty")
+  toQty            Int?     @map("to_qty") // null = unbounded (∞)
+  pricePerEmission Decimal? @map("price_per_emission") @db.Decimal(18, 4)
+  requiresQuote    Boolean  @default(false) @map("requires_quote")
+  sortOrder        Int      @default(0) @map("sort_order")
+  createdAt        DateTime @default(now()) @map("created_at")
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  plan         BillingPlan  @relation(fields: [planId], references: [id])
-  monthlyUsage MonthlyUsage?
+  plan BillingPlan @relation(fields: [planCode], references: [code], onDelete: Cascade)
 
-  @@index([tenantId, status])
-  @@index([expiresAt])
-  @@map("tenant_plans")
-}
-
-model MonthlyUsage {
-  id            String   @id @default(uuid()) @db.Uuid
-  tenantId      String   @map("tenant_id") @db.Uuid
-  tenantPlanId  String   @unique @map("tenant_plan_id") @db.Uuid
-  periodStart   DateTime @map("period_start")
-  periodEnd     DateTime @map("period_end")
-  invoicesCount Int      @default(0) @map("invoices_count")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-
-  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  tenantPlan TenantPlan @relation(fields: [tenantPlanId], references: [id])
-
-  @@index([tenantId, periodEnd])
-  @@map("monthly_usages")
+  @@index([planCode, sortOrder])
+  @@map("pricing_tiers")
 }
 
 // ===========================================
-// COMPANY-LEVEL BILLING
+// COMPANY-LEVEL BILLING (the only billing level in billing-v2)
 // ===========================================
 
 model CompanyPlan {
@@ -707,17 +681,15 @@ model CompanyPlan {
   @@map("company_plans")
 }
 
+// Billing-v2: per-cycle counter of DGII-ACCEPTED emissions (ACCEPTED +
+// CONDITIONAL). No quota, no topups, no threshold flags — emission is never
+// blocked by volume (post-pay). `acceptedCount` is incremented exactly once per
+// invoice via Invoice.usageCounted (see UsageService.countAcceptedEmission).
 model CompanyUsage {
   id             String   @id @default(uuid()) @db.Uuid
   companyId      String   @map("company_id") @db.Uuid
   cycleStartDate DateTime @map("cycle_start_date") @db.Timestamptz
-  baseUsed       Int      @default(0) @map("base_used")
-  topupUsed      Int      @default(0) @map("topup_used")
-  totalQuota     Int      @map("total_quota")
-  notified70     Boolean  @default(false) @map("notified_70")
-  notified85     Boolean  @default(false) @map("notified_85")
-  notified95     Boolean  @default(false) @map("notified_95")
-  notified100    Boolean  @default(false) @map("notified_100")
+  acceptedCount  Int      @default(0) @map("accepted_count")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
@@ -725,51 +697,6 @@ model CompanyUsage {
 
   @@unique([companyId, cycleStartDate])
   @@map("company_usages")
-}
-
-model TopupPack {
-  id           String   @id @default(uuid()) @db.Uuid
-  code         String   @unique
-  invoiceCount Int      @map("invoice_count")
-  priceUsd     Decimal  @map("price_usd") @db.Decimal(10, 2)
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at")
-
-  topupPurchases TopupPurchase[]
-
-  @@map("topup_packs")
-}
-
-model TopupPurchase {
-  id             String   @id @default(uuid()) @db.Uuid
-  companyId      String   @map("company_id") @db.Uuid
-  topupPackCode  String   @map("topup_pack_code")
-  cycleStartDate DateTime @map("cycle_start_date") @db.Timestamptz
-  cycleEndDate   DateTime @map("cycle_end_date") @db.Timestamptz
-  invoicesUsed   Int      @default(0) @map("invoices_used")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-
-  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  topupPack TopupPack @relation(fields: [topupPackCode], references: [code])
-
-  @@index([companyId, cycleStartDate])
-  @@map("topup_purchases")
-}
-
-model BillingAlert {
-  id         String            @id @default(uuid()) @db.Uuid
-  companyId  String            @map("company_id") @db.Uuid
-  level      BillingAlertLevel
-  message    String            @db.Text
-  percentage Int
-  isRead     Boolean           @default(false) @map("is_read")
-  createdAt  DateTime          @default(now()) @map("created_at")
-
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-
-  @@index([companyId, isRead])
-  @@map("billing_alerts")
 }
 
 // ===========================================
@@ -821,30 +748,30 @@ enum Step3AcecfStatus {
 }
 
 model Step3AcecfDocument {
-  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tenantId        String             @map("tenant_id") @db.Uuid
-  companyId       String             @map("company_id") @db.Uuid
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenantId  String @map("tenant_id") @db.Uuid
+  companyId String @map("company_id") @db.Uuid
 
-  encf            String             @db.VarChar(13)
-  ecfType         String             @map("ecf_type") @db.VarChar(3)
-  emitterRnc      String             @map("emitter_rnc") @db.VarChar(11)
-  receiverRnc     String             @map("receiver_rnc") @db.VarChar(11)
-  totalAmount     Decimal            @map("total_amount") @db.Decimal(18, 2)
-  issueDate       String             @map("issue_date") @db.VarChar(10)
-  intendedEstado  Int                @map("intended_estado")
-  rejectionReason String?            @map("rejection_reason") @db.Text
-  approvalDatetime String            @map("approval_datetime") @db.VarChar(20)
+  encf             String  @db.VarChar(13)
+  ecfType          String  @map("ecf_type") @db.VarChar(3)
+  emitterRnc       String  @map("emitter_rnc") @db.VarChar(11)
+  receiverRnc      String  @map("receiver_rnc") @db.VarChar(11)
+  totalAmount      Decimal @map("total_amount") @db.Decimal(18, 2)
+  issueDate        String  @map("issue_date") @db.VarChar(10)
+  intendedEstado   Int     @map("intended_estado")
+  rejectionReason  String? @map("rejection_reason") @db.Text
+  approvalDatetime String  @map("approval_datetime") @db.VarChar(20)
 
-  status          Step3AcecfStatus   @default(PENDING)
-  acecfXml        String?            @map("acecf_xml") @db.Text
-  signedXml       String?            @map("signed_xml") @db.Text
-  trackId         String?            @map("track_id") @db.VarChar(100)
-  dgiiResponse    Json?              @map("dgii_response")
-  errorMessage    String?            @map("error_message") @db.Text
+  status       Step3AcecfStatus @default(PENDING)
+  acecfXml     String?          @map("acecf_xml") @db.Text
+  signedXml    String?          @map("signed_xml") @db.Text
+  trackId      String?          @map("track_id") @db.VarChar(100)
+  dgiiResponse Json?            @map("dgii_response")
+  errorMessage String?          @map("error_message") @db.Text
 
-  sentAt          DateTime?          @map("sent_at") @db.Timestamptz
-  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt       DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  sentAt    DateTime? @map("sent_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@unique([tenantId, companyId, encf])
   @@index([tenantId, status])

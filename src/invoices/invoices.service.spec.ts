@@ -128,14 +128,8 @@ function makeMocks() {
   const certificatesService: any = {};
   const validationService: any = {};
 
-  const billingService = {
-    incrementInvoiceCount: jest.fn().mockResolvedValue(undefined) as Mock,
-  };
-
   const usageService = {
-    incrementUsage: jest.fn().mockResolvedValue(undefined) as Mock,
-    notifyThresholds: jest.fn().mockResolvedValue(undefined) as Mock,
-    revertUsage: jest.fn().mockResolvedValue(undefined) as Mock,
+    countAcceptedEmission: jest.fn().mockResolvedValue(undefined) as Mock,
   };
 
   return {
@@ -149,7 +143,6 @@ function makeMocks() {
     dgiiService,
     certificatesService,
     validationService,
-    billingService,
     usageService,
   };
 }
@@ -166,7 +159,6 @@ function buildService(mocks: ReturnType<typeof makeMocks>) {
     mocks.rncValidation as any,
     mocks.queueService as any,
     mocks.webhooksService as any,
-    mocks.billingService as any,
     makeTestLogger(),
     mocks.usageService as any,
   );
@@ -233,26 +225,13 @@ describe('InvoicesService.create — async pipeline', () => {
     expect(result.encf).toBe('E310000000001');
   });
 
-  // FIX 1 (isolation): exactly ONE billing meter per emission, chosen by whether
-  // the company has its own CompanyPlan. A company-billed company must NOT also
-  // increment the tenant-level legacy meter (which would share quota across the
-  // owner's companies).
-  it('FIX 1: company WITH a CompanyPlan counts company usage only (NOT the tenant meter)', async () => {
-    mocks.prisma.companyPlan.findUnique.mockResolvedValueOnce({ companyId: 'company-uuid-1' });
-
+  // Billing-v2: emission does NO metering at creation. Only DGII-ACCEPTED
+  // emissions are counted, later, via UsageService.countAcceptedEmission on the
+  // acceptance transition — never inside create().
+  it('billing-v2: create() does NOT count usage (counting happens at acceptance)', async () => {
     await service.create('tenant-1', makeValidDto());
 
-    expect(mocks.usageService.incrementUsage).toHaveBeenCalledWith('company-uuid-1', expect.anything());
-    expect(mocks.billingService.incrementInvoiceCount).not.toHaveBeenCalled();
-  });
-
-  it('FIX 1: company WITHOUT a CompanyPlan falls back to the tenant meter only', async () => {
-    mocks.prisma.companyPlan.findUnique.mockResolvedValueOnce(null);
-
-    await service.create('tenant-1', makeValidDto());
-
-    expect(mocks.billingService.incrementInvoiceCount).toHaveBeenCalledWith('tenant-1', expect.anything());
-    expect(mocks.usageService.incrementUsage).not.toHaveBeenCalled();
+    expect(mocks.usageService.countAcceptedEmission).not.toHaveBeenCalled();
   });
 
   it('records an audit log with action=queued (no "submitted" action)', async () => {

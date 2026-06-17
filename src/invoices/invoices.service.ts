@@ -17,7 +17,6 @@ import { ValidationService } from '../validation/validation.service';
 import { RncValidationService } from '../common/services/rnc-validation.service';
 import { QueueService } from '../queue/queue.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
-import { BillingService } from '../billing/billing.service';
 import { UsageService } from '../billing/usage.service';
 import { CreateInvoiceDto, TYPES_REQUIRING_RNC } from './dto/invoice.dto';
 import { InvoiceStatus, EcfType, WebhookEvent } from '@prisma/client';
@@ -41,7 +40,6 @@ export class InvoicesService {
     private readonly rncValidation: RncValidationService,
     private readonly queueService: QueueService,
     private readonly webhooksService: WebhooksService,
-    private readonly billingService: BillingService,
     @InjectPinoLogger(InvoicesService.name)
     private readonly logger: PinoLogger,
     @Optional() private readonly usageService?: UsageService,
@@ -299,32 +297,10 @@ export class InvoicesService {
         },
       });
 
-      // FIX 1 (isolation): count exactly ONE billing meter, inside the same
-      // transaction for atomicity. If the company has its own CompanyPlan it is
-      // company-billed (counted via usageService); the legacy TENANT-level meter
-      // must NOT also count it, otherwise two companies of the same owner would
-      // share one TenantPlan quota. This mirrors ActivePlanGuard's fallback: the
-      // tenant meter applies ONLY when the company has no CompanyPlan. Single
-      // companyPlan lookup, reused for both branches (no double query).
-      const companyPlan = await tx.companyPlan.findUnique({
-        where: { companyId: dto.companyId },
-      });
-      if (companyPlan) {
-        // Company-billed → count against the company's OWN usage only.
-        // (FIX E: inside the tx so a failure/quota-exhaustion rolls back the
-        // invoice instead of leaking a free, uncounted emission.)
-        if (this.usageService) {
-          await this.usageService.incrementUsage(dto.companyId, tx);
-        } else {
-          throw new Error(
-            'UsageService no disponible para una company con CompanyPlan — ' +
-              'emisión abortada para no contar cero.',
-          );
-        }
-      } else {
-        // No CompanyPlan → the legacy tenant-level meter governs this company.
-        await this.billingService.incrementInvoiceCount(tenantId, tx);
-      }
+      // Billing-v2: NO metering at creation. The per-emission model counts only
+      // DGII-ACCEPTED emissions, and that happens later via
+      // UsageService.countAcceptedEmission on the acceptance transition — never
+      // here. Emission is post-pay and is never blocked by volume.
 
       return inv;
     });
@@ -338,15 +314,6 @@ export class InvoicesService {
       // for the referenced e-CF to reach ACCEPTED in DGII.
       hasReference: !!dto.reference?.encf,
     });
-
-    // Threshold alerts (70/85/95/100%) run post-commit, best-effort — they must
-    // never block or roll back an emission. The authoritative count already
-    // happened atomically inside the transaction above (FIX E).
-    this.usageService
-      ?.notifyThresholds(dto.companyId)
-      .catch((err) =>
-        this.logger.error({ err }, 'Company usage threshold notification failed'),
-      );
 
     await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_QUEUED, {
       invoiceId: invoice.id,
@@ -404,18 +371,16 @@ export class InvoicesService {
         dgiiMessage: result.message,
       });
 
-      // FIX H1 (P2): manual poll can also land the REJECTED verdict. Refund the
-      // reserved quota (FIX G policy). Idempotent via the usageReverted flag, so
-      // it never double-refunds against the poller/processor/contingency paths.
-      if (newStatus === InvoiceStatus.REJECTED) {
+      // Billing-v2: a manual poll can also land the ACCEPTED/CONDITIONAL verdict.
+      // Count it (idempotent via usageCounted, so it never double-counts against
+      // the poller/processor/contingency paths or a repeated manual poll).
+      if (newStatus === InvoiceStatus.ACCEPTED || newStatus === InvoiceStatus.CONDITIONAL) {
         await this.usageService
-          ?.revertUsage(invoice.id, invoice.companyId)
-          // FIX 3: post-commit refund — structured ERROR + stable marker so a DB
-          // hiccup here (quota left un-refunded) is alertable/reconcilable.
+          ?.countAcceptedEmission(invoice.id, invoice.companyId)
           .catch((err) =>
             this.logger.error(
-              { err, marker: 'USAGE_REFUND_FAILED', invoiceId: invoice.id, companyId: invoice.companyId, encf: invoice.encf },
-              `USAGE_REFUND_FAILED: quota not refunded for rejected ${invoice.encf} — reconcile manually`,
+              { err, marker: 'USAGE_COUNT_FAILED', invoiceId: invoice.id, companyId: invoice.companyId, encf: invoice.encf },
+              `USAGE_COUNT_FAILED: accepted emission not counted for ${invoice.encf} — reconcile manually`,
             ),
           );
       }
@@ -545,33 +510,27 @@ export class InvoicesService {
       throw new BadRequestException(`No se puede anular una factura en estado ${invoice.status}`);
     }
 
-    // Void the invoice + refund quota atomically (FIX G). revertUsage is
-    // idempotent (usageReverted flag), so a REJECTED invoice already refunded in
-    // the processor won't be double-refunded here. DRAFT was never counted (it
-    // never reached QUEUED), so it is excluded from the refund.
+    // Billing-v2: voiding does NOT touch billing. Only ACCEPTED/CONDITIONAL
+    // emissions are ever counted, and those are NOT voidable (voidableStatuses =
+    // DRAFT/ERROR/CONTINGENCY/REJECTED — see guard above), so a voided invoice was
+    // never counted. No decrement/refund path exists in the per-emission model.
     const previousStatus = invoice.status;
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const inv = await tx.invoice.update({
-        where: { id: invoice.id },
-        data: {
-          status: InvoiceStatus.VOIDED,
-          dgiiMessage: reason || 'Anulada por el usuario',
-          metadata: {
-            ...(invoice.metadata as any || {}),
-            voidedAt: new Date().toISOString(),
-            voidReason: reason || 'Anulada por el usuario',
-            previousStatus,
-          },
+    const updated = await this.prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        status: InvoiceStatus.VOIDED,
+        dgiiMessage: reason || 'Anulada por el usuario',
+        metadata: {
+          ...(invoice.metadata as any || {}),
+          voidedAt: new Date().toISOString(),
+          voidReason: reason || 'Anulada por el usuario',
+          previousStatus,
         },
-        include: {
-          lines: { orderBy: { lineNumber: 'asc' } },
-          company: { select: { id: true, rnc: true, businessName: true } },
-        },
-      });
-      if (previousStatus !== InvoiceStatus.DRAFT) {
-        await this.usageService?.revertUsage(invoice.id, invoice.companyId, tx);
-      }
-      return inv;
+      },
+      include: {
+        lines: { orderBy: { lineNumber: 'asc' } },
+        company: { select: { id: true, rnc: true, businessName: true } },
+      },
     });
 
     await this.createAuditLog(tenantId, 'invoice', invoice.id, 'voided', {

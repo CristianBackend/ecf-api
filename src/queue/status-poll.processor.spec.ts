@@ -66,7 +66,7 @@ function makeProcessor() {
   };
 
   const usageService = {
-    revertUsage: jest.fn(async () => {}) as Mock,
+    countAcceptedEmission: jest.fn(async () => {}) as Mock,
   };
 
   const processor = new StatusPollProcessor(
@@ -261,21 +261,21 @@ describe('FIX 2 — non-network error marks invoice ERROR (anti-zombie)', () => 
 // ─────────────────────────────────────────────────────────────
 // FIX H1 — REJECTED via poller refunds the reserved quota
 // ─────────────────────────────────────────────────────────────
-describe('FIX H1 — REJECTED verdict via poller reverts usage', () => {
-  it('calls revertUsage(invoiceId, companyId) exactly once on REJECTED transition', async () => {
+// Billing-v2 — COUNT AT ACCEPTANCE via the poller (the common path)
+// ─────────────────────────────────────────────────────────────
+describe('Billing-v2 — poller counts accepted emissions', () => {
+  it('counts exactly once on ACCEPTED transition', async () => {
     const m = makeProcessor();
     m.prisma.invoice.findFirst.mockResolvedValue(
       makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
     );
-    // DGII status 2 → REJECTED (final)
-    m.dgiiService.queryStatus.mockResolvedValue({ status: 2, message: 'Rechazado por DGII', rawResponse: '' });
+    m.dgiiService.queryStatus.mockResolvedValue({ status: 1, message: 'Aceptado', rawResponse: '' });
 
     const result = await m.processor.process(makeJob());
 
-    expect(result.status).toBe(InvoiceStatus.REJECTED);
-    expect(m.usageService.revertUsage).toHaveBeenCalledTimes(1);
-    expect(m.usageService.revertUsage).toHaveBeenCalledWith('invoice-1', 'company-1');
-    // Webhook for rejection still fires
+    expect(result.status).toBe(InvoiceStatus.ACCEPTED);
+    expect(m.usageService.countAcceptedEmission).toHaveBeenCalledTimes(1);
+    expect(m.usageService.countAcceptedEmission).toHaveBeenCalledWith('invoice-1', 'company-1');
     expect(m.webhooksService.emit).toHaveBeenCalledWith(
       'tenant-1',
       expect.anything(),
@@ -283,30 +283,41 @@ describe('FIX H1 — REJECTED verdict via poller reverts usage', () => {
     );
   });
 
-  it('does NOT revert usage on ACCEPTED transition', async () => {
+  it('counts on CONDITIONAL transition (conditional counts as accepted)', async () => {
     const m = makeProcessor();
     m.prisma.invoice.findFirst.mockResolvedValue(
       makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
     );
-    // DGII status 1 → ACCEPTED (final)
-    m.dgiiService.queryStatus.mockResolvedValue({ status: 1, message: 'Aceptado', rawResponse: '' });
+    m.dgiiService.queryStatus.mockResolvedValue({ status: 4, message: 'Aceptado Condicional', rawResponse: '' });
 
     const result = await m.processor.process(makeJob());
 
-    expect(result.status).toBe(InvoiceStatus.ACCEPTED);
-    expect(m.usageService.revertUsage).not.toHaveBeenCalled();
+    expect(result.status).toBe(InvoiceStatus.CONDITIONAL);
+    expect(m.usageService.countAcceptedEmission).toHaveBeenCalledTimes(1);
   });
 
-  it('a REJECTED invoice already final short-circuits — no extra revert (idempotent re-poll)', async () => {
+  it('does NOT count on REJECTED transition', async () => {
     const m = makeProcessor();
-    // Second poll finds the invoice already REJECTED → early return, no revert call here.
     m.prisma.invoice.findFirst.mockResolvedValue(
-      makeInvoice({ status: InvoiceStatus.REJECTED, trackId: 'TRACK-001' }),
+      makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
+    );
+    m.dgiiService.queryStatus.mockResolvedValue({ status: 2, message: 'Rechazado por DGII', rawResponse: '' });
+
+    const result = await m.processor.process(makeJob());
+
+    expect(result.status).toBe(InvoiceStatus.REJECTED);
+    expect(m.usageService.countAcceptedEmission).not.toHaveBeenCalled();
+  });
+
+  it('an already-ACCEPTED invoice short-circuits — no re-count (idempotent re-poll)', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.ACCEPTED, trackId: 'TRACK-001' }),
     );
 
     const result = await m.processor.process(makeJob());
 
     expect(result.final).toBe(true);
-    expect(m.usageService.revertUsage).not.toHaveBeenCalled();
+    expect(m.usageService.countAcceptedEmission).not.toHaveBeenCalled();
   });
 });

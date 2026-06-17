@@ -233,15 +233,14 @@ export class ContingencyService {
             },
           });
 
-          // FIX G: refund quota if DGII rejected (idempotent).
-          if (reconciledStatus === InvoiceStatus.REJECTED) {
-            await this.usageService.revertUsage(invoice.id, invoice.companyId)
-              // FIX 3: post-commit refund — structured ERROR + stable marker so a
-              // DB hiccup here (quota left un-refunded) is alertable/reconcilable.
+          // Billing-v2: count the accepted emission if reconciliation landed
+          // ACCEPTED/CONDITIONAL. Idempotent via usageCounted.
+          if (reconciledStatus === InvoiceStatus.ACCEPTED || reconciledStatus === InvoiceStatus.CONDITIONAL) {
+            await this.usageService.countAcceptedEmission(invoice.id, invoice.companyId)
               .catch((err) =>
                 this.logger.error(
-                  { err, marker: 'USAGE_REFUND_FAILED', invoiceId: invoice.id, companyId: invoice.companyId, encf: invoice.encf },
-                  `USAGE_REFUND_FAILED: quota not refunded for rejected ${invoice.encf} — reconcile manually`,
+                  { err, marker: 'USAGE_COUNT_FAILED', invoiceId: invoice.id, companyId: invoice.companyId, encf: invoice.encf },
+                  `USAGE_COUNT_FAILED: accepted emission not counted for ${invoice.encf} — reconcile manually`,
                 ),
               );
           }
@@ -305,10 +304,16 @@ export class ContingencyService {
           },
         });
 
-        // FIX G: refund quota if DGII rejected (idempotent via usageReverted).
-        if (newStatus === InvoiceStatus.REJECTED) {
-          await this.usageService.revertUsage(invoice.id, invoice.companyId)
-            .catch((err) => this.logger.error(`Usage revert failed for ${invoice.encf}: ${err.message}`));
+        // Billing-v2: count the accepted emission if the resubmit landed
+        // ACCEPTED/CONDITIONAL. Idempotent via usageCounted.
+        if (newStatus === InvoiceStatus.ACCEPTED || newStatus === InvoiceStatus.CONDITIONAL) {
+          await this.usageService.countAcceptedEmission(invoice.id, invoice.companyId)
+            .catch((err) =>
+              this.logger.error(
+                { err, marker: 'USAGE_COUNT_FAILED', invoiceId: invoice.id, companyId: invoice.companyId, encf: invoice.encf },
+                `USAGE_COUNT_FAILED: accepted emission not counted for ${invoice.encf} — reconcile manually`,
+              ),
+            );
         }
 
         // Schedule status polling if DGII returned EN_PROCESO
