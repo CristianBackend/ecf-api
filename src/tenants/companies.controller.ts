@@ -59,8 +59,9 @@ export class CompaniesController {
   async create(
     @CurrentTenant() tenant: RequestTenant,
     @Body() dto: CreateCompanyDto,
+    @Actor() actor: ActorContext,
   ) {
-    return this.companiesService.create(tenant.id, dto);
+    return this.companiesService.create(tenant.id, dto, actor);
   }
 
   @Get()

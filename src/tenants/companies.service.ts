@@ -18,7 +18,7 @@ export class CompaniesService {
     private readonly logger: PinoLogger,
   ) {}
 
-  async create(tenantId: string, dto: CreateCompanyDto) {
+  async create(tenantId: string, dto: CreateCompanyDto, actorCtx?: ActorContext) {
     // Validate RNC format + check digit + DGII lookup
     const dgiiInfo = await this.rncValidation.validateAndLookup(dto.rnc);
 
@@ -66,7 +66,23 @@ export class CompaniesService {
       },
     });
 
-    this.logger.info(`Company created: ${company.id} (RNC: ${company.rnc})`);
+    // Audit the alta with the ambiente chosen (now an explicit, conscious
+    // decision — dgiiEnv is required in CreateCompanyDto, no silent DEV default).
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId,
+        entityType: 'company',
+        entityId: company.id,
+        action: 'company_created',
+        actor: actorCtx?.actor ?? 'api',
+        ipAddress: actorCtx?.ipAddress ?? null,
+        metadata: { rnc: company.rnc, dgiiEnv: company.dgiiEnv },
+      },
+    });
+
+    this.logger.info(
+      `Company created: ${company.id} (RNC: ${company.rnc}, env: ${company.dgiiEnv})`,
+    );
     return company;
   }
 

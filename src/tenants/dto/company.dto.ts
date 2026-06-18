@@ -78,14 +78,24 @@ export class CreateCompanyDto {
   @MaxLength(100)
   economicActivity?: string;
 
-  @ApiPropertyOptional({
-    description: 'Ambiente DGII',
+  @ApiProperty({
+    description:
+      'Ambiente DGII — OBLIGATORIO y consciente. DEV=sandbox (testecf, no cuenta uso), ' +
+      'CERT=certificación, PROD=producción (comprobantes fiscales reales). ' +
+      'No tiene default: crear una empresa sin elegir ambiente es un error.',
     enum: DgiiEnvironment,
-    example: DgiiEnvironment.DEV,
+    example: DgiiEnvironment.PROD,
   })
-  @IsOptional()
-  @IsEnum(DgiiEnvironment)
-  dgiiEnv?: DgiiEnvironment;
+  @IsEnum(DgiiEnvironment, {
+    message:
+      'dgiiEnv es obligatorio y debe ser DEV, CERT o PROD. ' +
+      'Elija el ambiente explícitamente: DEV es sandbox (no emite comprobantes reales).',
+  })
+  dgiiEnv: DgiiEnvironment;
 }
 
+// UpdateCompanyDto hereda todos los campos como OPCIONALES (PartialType), por lo que
+// dgiiEnv vuelve a ser opcional en update — el cambio de ambiente ya se audita
+// (companies.service.ts → action 'dgii_env_changed'). La decisión consciente se
+// fuerza sólo en la CREACIÓN.
 export class UpdateCompanyDto extends PartialType(CreateCompanyDto) {}

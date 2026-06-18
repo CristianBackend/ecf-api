@@ -82,6 +82,37 @@ export class CertificatesService {
     // For now, generate a fingerprint from the file content
     const certInfo = this.extractCertInfo(p12Buffer, dto.passphrase);
 
+    // Validate the certificate's validity window AT UPLOAD TIME, using the same
+    // semantics as the signing path (getDecryptedCertificate: validTo < now) so a
+    // cert that passes upload can always sign, and one that could never sign is
+    // rejected here with an actionable message — instead of failing opaquely on
+    // the first emission.
+    const now = new Date();
+    if (certInfo.validTo < now) {
+      throw new BadRequestException(
+        `El certificado está vencido (venció el ${certInfo.validTo.toISOString()}). ` +
+        `Cargue un certificado .p12 vigente emitido por una entidad autorizada por INDOTEL.`,
+      );
+    }
+    if (certInfo.validFrom > now) {
+      throw new BadRequestException(
+        `El certificado aún no es válido (válido a partir del ${certInfo.validFrom.toISOString()}). ` +
+        `Espere a la fecha de inicio de vigencia o cargue un certificado ya vigente.`,
+      );
+    }
+
+    // Non-blocking heads-up: cert close to expiry. Surfaced in the response and
+    // logged, but does NOT block the upload (same 30-day threshold as getActive).
+    const daysToExpiry = Math.ceil(
+      (certInfo.validTo.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
+    );
+    if (daysToExpiry <= 30) {
+      this.logger.warn(
+        `Certificate for company ${dto.companyId} expires in ${daysToExpiry} day(s) ` +
+        `(validTo: ${certInfo.validTo.toISOString()})`,
+      );
+    }
+
     // Encrypt the .p12 file and the passphrase
     const encryptedP12 = this.encryption.encrypt(p12Buffer);
     const encryptedPass = this.encryption.encryptString(dto.passphrase);
@@ -147,6 +178,11 @@ export class CertificatesService {
       validFrom: certificate.validFrom,
       validTo: certificate.validTo,
       isActive: certificate.isActive,
+      daysToExpiry,
+      expiryWarning:
+        daysToExpiry <= 30
+          ? `⚠️ El certificado vence en ${daysToExpiry} día(s). Considere renovarlo.`
+          : null,
       message: 'Certificado almacenado y encriptado exitosamente',
     };
   }
