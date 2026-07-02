@@ -55,6 +55,10 @@ function makeProcessor() {
       findFirst: jest.fn() as Mock,
       update: jest.fn(async () => ({})) as Mock,
     },
+    // FIX 3 (C2): the pipeline now writes audit_log rows per transition.
+    auditLog: {
+      create: jest.fn(async () => ({})) as Mock,
+    },
   };
 
   const xmlBuilder = {
@@ -575,6 +579,116 @@ describe('EcfProcessingProcessor', () => {
       // Only one findFirst (loading the invoice itself), no second lookup
       expect(m.prisma.invoice.findFirst).toHaveBeenCalledTimes(1);
       expect(m.dgiiService.submitEcf).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // FIX 3 (C2) — audit_log por cada transición del pipeline asíncrono
+  // ─────────────────────────────────────────────────────────────
+  describe('FIX 3 — audit trail of async transitions', () => {
+    const actions = (m: ReturnType<typeof makeProcessor>) =>
+      m.prisma.auditLog.create.mock.calls.map((c: any) => c[0].data.action);
+
+    it('happy path escribe signed → sent_to_dgii → accepted (actor system:worker + jobId)', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+      m.dgiiService.submitEcf.mockResolvedValue({ status: 1, trackId: 'TRACK-123', message: 'Aceptado' });
+
+      await m.processor.process(makeJob());
+
+      expect(actions(m)).toEqual(
+        expect.arrayContaining(['signed', 'sent_to_dgii', 'accepted']),
+      );
+      const first = m.prisma.auditLog.create.mock.calls[0][0].data;
+      expect(first.actor).toBe('system:worker');
+      expect(first.entityType).toBe('invoice');
+      expect(first.metadata.jobId).toBe('job-1');
+    });
+
+    it('rechazo DGII escribe action=rejected con el motivo', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+      m.dgiiService.submitEcf.mockResolvedValue({ status: 2, trackId: 'TRACK-R', message: 'Rechazado: RNC inválido' });
+
+      await m.processor.process(makeJob());
+
+      expect(actions(m)).toContain('rejected');
+      const rejected = m.prisma.auditLog.create.mock.calls
+        .map((c: any) => c[0].data)
+        .find((d: any) => d.action === 'rejected');
+      expect(rejected.metadata.reason).toMatch(/Rechazado/);
+    });
+
+    it('CONDITIONAL escribe conditionally_accepted', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+      m.dgiiService.submitEcf.mockResolvedValue({ status: 4, trackId: 'TRACK-C', message: 'Aceptado Condicional' });
+
+      await m.processor.process(makeJob());
+      expect(actions(m)).toContain('conditionally_accepted');
+    });
+
+    it('error de red escribe contingency_entered', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+      m.dgiiService.submitEcf.mockRejectedValue(
+        Object.assign(new Error('ETIMEDOUT to DGII'), { status: 503 }),
+      );
+
+      await expect(m.processor.process(makeJob())).rejects.toThrow();
+      expect(actions(m)).toContain('contingency_entered');
+    });
+
+    it('error no-red (cert) escribe failed', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+      m.signingService.extractFromP12.mockImplementation(() => {
+        throw new Error('Certificado inválido');
+      });
+
+      await m.processor.process(makeJob());
+      expect(actions(m)).toContain('failed');
+    });
+
+    it('fallo XSD escribe failed (stage=xsd_validation)', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice());
+      m.xsdValidation.validateXml.mockResolvedValue({
+        valid: false, errors: ['Missing FechaHoraFirma'], warnings: [], schema: 'e-CF-31.xsd', durationMs: 1,
+      });
+
+      await m.processor.process(makeJob());
+      const failed = m.prisma.auditLog.create.mock.calls
+        .map((c: any) => c[0].data)
+        .find((d: any) => d.action === 'failed');
+      expect(failed.metadata.stage).toBe('xsd_validation');
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // FIX 4 — política de rechazo (Norma 01-2020): REJECTED conserva su eNCF
+  // ─────────────────────────────────────────────────────────────
+  describe('FIX 4 — rechazo persiste como REJECTED conservando el eNCF', () => {
+    it('marca REJECTED sin borrar ni sobreescribir el eNCF', async () => {
+      const m = makeProcessor();
+      m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice({ encf: 'E310000000007' }));
+      m.dgiiService.submitEcf.mockResolvedValue({ status: 2, trackId: 'TRACK-R', message: 'Rechazado' });
+
+      const result = await m.processor.process(makeJob());
+
+      expect(result.status).toBe(InvoiceStatus.REJECTED);
+
+      // Ninguna actualización cambia el eNCF (no hay reasignación de secuencial).
+      const encfMutations = m.prisma.invoice.update.mock.calls
+        .map((c: any) => c[0].data)
+        .filter((d: any) => 'encf' in d);
+      expect(encfMutations).toHaveLength(0);
+
+      // El estado final persistido es REJECTED.
+      const statuses = m.prisma.invoice.update.mock.calls
+        .map((c: any) => c[0].data.status)
+        .filter((s: any) => !!s);
+      expect(statuses).toContain(InvoiceStatus.REJECTED);
     });
   });
 });

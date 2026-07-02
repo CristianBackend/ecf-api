@@ -112,6 +112,10 @@ export class StatusPollProcessor extends WorkerHost {
           dgiiMessage: 'No trackId disponible y reconciliación DGII falló. Verifique manualmente.',
         },
       });
+      await this.audit(tenantId, invoiceId, 'failed', job.id, {
+        encf: invoice.encf,
+        reason: 'No trackId disponible y reconciliación DGII falló',
+      });
       return { status: 'NO_TRACK_ID' };
     }
 
@@ -125,6 +129,11 @@ export class StatusPollProcessor extends WorkerHost {
           status: InvoiceStatus.ERROR,
           dgiiMessage: `Status polling timed out after ${attempt - 1} attempts. Last status: ${invoice.status}`,
         },
+      });
+      await this.audit(tenantId, invoiceId, 'failed', job.id, {
+        encf: invoice.encf,
+        reason: `Status polling timed out after ${attempt - 1} attempts`,
+        lastStatus: invoice.status,
       });
       return { status: 'TIMEOUT', attempts: attempt - 1 };
     }
@@ -182,6 +191,9 @@ export class StatusPollProcessor extends WorkerHost {
         message: result.message, attempts: attempt,
       };
       if (newStatus === InvoiceStatus.ACCEPTED) {
+        await this.audit(tenantId, invoiceId, 'accepted', job.id, {
+          encf: invoice.encf, trackId: invoice.trackId, attempts: attempt,
+        });
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_ACCEPTED, webhookPayload);
       } else if (newStatus === InvoiceStatus.REJECTED) {
         // FIX H1 (P2): for STANDARD e-CF, submitEcf returns IN_PROCESS and the
@@ -200,8 +212,14 @@ export class StatusPollProcessor extends WorkerHost {
               `USAGE_REFUND_FAILED: quota not refunded for rejected ${invoice.encf} — reconcile manually`,
             ),
           );
+        await this.audit(tenantId, invoiceId, 'rejected', job.id, {
+          encf: invoice.encf, reason: result.message, attempts: attempt,
+        });
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_REJECTED, webhookPayload);
       } else if (newStatus === InvoiceStatus.CONDITIONAL) {
+        await this.audit(tenantId, invoiceId, 'conditionally_accepted', job.id, {
+          encf: invoice.encf, message: result.message, attempts: attempt,
+        });
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_CONDITIONAL, webhookPayload);
       }
 
@@ -248,6 +266,10 @@ export class StatusPollProcessor extends WorkerHost {
           status: InvoiceStatus.ERROR,
           dgiiMessage: `Status poll failed (non-network): ${error.message}`,
         },
+      });
+      await this.audit(tenantId, invoiceId, 'failed', job.id, {
+        encf: invoice.encf,
+        reason: `Status poll failed (non-network): ${error.message}`,
       });
       return { status: 'ERROR', error: error.message };
     }
@@ -333,6 +355,36 @@ export class StatusPollProcessor extends WorkerHost {
       case 3: return InvoiceStatus.PROCESSING;
       case 4: return InvoiceStatus.CONDITIONAL;
       default: return InvoiceStatus.SENT;
+    }
+  }
+
+  /**
+   * FIX 3 (C2) — Persist an audit_log row for a status-poll transition.
+   * actor = 'system:worker' with the BullMQ jobId in metadata. Best-effort.
+   */
+  private async audit(
+    tenantId: string,
+    invoiceId: string,
+    action: string,
+    jobId: string | number | undefined,
+    metadata: Record<string, any> = {},
+  ): Promise<void> {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId,
+          entityType: 'invoice',
+          entityId: invoiceId,
+          action,
+          actor: 'system:worker',
+          metadata: { jobId: jobId != null ? String(jobId) : null, ...metadata },
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(
+        { err, marker: 'AUDIT_WRITE_FAILED', invoiceId, action },
+        `AUDIT_WRITE_FAILED: could not persist '${action}' for invoice ${invoiceId}`,
+      );
     }
   }
 }

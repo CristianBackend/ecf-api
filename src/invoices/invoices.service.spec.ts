@@ -108,6 +108,11 @@ function makeMocks() {
 
   const sequencesService = {
     getNextEncf: jest.fn(async () => 'E310000000001') as Mock,
+    // FIX 1 (C1): create() now consumes the eNCF inside the emission tx.
+    getNextEncfInTx: jest.fn(async () => ({
+      encf: 'E310000000001',
+      expiresAt: new Date('2026-12-31'),
+    })) as Mock,
   };
 
   const rncValidation = {
@@ -417,7 +422,7 @@ describe('InvoicesService.create — async pipeline', () => {
         ...makeCompany(),
         dgiiEnv: 'CERT',
       });
-      mocks.sequencesService.getNextEncf.mockResolvedValueOnce('E320000000015');
+      mocks.sequencesService.getNextEncfInTx.mockResolvedValueOnce({ encf: 'E320000000015', expiresAt: null });
       mocks.prisma.invoice.findFirst.mockImplementation(async ({ where }: any) => {
         if (where?.idempotencyKey) return null; // FIX 3: idempotency lookup misses
         return {
@@ -466,7 +471,7 @@ describe('InvoicesService.create — async pipeline', () => {
         ...makeCompany(),
         dgiiEnv: 'CERT',
       });
-      mocks.sequencesService.getNextEncf.mockResolvedValueOnce('E320000000015');
+      mocks.sequencesService.getNextEncfInTx.mockResolvedValueOnce({ encf: 'E320000000015', expiresAt: null });
       mocks.prisma.invoice.findFirst.mockImplementation(async ({ where }: any) => {
         if (where?.idempotencyKey) return null; // FIX 3: idempotency lookup misses
         return {
@@ -488,7 +493,9 @@ describe('InvoicesService.create — async pipeline', () => {
       });
       const result = await service.create('tenant-1', dto);
 
-      expect(mocks.sequencesService.getNextEncf).toHaveBeenCalledWith(
+      // FIX 1: eNCF is now consumed via getNextEncfInTx, threaded with the tx.
+      expect(mocks.sequencesService.getNextEncfInTx).toHaveBeenCalledWith(
+        expect.anything(),
         'tenant-1',
         'company-uuid-1',
         'E32',
@@ -600,6 +607,116 @@ describe('InvoicesService.create — async pipeline', () => {
       // Regression guard: proves why the fix was necessary
       const buggyDate = new Date('25-01-2024');
       expect(isNaN(buggyDate.getTime())).toBe(true);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // FIX 1 (C1) — secuencial ↔ factura son ATÓMICOS
+  // El eNCF se consume DENTRO de la misma transacción que inserta la
+  // factura. Si un paso posterior falla, la transacción entera revierte,
+  // por lo que el secuencial NUNCA queda consumido sin fila invoice.
+  // ─────────────────────────────────────────────────────────────
+  describe('FIX 1 — atomicidad secuencial↔factura', () => {
+    // A $transaction mock that actually propagates rejections and flags rollback.
+    function withRollbackAwareTx() {
+      let rolledBack = false;
+      mocks.prisma.$transaction.mockImplementation(async (fn: any) => {
+        try {
+          return await fn(mocks.prisma);
+        } catch (e) {
+          rolledBack = true;
+          throw e;
+        }
+      });
+      return () => rolledBack;
+    }
+
+    it('consume el secuencial DENTRO de la misma tx que el INSERT (mismo tx client)', async () => {
+      await service.create('tenant-1', makeValidDto());
+
+      // getNextEncfInTx recibió el MISMO tx client que usa invoice.create
+      // (en el mock, prisma actúa como tx). Prueba estructural de atomicidad.
+      const txArg = mocks.sequencesService.getNextEncfInTx.mock.calls[0][0];
+      expect(txArg).toBe(mocks.prisma);
+      // El getNextEncf legacy (fuera de tx) NO debe usarse en create().
+      expect(mocks.sequencesService.getNextEncf).not.toHaveBeenCalled();
+    });
+
+    it('fallo post-consumo (INSERT falla) → tx revierte y NO hay enqueue ni webhook', async () => {
+      const rolledBack = withRollbackAwareTx();
+      mocks.prisma.invoice.create.mockRejectedValueOnce(new Error('DB constraint'));
+
+      await expect(service.create('tenant-1', makeValidDto())).rejects.toThrow('DB constraint');
+
+      // el secuencial se consumió dentro de la tx que lanzó → rollback
+      expect(mocks.sequencesService.getNextEncfInTx).toHaveBeenCalledTimes(1);
+      expect(rolledBack()).toBe(true);
+      // ningún efecto post-commit se filtró
+      expect(mocks.queueService.enqueueEcfProcessing).not.toHaveBeenCalled();
+      expect(mocks.webhooksService.emit).not.toHaveBeenCalled();
+    });
+
+    it('cuota agotada (incrementUsage lanza) → tx revierte, sin enqueue ni webhook', async () => {
+      const rolledBack = withRollbackAwareTx();
+      mocks.prisma.companyPlan.findUnique.mockResolvedValueOnce({ companyId: 'company-uuid-1' });
+      mocks.usageService.incrementUsage.mockRejectedValueOnce(
+        new ForbiddenException('Cuota de comprobantes agotada'),
+      );
+
+      await expect(service.create('tenant-1', makeValidDto())).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+
+      expect(mocks.sequencesService.getNextEncfInTx).toHaveBeenCalledTimes(1);
+      expect(rolledBack()).toBe(true);
+      expect(mocks.queueService.enqueueEcfProcessing).not.toHaveBeenCalled();
+      expect(mocks.webhooksService.emit).not.toHaveBeenCalled();
+    });
+
+    it('carrera de idempotencia: si la tx encuentra la factura ya creada, NO consume otro secuencial', async () => {
+      // El pre-check externo falla (null), pero la RE-verificación dentro de la
+      // tx encuentra la factura creada por una petición concurrente.
+      const concurrent = {
+        id: 'concurrent-id',
+        encf: 'E310000000042',
+        status: InvoiceStatus.QUEUED,
+        idempotencyKey: 'race-key',
+      };
+      let call = 0;
+      mocks.prisma.invoice.findFirst.mockImplementation(async ({ where }: any) => {
+        if (where?.idempotencyKey) {
+          call += 1;
+          // 1ª llamada (pre-tx): miss. 2ª llamada (in-tx re-check): hit.
+          return call === 1 ? null : concurrent;
+        }
+        return { id: where.id, tenantId: 'tenant-1', encf: 'E310000000042', status: 'QUEUED', ecfType: 'E31', lines: [], company: {}, isRfce: false };
+      });
+
+      await service.create('tenant-1', makeValidDto({ idempotencyKey: 'race-key' }));
+
+      // No se consumió secuencial, no se insertó, no se encoló.
+      expect(mocks.sequencesService.getNextEncfInTx).not.toHaveBeenCalled();
+      expect(mocks.prisma.invoice.create).not.toHaveBeenCalled();
+      expect(mocks.queueService.enqueueEcfProcessing).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // FIX 4 — la reemisión corregida toma un secuencial NUEVO
+  // ─────────────────────────────────────────────────────────────
+  describe('FIX 4 — reemisión usa un eNCF nuevo (nunca reutiliza el rechazado)', () => {
+    it('dos emisiones consecutivas consumen dos eNCF distintos', async () => {
+      mocks.sequencesService.getNextEncfInTx
+        .mockResolvedValueOnce({ encf: 'E310000000009', expiresAt: null })
+        .mockResolvedValueOnce({ encf: 'E310000000010', expiresAt: null });
+
+      await service.create('tenant-1', makeValidDto());
+      await service.create('tenant-1', makeValidDto());
+
+      const encfs = mocks.prisma.invoice.create.mock.calls.map((c: any) => c[0].data.encf);
+      expect(encfs).toEqual(['E310000000009', 'E310000000010']);
+      // nunca se sobreescribe/reusa: cada create trae un eNCF distinto
+      expect(new Set(encfs).size).toBe(2);
     });
   });
 });

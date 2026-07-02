@@ -122,6 +122,12 @@ export class ContingencyService {
       data: { status: InvoiceStatus.CONTINGENCY },
     });
 
+    await this.audit(tenantId, invoiceId, 'contingency_entered', {
+      encf: invoice.encf,
+      from: InvoiceStatus.ERROR,
+      reason: 'Marcada manualmente para reintento',
+    });
+
     this.logger.info(`Invoice ${invoiceId} marked for retry (CONTINGENCY)`);
     return { message: 'Factura marcada para reintento', invoiceId };
   }
@@ -194,6 +200,10 @@ export class ContingencyService {
               dgiiMessage: 'Ventana de contingencia de 72 horas excedida. Requiere gestión manual ante DGII.',
             },
           });
+          await this.audit(invoice.tenantId, invoice.id, 'failed', {
+            encf: invoice.encf,
+            reason: 'Ventana de contingencia de 72 horas excedida',
+          });
           failed++;
           continue;
         }
@@ -231,6 +241,13 @@ export class ContingencyService {
               dgiiMessage: statusResult.message,
               dgiiTimestamp: new Date(),
             },
+          });
+
+          await this.audit(invoice.tenantId, invoice.id, 'contingency_exited', {
+            encf: invoice.encf,
+            trackId: invoice.trackId,
+            resolvedStatus: reconciledStatus,
+            via: 'reconcile',
           });
 
           // FIX G: refund quota if DGII rejected (idempotent).
@@ -305,6 +322,13 @@ export class ContingencyService {
           },
         });
 
+        await this.audit(invoice.tenantId, invoice.id, 'contingency_exited', {
+          encf: invoice.encf,
+          trackId: result.trackId,
+          resolvedStatus: newStatus,
+          via: 'resubmit',
+        });
+
         // FIX G: refund quota if DGII rejected (idempotent via usageReverted).
         if (newStatus === InvoiceStatus.REJECTED) {
           await this.usageService.revertUsage(invoice.id, invoice.companyId)
@@ -335,6 +359,11 @@ export class ContingencyService {
           },
         });
 
+        await this.audit(invoice.tenantId, invoice.id, 'failed', {
+          encf: invoice.encf,
+          reason: `Contingency retry failed: ${error.message}`,
+        });
+
         failed++;
       }
     }
@@ -347,5 +376,34 @@ export class ContingencyService {
 
     this.logger.info(`Contingency batch: ${processed} OK, ${failed} failed, ${remaining} remaining`);
     return { processed, failed, remaining };
+  }
+
+  /**
+   * FIX 3 (C2) — Persist an audit_log row for a contingency-pipeline transition.
+   * actor = 'system:contingency'. Best-effort: must never break the batch.
+   */
+  private async audit(
+    tenantId: string,
+    invoiceId: string,
+    action: string,
+    metadata: Record<string, any> = {},
+  ): Promise<void> {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId,
+          entityType: 'invoice',
+          entityId: invoiceId,
+          action,
+          actor: 'system:contingency',
+          metadata,
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(
+        { err, marker: 'AUDIT_WRITE_FAILED', invoiceId, action },
+        `AUDIT_WRITE_FAILED: could not persist '${action}' for invoice ${invoiceId}`,
+      );
+    }
   }
 }

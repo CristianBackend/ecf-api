@@ -14,7 +14,20 @@ import { XmlBuilderService, EmitterData } from '../xml-builder/xml-builder.servi
 import { isValidEncf } from '../xml-builder/ecf-types';
 import { CreateSequenceDto } from './dto/sequence.dto';
 import { ActorContext } from '../common/decorators/actor.decorator';
-import { EcfType } from '@prisma/client';
+import { EcfType, InvoiceStatus, Prisma } from '@prisma/client';
+
+/**
+ * Terminal, never-valid states of an e-CF whose eNCF MAY still be annulled via
+ * ANECF. Per DGII Norma General 01-2020 (y respuesta oficial de la Comunidad de
+ * Ayuda DGII), se pueden anular por rango las secuencias NO utilizadas y los
+ * comprobantes que nunca llegaron a ser válidos (rechazados / con error, nunca
+ * firmados-aceptados). Un e-CF ACEPTADO/CONDICIONAL NO es anulable: requiere Nota
+ * de Crédito (E34). Ver FIX 2 en annulSequences y FIX 4 en getAnnulableEncfs.
+ */
+const ANNULLABLE_INVOICE_STATES: InvoiceStatus[] = [
+  InvoiceStatus.REJECTED,
+  InvoiceStatus.ERROR,
+];
 
 /**
  * Maps EcfType enum to the 2-digit prefix used in eNCF.
@@ -139,104 +152,150 @@ export class SequencesService {
   }
 
   /**
-   * Get next eNCF number atomically.
-   * Uses SELECT FOR UPDATE to prevent race conditions under concurrent load.
-   * Returns the full eNCF string (e.g., "E310000000001")
+   * Get next eNCF number atomically, in a self-contained transaction.
+   * Returns the full eNCF string (e.g., "E310000000001").
+   *
+   * Prefer {@link getNextEncfInTx} from callers that already hold a transaction
+   * (e.g. invoice creation) so the sequence increment and the invoice INSERT
+   * commit or roll back together — see FIX 1 (C1) below.
    */
   async getNextEncf(tenantId: string, companyId: string, ecfType: EcfType, overrideNumber?: number): Promise<string> {
-    return this.prisma.$transaction(async (tx) => {
-      // SELECT FOR UPDATE locks the row to prevent concurrent reads from getting
-      // the same currentNumber. Column aliases map snake_case DB columns (via
-      // @map in schema) back to camelCase for the rest of this method.
-      const sequences: any[] = await tx.$queryRawUnsafe(
-        `SELECT id,
-                tenant_id        AS "tenantId",
-                company_id       AS "companyId",
-                ecf_type         AS "ecfType",
-                prefix,
-                current_number   AS "currentNumber",
-                start_number     AS "startNumber",
-                end_number       AS "endNumber",
-                expires_at       AS "expiresAt",
-                is_active        AS "isActive"
-         FROM   sequences
-         WHERE  tenant_id  = $1::uuid
-           AND  company_id = $2::uuid
-           AND  ecf_type   = $3::"EcfType"
-           AND  is_active  = true
-         LIMIT 1 FOR UPDATE`,
-        tenantId,
-        companyId,
-        ecfType,
+    const { encf } = await this.prisma.$transaction((tx) =>
+      this.assignNextEncf(tx, tenantId, companyId, ecfType, overrideNumber),
+    );
+    return encf;
+  }
+
+  /**
+   * FIX 1 (C1) — Consume the next eNCF WITHIN a caller-provided transaction.
+   *
+   * The old flow committed the sequence increment in its OWN transaction before
+   * the invoice INSERT ran in a separate one; any failure in between (quota
+   * exhaustion, idempotency clash, XML build error, DB error) left a consumed
+   * secuencial with NO invoice row — an eNCF hueco that the ANECF path itself
+   * could not annul (AUDITORIA-2026-07, hallazgo C1). By threading the emission's
+   * transaction here, the increment and the INSERT are atomic: if anything fails,
+   * the secuencial is rolled back too and never orphaned.
+   *
+   * Returns both the eNCF and the sequence `expiresAt` so the caller can build the
+   * XML without an extra query (the row is already locked here).
+   */
+  async getNextEncfInTx(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    companyId: string,
+    ecfType: EcfType,
+    overrideNumber?: number,
+  ): Promise<{ encf: string; expiresAt: Date | null }> {
+    return this.assignNextEncf(tx, tenantId, companyId, ecfType, overrideNumber);
+  }
+
+  /**
+   * Core eNCF assignment. Uses SELECT ... FOR UPDATE on the sequence row to
+   * serialize concurrent emissions (no two callers can read the same
+   * currentNumber). Operates strictly on the provided transaction client `tx`.
+   */
+  private async assignNextEncf(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    companyId: string,
+    ecfType: EcfType,
+    overrideNumber?: number,
+  ): Promise<{ encf: string; expiresAt: Date | null }> {
+    // SELECT FOR UPDATE locks the row to prevent concurrent reads from getting
+    // the same currentNumber. Column aliases map snake_case DB columns (via
+    // @map in schema) back to camelCase for the rest of this method.
+    const sequences: any[] = await tx.$queryRawUnsafe(
+      `SELECT id,
+              tenant_id        AS "tenantId",
+              company_id       AS "companyId",
+              ecf_type         AS "ecfType",
+              prefix,
+              current_number   AS "currentNumber",
+              start_number     AS "startNumber",
+              end_number       AS "endNumber",
+              expires_at       AS "expiresAt",
+              is_active        AS "isActive"
+       FROM   sequences
+       WHERE  tenant_id  = $1::uuid
+         AND  company_id = $2::uuid
+         AND  ecf_type   = $3::"EcfType"
+         AND  is_active  = true
+       LIMIT 1 FOR UPDATE`,
+      tenantId,
+      companyId,
+      ecfType,
+    );
+
+    const sequence = sequences[0] || null;
+
+    if (!sequence) {
+      throw new NotFoundException(
+        `No hay secuencia activa para tipo ${ecfType} en esta empresa. ` +
+        `Registre una secuencia primero.`,
       );
+    }
 
-      const sequence = sequences[0] || null;
-
-      if (!sequence) {
-        throw new NotFoundException(
-          `No hay secuencia activa para tipo ${ecfType} en esta empresa. ` +
-          `Registre una secuencia primero.`,
-        );
-      }
-
-      // Check expiration
-      if (sequence.expiresAt && sequence.expiresAt < new Date()) {
-        await tx.sequence.update({
-          where: { id: sequence.id },
-          data: { isActive: false },
-        });
-        throw new BadRequestException(
-          `La secuencia para tipo ${ecfType} ha expirado. Solicite una nueva a la DGII.`,
-        );
-      }
-
-      if (overrideNumber !== undefined) {
-        if (overrideNumber < sequence.startNumber || overrideNumber > sequence.endNumber) {
-          throw new BadRequestException(
-            `encfOverride ${overrideNumber} fuera del rango de secuencia [${sequence.startNumber}-${sequence.endNumber}]`,
-          );
-        }
-        const newCurrent = Math.max(sequence.currentNumber, overrideNumber);
-        await tx.sequence.update({
-          where: { id: sequence.id },
-          data: { currentNumber: newCurrent },
-        });
-        return `${sequence.prefix}${String(overrideNumber).padStart(10, '0')}`;
-      }
-
-      const nextNumber = sequence.currentNumber + 1;
-
-      // Check if sequence is exhausted
-      if (nextNumber > sequence.endNumber) {
-        await tx.sequence.update({
-          where: { id: sequence.id },
-          data: { isActive: false },
-        });
-        throw new BadRequestException(
-          `La secuencia para tipo ${ecfType} se ha agotado. Solicite más secuencias a la DGII.`,
-        );
-      }
-
-      // Update current number (row is locked, safe from concurrent access)
+    // Check expiration
+    if (sequence.expiresAt && sequence.expiresAt < new Date()) {
       await tx.sequence.update({
         where: { id: sequence.id },
-        data: { currentNumber: nextNumber },
+        data: { isActive: false },
       });
+      throw new BadRequestException(
+        `La secuencia para tipo ${ecfType} ha expirado. Solicite una nueva a la DGII.`,
+      );
+    }
 
-      // Format: E31 + 10 digit padded number = 13 chars total
-      const encf = `${sequence.prefix}${String(nextNumber).padStart(10, '0')}`;
-
-      // Log warning if running low (< 10% remaining)
-      const total = sequence.endNumber - sequence.startNumber;
-      const remaining = sequence.endNumber - nextNumber;
-      if (remaining < total * 0.1) {
-        this.logger.warn(
-          `⚠️ Sequence ${ecfType} for company ${companyId} running low: ${remaining} remaining`,
+    if (overrideNumber !== undefined) {
+      if (overrideNumber < sequence.startNumber || overrideNumber > sequence.endNumber) {
+        throw new BadRequestException(
+          `encfOverride ${overrideNumber} fuera del rango de secuencia [${sequence.startNumber}-${sequence.endNumber}]`,
         );
       }
+      const newCurrent = Math.max(sequence.currentNumber, overrideNumber);
+      await tx.sequence.update({
+        where: { id: sequence.id },
+        data: { currentNumber: newCurrent },
+      });
+      return {
+        encf: `${sequence.prefix}${String(overrideNumber).padStart(10, '0')}`,
+        expiresAt: sequence.expiresAt ?? null,
+      };
+    }
 
-      return encf;
+    const nextNumber = sequence.currentNumber + 1;
+
+    // Check if sequence is exhausted
+    if (nextNumber > sequence.endNumber) {
+      await tx.sequence.update({
+        where: { id: sequence.id },
+        data: { isActive: false },
+      });
+      throw new BadRequestException(
+        `La secuencia para tipo ${ecfType} se ha agotado. Solicite más secuencias a la DGII.`,
+      );
+    }
+
+    // Update current number (row is locked, safe from concurrent access)
+    await tx.sequence.update({
+      where: { id: sequence.id },
+      data: { currentNumber: nextNumber },
     });
+
+    // Format: E31 + 10 digit padded number = 13 chars total
+    const encf = `${sequence.prefix}${String(nextNumber).padStart(10, '0')}`;
+
+    // Log warning if running low (< 10% remaining)
+    const total = sequence.endNumber - sequence.startNumber;
+    const remaining = sequence.endNumber - nextNumber;
+    if (remaining < total * 0.1) {
+      this.logger.warn(
+        `⚠️ Sequence ${ecfType} for company ${companyId} running low: ${remaining} remaining`,
+      );
+    }
+
+    return { encf, expiresAt: sequence.expiresAt ?? null };
   }
 
   /**
@@ -283,13 +342,75 @@ export class SequencesService {
   }
 
   /**
+   * FIX 4 — List eNCF that are candidates for ANECF annulment for a company.
+   *
+   * Policy (DGII Norma General 01-2020, Art. 3): un e-CF RECHAZADO conserva su
+   * eNCF y NUNCA se reutiliza en la reemisión corregida — la corrección sale como
+   * un e-CF NUEVO con un secuencial NUEVO (ver política documentada en
+   * invoices.service.ts / ecf-types MODIFICATION_CODES). Ese eNCF rechazado (y
+   * cualquier hueco de secuencial) queda entonces disponible para regularizarse
+   * ante DGII vía ANECF. Este método los expone:
+   *   - `rejected`: e-CF en estado REJECTED/ERROR (nunca fueron válidos).
+   *   - `gaps`: secuenciales <= currentNumber sin fila invoice (huecos).
+   * Todos son anulables por {@link annulSequences} (FIX 2).
+   */
+  async getAnnulableEncfs(tenantId: string, companyId: string, ecfType?: EcfType) {
+    const sequences = await this.prisma.sequence.findMany({
+      where: { tenantId, companyId, isActive: true, ...(ecfType ? { ecfType } : {}) },
+    });
+
+    const result: Array<{
+      ecfType: EcfType;
+      rejected: string[];
+      gaps: string[];
+    }> = [];
+
+    for (const seq of sequences) {
+      const upTo = seq.currentNumber; // only already-consumed numbers can be gaps
+      // Terminally-failed e-CF (REJECTED/ERROR) whose eNCF may be annulled.
+      const failed = await this.prisma.invoice.findMany({
+        where: {
+          tenantId,
+          companyId,
+          ecfType: seq.ecfType,
+          status: { in: ANNULLABLE_INVOICE_STATES },
+        },
+        select: { encf: true },
+      });
+      const rejected = failed.map((f) => f.encf).filter((e): e is string => !!e);
+
+      // Gaps: consumed secuenciales [startNumber..currentNumber] with NO invoice
+      // row. Bounded scan; skip enumeration on pathologically large ranges.
+      const gaps: string[] = [];
+      const span = upTo - seq.startNumber + 1;
+      if (span > 0 && span <= 100_000) {
+        const invoices = await this.prisma.invoice.findMany({
+          where: { tenantId, companyId, ecfType: seq.ecfType },
+          select: { encf: true },
+        });
+        const used = new Set(invoices.map((i) => i.encf));
+        for (let n = seq.startNumber; n <= upTo; n++) {
+          const encf = `${seq.prefix}${String(n).padStart(10, '0')}`;
+          if (!used.has(encf)) gaps.push(encf);
+        }
+      }
+
+      result.push({ ecfType: seq.ecfType, rejected, gaps });
+    }
+
+    return result;
+  }
+
+  /**
    * Annul unused eNCF sequences (ANECF).
    *
-   * Per DGII norm, only NOT-consumed sequences can be annulled (already-sent
-   * e-CF require a Nota de Crédito instead). Each range is validated against
-   * the company's registered sequences, the signed ANECF is submitted to DGII,
-   * and on ACCEPTED the local sequence is shrunk/deactivated so getNextEncf
-   * can never emit an eNCF inside an annulled range.
+   * Per DGII Norma 01-2020 se pueden anular por rango: (a) secuencias NO
+   * utilizadas y (b) e-CF que nunca fueron válidos (REJECTED/ERROR) o huecos de
+   * secuencial. Un e-CF ACEPTADO requiere Nota de Crédito (E34), no ANECF. Cada
+   * rango se valida contra las secuencias registradas y — para la parte ya
+   * consumida — contra el estado del invoice (FIX 2). El ANECF firmado se envía a
+   * DGII y, al ACEPTAR, la secuencia local se recorta/desactiva de forma que
+   * getNextEncf jamás emita dentro de un rango anulado.
    */
   async annulSequences(
     tenantId: string,
@@ -386,34 +507,68 @@ export class SequencesService {
         );
       }
 
-      if (fromNum <= sim.currentNumber) {
-        throw new BadRequestException(
-          `Rango ${range.encfFrom}-${range.encfTo}: incluye secuencias ya utilizadas ` +
-          `(consumidas hasta ${sim.prefix}${String(sim.currentNumber).padStart(10, '0')}). ` +
-          `Solo se pueden anular secuencias NO utilizadas; para e-CF ya emitidos corresponde una Nota de Crédito (E34).`,
-        );
+      // FIX 2 (C1b) — Split the range at currentNumber. Numbers already "passed"
+      // (<= currentNumber) can now be annulled too, provided every eNCF in that
+      // sub-range is either a GAP (no invoice at all — e.g. a secuencial consumed
+      // by an aborted emission before FIX 1) or a terminally-failed invoice
+      // (REJECTED/ERROR). DGII Norma 01-2020 permite anular por rango secuencias
+      // no usadas y documentos nunca válidos; un e-CF ACEPTADO/CONDICIONAL exige
+      // Nota de Crédito (E34), no ANECF.
+      const belowTo = Math.min(toNum, sim.currentNumber);
+      if (fromNum <= belowTo) {
+        const belowFromEncf = `${sim.prefix}${String(fromNum).padStart(10, '0')}`;
+        const belowToEncf = `${sim.prefix}${String(belowTo).padStart(10, '0')}`;
+        // zero-padded 10-digit eNCF ⇒ lexicographic order == numeric order.
+        const blocking = await this.prisma.invoice.findMany({
+          where: {
+            tenantId,
+            companyId,
+            encf: { gte: belowFromEncf, lte: belowToEncf },
+            status: { notIn: ANNULLABLE_INVOICE_STATES },
+          },
+          select: { encf: true, status: true },
+        });
+        if (blocking.length > 0) {
+          const sample = blocking
+            .slice(0, 5)
+            .map((b) => `${b.encf}=${b.status}`)
+            .join(', ');
+          throw new BadRequestException(
+            `Rango ${range.encfFrom}-${range.encfTo}: incluye e-CF que NO pueden anularse ` +
+            `vía ANECF (${sample}${blocking.length > 5 ? ', …' : ''}). ` +
+            `Solo se anulan secuencias no utilizadas o e-CF en estado REJECTED/ERROR; ` +
+            `para un e-CF ACEPTADO corresponde una Nota de Crédito (E34).`,
+          );
+        }
+        // Below-current annulments need no counter change (getNextEncf already
+        // moved past them) — but we still submit the ANECF and record it.
+        sim.touched = true;
       }
 
-      // Plan the local adjustment (B4). Supported shapes:
+      // Plan the local adjustment for the still-FUTURE part (> currentNumber).
+      // Supported shapes on the linear currentNumber/endNumber model:
       //   [currentNumber+1 .. endNumber]  → deactivate the sequence
       //   [x .. endNumber]                → tail cut: endNumber = x-1
       //   [currentNumber+1 .. y]          → advance: currentNumber = y
-      // Non-contiguous middle segments are rejected: they would leave a hole
-      // that the linear currentNumber/endNumber model cannot represent.
-      if (fromNum === sim.currentNumber + 1 && toNum === sim.endNumber) {
-        sim.active = false;
-      } else if (toNum === sim.endNumber) {
-        sim.endNumber = fromNum - 1;
-      } else if (fromNum === sim.currentNumber + 1) {
-        sim.currentNumber = toNum;
-      } else {
-        throw new BadRequestException(
-          `Rango ${range.encfFrom}-${range.encfTo}: tramo intermedio no contiguo. ` +
-          `Solo se soportan rangos que comiencen en la siguiente secuencia disponible ` +
-          `(${sim.prefix}${String(sim.currentNumber + 1).padStart(10, '0')}) o que lleguen hasta el final del rango registrado.`,
-        );
+      // Non-contiguous middle segments (a hole strictly inside the future range)
+      // are rejected: the linear model cannot represent them.
+      const aboveFrom = Math.max(fromNum, sim.currentNumber + 1);
+      if (aboveFrom <= toNum) {
+        if (aboveFrom === sim.currentNumber + 1 && toNum === sim.endNumber) {
+          sim.active = false;
+        } else if (toNum === sim.endNumber) {
+          sim.endNumber = aboveFrom - 1;
+        } else if (aboveFrom === sim.currentNumber + 1) {
+          sim.currentNumber = toNum;
+        } else {
+          throw new BadRequestException(
+            `Rango ${range.encfFrom}-${range.encfTo}: tramo intermedio no contiguo. ` +
+            `Solo se soportan rangos que comiencen en la siguiente secuencia disponible ` +
+            `(${sim.prefix}${String(sim.currentNumber + 1).padStart(10, '0')}) o que lleguen hasta el final del rango registrado.`,
+          );
+        }
+        sim.touched = true;
       }
-      sim.touched = true;
     }
 
     // Build ANECF XML

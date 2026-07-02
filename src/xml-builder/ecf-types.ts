@@ -91,7 +91,24 @@ export const INCOME_TYPES = {
 // MODIFICATION CODES (for Notas de Crédito/Débito)
 // ============================================================
 
-/** Modification codes per DGII Informe Técnico */
+/**
+ * Modification codes per DGII Informe Técnico e-CF.
+ *
+ * FIX 4 — Política de RECHAZO y NO reutilización de eNCF (Norma General 01-2020,
+ * Art. 3 lit. b): un e-CF RECHAZADO por DGII conserva su eNCF, persiste como
+ * REJECTED, y NUNCA se sobreescribe ni se reutiliza su secuencial. La corrección
+ * se emite como un e-CF NUEVO con un secuencial NUEVO (getNextEncf); el eNCF
+ * rechazado queda como candidato a ANECF (ver SequencesService.getAnnulableEncfs
+ * y annulSequences FIX 2). Estos son los ÚNICOS 5 escenarios sancionados por la
+ * norma en que un comprobante nuevo REFERENCIA/REEMPLAZA a otro previo (vía
+ * InformacionReferencia + IndicadorNotaCredito/DebitoNota) — nunca reusando el
+ * mismo eNCF:
+ *   1 VOID                — Anula el NCF modificado (Nota de Crédito por anulación)
+ *   2 CORRECT_TEXT        — Corrige texto del comprobante fiscal modificado
+ *   3 CORRECT_AMOUNT      — Corrige montos del NCF modificado
+ *   4 REPLACE_CONTINGENCY — Reemplazo de NCF emitido en contingencia
+ *   5 REFERENCE_FC        — Referencia a Factura de Consumo Electrónica
+ */
 export const MODIFICATION_CODES = {
   VOID: 1,           // Anula el NCF modificado
   CORRECT_TEXT: 2,   // Corrige texto del comprobante fiscal modificado

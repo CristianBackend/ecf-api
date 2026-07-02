@@ -38,6 +38,10 @@ function makeProcessor() {
       update: jest.fn(async () => ({})) as Mock,
       updateMany: jest.fn(async () => ({ count: 1 })) as Mock,
     },
+    // FIX 3 (C2): the poller now writes audit_log rows per transition.
+    auditLog: {
+      create: jest.fn(async () => ({})) as Mock,
+    },
   };
 
   const dgiiService = {
@@ -308,5 +312,84 @@ describe('FIX H1 — REJECTED verdict via poller reverts usage', () => {
 
     expect(result.final).toBe(true);
     expect(m.usageService.revertUsage).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// FIX 3 (C2) — audit_log por cada transición del poller
+// El veredicto final de un e-CF STANDARD llega por el poller (submitEcf
+// devuelve IN_PROCESS), así que las transiciones accepted/rejected/
+// conditionally_accepted/failed deben quedar auditadas también aquí.
+// ─────────────────────────────────────────────────────────────
+describe('FIX 3 — audit trail of poller transitions', () => {
+  const actions = (m: ReturnType<typeof makeProcessor>) =>
+    m.prisma.auditLog.create.mock.calls.map((c: any) => c[0].data.action);
+
+  it('ACCEPTED escribe action=accepted (actor system:worker + jobId)', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
+    );
+    m.dgiiService.queryStatus.mockResolvedValue({ status: 1, message: 'Aceptado', rawResponse: '' });
+
+    await m.processor.process(makeJob());
+
+    expect(actions(m)).toContain('accepted');
+    const accepted = m.prisma.auditLog.create.mock.calls
+      .map((c: any) => c[0].data)
+      .find((d: any) => d.action === 'accepted');
+    expect(accepted.actor).toBe('system:worker');
+    expect(accepted.entityType).toBe('invoice');
+    expect(accepted.metadata.jobId).toBe('job-1');
+  });
+
+  it('REJECTED escribe action=rejected con el motivo DGII', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
+    );
+    m.dgiiService.queryStatus.mockResolvedValue({ status: 2, message: 'Rechazado: firma inválida', rawResponse: '' });
+
+    await m.processor.process(makeJob());
+
+    expect(actions(m)).toContain('rejected');
+    const rejected = m.prisma.auditLog.create.mock.calls
+      .map((c: any) => c[0].data)
+      .find((d: any) => d.action === 'rejected');
+    expect(rejected.metadata.reason).toMatch(/Rechazado/);
+  });
+
+  it('CONDITIONAL escribe conditionally_accepted', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
+    );
+    m.dgiiService.queryStatus.mockResolvedValue({ status: 4, message: 'Aceptado Condicional', rawResponse: '' });
+
+    await m.processor.process(makeJob());
+
+    expect(actions(m)).toContain('conditionally_accepted');
+  });
+
+  it('TIMEOUT (MAX_ATTEMPTS excedido) escribe failed', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(makeInvoice({ trackId: 'TRACK-001' }));
+
+    const job = makeJob({ data: { invoiceId: 'invoice-1', tenantId: 'tenant-1', companyId: 'company-1', attempt: 21 } });
+    await m.processor.process(job);
+
+    expect(actions(m)).toContain('failed');
+  });
+
+  it('non-network error escribe failed', async () => {
+    const m = makeProcessor();
+    m.prisma.invoice.findFirst.mockResolvedValue(
+      makeInvoice({ status: InvoiceStatus.PROCESSING, trackId: 'TRACK-001' }),
+    );
+    m.dgiiService.queryStatus.mockRejectedValue(new Error('Token revoked'));
+
+    await m.processor.process(makeJob());
+
+    expect(actions(m)).toContain('failed');
   });
 });

@@ -179,6 +179,11 @@ export class EcfProcessingProcessor extends WorkerHost {
         },
       });
 
+      await this.audit(tenantId, invoiceId, 'signed', job.id, {
+        encf: invoice.encf,
+        securityCode,
+      });
+
       // 3b. Validate signed XML against DGII XSD.
       // Must run post-sign: FechaHoraFirma (minOccurs=1) is only present after signXml().
       if (this.xsdValidation.isAvailable()) {
@@ -190,6 +195,11 @@ export class EcfProcessingProcessor extends WorkerHost {
           await this.prisma.invoice.update({
             where: { id: invoiceId },
             data: { status: InvoiceStatus.ERROR, dgiiMessage: `XSD validation failed: ${errorMsg}` },
+          });
+          await this.audit(tenantId, invoiceId, 'failed', job.id, {
+            encf: invoice.encf,
+            stage: 'xsd_validation',
+            reason: errorMsg,
           });
           await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_ERROR, {
             invoiceId, encf: invoice.encf, error: `XSD validation failed: ${errorMsg}`,
@@ -279,6 +289,12 @@ export class EcfProcessingProcessor extends WorkerHost {
 
       this.logger.info(`${invoice.encf} → DGII: ${newStatus} | TrackId: ${submissionResult.trackId}`);
 
+      await this.audit(tenantId, invoiceId, 'sent_to_dgii', job.id, {
+        encf: invoice.encf,
+        trackId: submissionResult.trackId,
+        status: newStatus,
+      });
+
       // FIX G (P2): DGII REJECTED the e-CF (bad data) → it will never be a valid
       // comprobante, so refund the quota it consumed at emission. Idempotent via
       // the usageReverted flag (a later VOID won't double-refund). ERROR/
@@ -335,16 +351,25 @@ export class EcfProcessingProcessor extends WorkerHost {
         this.logger.info(`${invoice.encf} is RFCE — skipping status poll (no trackId expected)`);
       }
 
-      // 9. Fire webhook for final statuses
+      // 9. Fire webhook + audit for final statuses
       if (newStatus === InvoiceStatus.ACCEPTED) {
+        await this.audit(tenantId, invoiceId, 'accepted', job.id, {
+          encf: invoice.encf, trackId: submissionResult.trackId,
+        });
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_ACCEPTED, {
           invoiceId, encf: invoice.encf, trackId: submissionResult.trackId,
         });
       } else if (newStatus === InvoiceStatus.REJECTED) {
+        await this.audit(tenantId, invoiceId, 'rejected', job.id, {
+          encf: invoice.encf, reason: submissionResult.message,
+        });
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_REJECTED, {
           invoiceId, encf: invoice.encf, message: submissionResult.message,
         });
       } else if (newStatus === InvoiceStatus.CONDITIONAL) {
+        await this.audit(tenantId, invoiceId, 'conditionally_accepted', job.id, {
+          encf: invoice.encf, message: submissionResult.message,
+        });
         await this.webhooksService.emit(tenantId, WebhookEvent.INVOICE_CONDITIONAL, {
           invoiceId, encf: invoice.encf, message: submissionResult.message,
         });
@@ -374,6 +399,14 @@ export class EcfProcessingProcessor extends WorkerHost {
           dgiiMessage: `[Job ${job.id}] ${error.message}`,
         },
       });
+
+      await this.audit(
+        tenantId,
+        invoiceId,
+        isNetworkError ? 'contingency_entered' : 'failed',
+        job.id,
+        { encf: invoice.encf, reason: error.message },
+      );
 
       // Fire webhook for ERROR status (non-network errors only, network will retry)
       if (!isNetworkError) {
@@ -480,6 +513,38 @@ export class EcfProcessingProcessor extends WorkerHost {
       case 3: return InvoiceStatus.PROCESSING;
       case 4: return InvoiceStatus.CONDITIONAL;
       default: return InvoiceStatus.SENT;
+    }
+  }
+
+  /**
+   * FIX 3 (C2) — Persist an audit_log row for an async-pipeline transition.
+   * Async workers have no ActorContext, so the actor is 'system:worker' and the
+   * BullMQ jobId is recorded in metadata. Best-effort: an audit failure must
+   * never break or roll back the emission pipeline.
+   */
+  private async audit(
+    tenantId: string,
+    invoiceId: string,
+    action: string,
+    jobId: string | number | undefined,
+    metadata: Record<string, any> = {},
+  ): Promise<void> {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId,
+          entityType: 'invoice',
+          entityId: invoiceId,
+          action,
+          actor: 'system:worker',
+          metadata: { jobId: jobId != null ? String(jobId) : null, ...metadata },
+        },
+      });
+    } catch (err: any) {
+      this.logger.error(
+        { err, marker: 'AUDIT_WRITE_FAILED', invoiceId, action },
+        `AUDIT_WRITE_FAILED: could not persist '${action}' for invoice ${invoiceId}`,
+      );
     }
   }
 }

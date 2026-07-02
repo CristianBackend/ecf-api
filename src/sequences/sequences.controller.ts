@@ -124,6 +124,39 @@ export class SequencesController {
     return this.sequencesService.getAvailable(tenant.id, companyId, ecfType);
   }
 
+  @Get(':companyId/annulable')
+  @RequireScopes(ApiKeyScope.SEQUENCES_READ)
+  @ApiOperation({
+    summary: 'Listar eNCF candidatos a anulación (ANECF)',
+    description:
+      'Retorna, por tipo de e-CF, los eNCF que pueden anularse vía ANECF: ' +
+      'comprobantes RECHAZADOS/ERROR (nunca válidos) y huecos de secuencial ' +
+      '(consumidos sin comprobante). Un e-CF ACEPTADO no aparece: requiere Nota de Crédito (E34).',
+  })
+  @COMPANY_ID_PARAM
+  @ApiQuery({ name: 'type', enum: EcfType, example: 'E31', description: 'Filtrar por tipo de e-CF', required: false })
+  @ApiResponse({
+    status: 200,
+    description: 'Candidatos a anulación por tipo',
+    schema: {
+      example: {
+        success: true,
+        data: [
+          { ecfType: 'E31', rejected: ['E310000000009'], gaps: ['E310000000005', 'E310000000006'] },
+        ],
+      },
+    },
+  })
+  @ApiReadErrors()
+  @ApiNotFoundError('Empresa')
+  async getAnnulable(
+    @CurrentTenant() tenant: RequestTenant,
+    @Param('companyId') companyId: string,
+    @Query('type') ecfType?: EcfType,
+  ) {
+    return this.sequencesService.getAnnulableEncfs(tenant.id, companyId, ecfType);
+  }
+
   @Post(':companyId/annul')
   @RequireScopes(ApiKeyScope.INVOICES_WRITE)
   @ApiOperation({

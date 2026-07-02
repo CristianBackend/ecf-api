@@ -161,14 +161,6 @@ export class InvoicesService {
       );
     }
 
-    const encf = await this.sequencesService.getNextEncf(tenantId, dto.companyId, ecfType, dto.encfOverride);
-    this.logger.info(`eNCF assigned: ${encf}`);
-
-    const activeSequence = await this.prisma.sequence.findFirst({
-      where: { tenantId, companyId: dto.companyId, ecfType, isActive: true },
-      select: { expiresAt: true },
-    });
-
     const ovr = dto.emitterOverride;
     const emitterData: EmitterData = ovr
       // Cuando viene emitterOverride (CERT/DEV), todo el bloque Emisor sale del override.
@@ -206,22 +198,50 @@ export class InvoicesService {
           economicActivity: company.economicActivity ?? undefined,
         };
 
-    const inputWithSequence = {
-      ...(dto as any),
-      sequenceExpiresAt: activeSequence?.expiresAt?.toISOString(),
-    };
+    // FIX 1 (C1) — Atomicity secuencial ↔ factura.
+    //
+    // The eNCF consumption (getNextEncfInTx, SELECT ... FOR UPDATE), the XML
+    // build, the invoice INSERT, the audit row and the billing counter now run in
+    // ONE interactive transaction. If ANY step throws (quota exhaustion, an
+    // idempotency clash, an XML build error, a DB error) the whole unit rolls
+    // back — including the sequence increment — so a secuencial can NEVER be
+    // consumed without leaving an invoice row (AUDITORIA-2026-07, hallazgo C1).
+    const txResult = await this.prisma.$transaction(async (tx) => {
+      // Race-safe idempotency re-check INSIDE the tx: if a concurrent request
+      // already created this invoice (and consumed its eNCF), return it here
+      // WITHOUT consuming a second secuencial.
+      if (dto.idempotencyKey) {
+        const dup = await tx.invoice.findFirst({
+          where: { idempotencyKey: dto.idempotencyKey, tenantId },
+        });
+        if (dup) {
+          return { invoice: dup, created: false as const };
+        }
+      }
 
-    const { xml: unsignedXml, totals } = this.xmlBuilder.buildEcfXml(
-      inputWithSequence,
-      emitterData,
-      encf,
-    );
+      // Consume the eNCF in THIS transaction (atomic with the INSERT below).
+      const { encf, expiresAt } = await this.sequencesService.getNextEncfInTx(
+        tx,
+        tenantId,
+        dto.companyId,
+        ecfType,
+        dto.encfOverride,
+      );
+      this.logger.info(`eNCF assigned: ${encf}`);
 
-    const isRfce = typeCode === 32 && totals.totalAmount < FC_FULL_SUBMISSION_THRESHOLD;
+      const inputWithSequence = {
+        ...(dto as any),
+        sequenceExpiresAt: expiresAt?.toISOString(),
+      };
 
-    // Wrap DB writes + billing counter in a single transaction so the counter
-    // rolls back if any write fails (e.g. DB constraint on idempotency key).
-    const invoice = await this.prisma.$transaction(async (tx) => {
+      const { xml: unsignedXml, totals } = this.xmlBuilder.buildEcfXml(
+        inputWithSequence,
+        emitterData,
+        encf,
+      );
+
+      const isRfce = typeCode === 32 && totals.totalAmount < FC_FULL_SUBMISSION_THRESHOLD;
+
       const inv = await tx.invoice.create({
         data: {
           tenantId,
@@ -343,8 +363,26 @@ export class InvoicesService {
         await this.billingService.incrementInvoiceCount(tenantId, tx);
       }
 
-      return inv;
+      return {
+        invoice: inv,
+        created: true as const,
+        encf,
+        isRfce,
+        totalAmount: totals.totalAmount,
+      };
     });
+
+    // Idempotency race: a concurrent request already created + enqueued this
+    // invoice. Return it as-is — do NOT re-enqueue or re-emit (no second job, no
+    // second webhook, and no second secuencial was consumed).
+    if (!txResult.created) {
+      this.logger.debug(
+        `Idempotency race resolved to existing invoice ${txResult.invoice.id}`,
+      );
+      return this.findOne(tenantId, txResult.invoice.id);
+    }
+
+    const { invoice, encf, isRfce, totalAmount } = txResult;
 
     await this.queueService.enqueueEcfProcessing({
       invoiceId: invoice.id,
@@ -370,7 +408,7 @@ export class InvoicesService {
       encf,
       ecfType,
       isRfce,
-      totalAmount: totals.totalAmount,
+      totalAmount,
     });
 
     return this.findOne(tenantId, invoice.id);
